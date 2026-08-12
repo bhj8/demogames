@@ -1,36 +1,42 @@
-# Design experiment
+# Reference Load experiment
 
 ## Experience promise
 
-You are the last process still moving inside a game being deleted. Protecting its final save point requires pulling broken assets onto yourself.
+You are the last moving process in a game being deleted. Protecting its final save point means deliberately pulling broken assets onto yourself.
 
-## Repeated decision
+## Core loop
 
-1. Read spawn direction and bug type.
-2. Tag selected threats to transfer their reference.
+1. Read the next pass composition.
+2. Tag selected threats to transfer their reference from the Anchor to you.
 3. Decide how much weighted load to carry.
-4. Resolve each bug's rule under pressure.
-5. Convert accepted risk into HEAP.
-6. Commit one patch before the next pass.
+4. Resolve each fault's distinct behavior under pressure.
+5. Convert accepted risk into multiplied HEAP.
+6. Spend that budget on the retained seven-weapon arsenal and upgrades.
 
-## Pass structure
+## Risk contract
 
-| Pass | Content | Learning target |
-|---|---|---|
-| Calibration | PLACEHOLDER | See red Anchor targeting turn cyan after a hit |
-| Provoke | PLACEHOLDER + LOD0 | Tag threats before they reach the Anchor |
-| Priority | MAGENTA | Interrupt or prioritize ranged corruption |
-| Carry Load | Mixed wave | Deliberately hold 4+ load for a better multiplier |
-| Keep Distance | SLEEPER mix | Respect the deletion crash radius |
-| Optimize | HIGH POLY | Remove geometry thresholds to restore render budget |
+| Active weighted load | HEAP multiplier |
+|---:|---:|
+| 0–1 | ×1.0 |
+| 2–3 | ×1.2 |
+| 4–6 | ×1.5 |
+| 7–9 | ×2.0 |
+| 10+ | ×2.5 |
 
-## Falsifiable questions
+Common faults weigh 1, elites weigh 2, and bosses weigh 4. The multiplier is paid only for a kill whose target is the player.
 
-- Can a new player explain within three minutes that shooting transfers risk?
-- Does anyone deliberately carry more load for reward?
-- Do conservative and aggressive strategies both remain viable?
-- Does MAGENTA change target priority on its second appearance?
-- Does SLEEPER cause intentional distance management after one observed crash?
-- Can players explain that they optimized the boss rather than merely depleted a health bar?
+## Readability
 
-The prototype stores event traces locally so a playtest session can inspect provoke, drop, death-load, upgrade and phase-clear behavior.
+- World-space red/cyan target links expose every active reference.
+- The minimap repeats the same target color.
+- Prep and BUILD screens predict roster percentages and signature threats for the next pass.
+- Every fault receives a one-time diagnostic teaching card.
+- Player death visibly returns all references to the Anchor, with no hidden HEAP tax.
+
+## Playtest questions
+
+- Can a new player explain the red/cyan target switch after one hit?
+- Do players intentionally carry more load for a multiplier?
+- Is there a meaningful conservative strategy as well as an aggressive one?
+- Do forecast and teaching cards improve target priority without pausing combat too often?
+- Does the full 18-pass campaign sustain the mechanic beyond a short tutorial slice?
