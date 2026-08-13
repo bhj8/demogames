@@ -68,11 +68,11 @@ run('game.js');
 
 /* top-level const 不会挂到 global 上，显式导出一次 */
 const API = vm.runInContext(`({G,MUT,MUTATIONS,MODS,TUNE,RNG,recompute,makeAttack,
-  installPlayerMutations,killEnemy,damageEnemy,hasMut,drawModCards,xpNeeded,makeBulletPool})`, ctx);
+  installPlayerMutations,killEnemy,damageEnemy,hasMut,drawModCards,makeBulletPool,
+  expectedLevel,nextRequirement,trackXpRate,gainXp})`, ctx);
 const { G, MUT, MUTATIONS, MODS, TUNE, RNG, recompute, makeAttack, installPlayerMutations,
-  killEnemy, damageEnemy, hasMut } = API;
+  killEnemy, damageEnemy, hasMut, expectedLevel, nextRequirement, trackXpRate, gainXp } = API;
 ctx.drawModCards = API.drawModCards;
-ctx.xpNeeded = API.xpNeeded;
 ctx.makeBulletPool = API.makeBulletPool;
 
 RNG.init(12345);
@@ -163,48 +163,88 @@ console.log('\n【测试3 · §26 变种占比】');
 });
 
 /* ================================================================= 测试 4 */
-/* §29 等级节奏：模拟 12 分钟刷怪与击杀，看总升级次数 */
-console.log('\n【测试4 · §29 12 分钟等级节奏】');
-function simulateRun() {
-  let t = 0, acc = 0, xp = 0, level = 1, need = ctx.xpNeeded ? ctx.xpNeeded(1) : 0;
-  const X = TUNE.XP;
-  const xpNeed = L => Math.round(X.curveBase + X.curveCoef * Math.pow(L, X.curveExp));
-  need = xpNeed(1);
-  const marks = {}; let firstLevelAt = null; const gaps = []; let lastLevelT = 0;
-  const dt = 0.1;
-  while (t < TUNE.RUN_SECONDS) {
-    t += dt;
-    const rate = TUNE.SPAWN.baseRate + TUNE.SPAWN.rateCoef *
-      Math.pow(Math.min(1, t / TUNE.RUN_SECONDS), TUNE.SPAWN.rateExp);
-    acc += rate * dt;
-    while (acc >= 1) {
-      acc -= 1;
-      /* 平均每只怪的经验：210s 前只有普通丧尸(1)；之后按权重混入 heavy(5)/spitter(3) */
-      xp += t > 210 ? (1 * 1 + 0.16 * 5 + 0.20 * 3) / 1.36 : 1.0;
-      while (xp >= need) {
-        xp -= need; level++;
-        gaps.push(t - lastLevelT); lastLevelT = t;
-        if (firstLevelAt === null) firstLevelAt = t;
-        need = xpNeed(level);
-      }
-    }
-    [180, 360, 540].forEach(m => { if (!marks[m] && t >= m) marks[m] = level; });
-  }
-  return { level, firstLevelAt, marks, gaps };
+/* 节奏控制器：不同强度的 build 能否都收敛到 ~24 级。
+   这是整个设计成不成立的唯一判据 —— build 吞吐差 5–10 倍是常态。 */
+console.log('\n【测试 4 · 节奏控制器对 build 强度的鲁棒性】');
+const P = TUNE.PACING;
+const RUNS = TUNE.RUN_SECONDS;
+
+/* 中等 build 的名义收入（击杀/秒 × 每只经验） */
+function baseIncome(t) {
+  const kps = 0.8 + 5.2 * Math.pow(Math.min(1, t / RUNS), 1.1);
+  const xpk = t < 210 ? 1.0 : (1 + 0.16 * 5 + 0.20 * 3) / 1.36;
+  return kps * xpk;
 }
-const sim = simulateRun();
-const early = sim.gaps.slice(0, 5), late = sim.gaps.slice(-5);
-const avg = a => (a.reduce((s, v) => s + v, 0) / a.length).toFixed(1);
-/* 注意：加入"保底在场数"之后，这个基于刷怪速率的模型已经不再成立 ——
-   场上永远有怪 ⟹ 击杀速度由玩家 DPS 决定，不由刷怪速率决定。
-   下面的数字只是速率模型给出的上界，真实节奏必须靠实测校准，
-   所以这里不再打 ✅/❌，避免给出假的通过信号。 */
-console.log('  [速率模型上界，非判定]');
-console.log('  首次升级       :', sim.firstLevelAt.toFixed(1) + 's');
-console.log('  3:00 / 6:00 / 9:00 等级 :', sim.marks[180], '/', sim.marks[360], '/', sim.marks[540]);
-console.log('  总升级次数     :', sim.level - 1);
-console.log('  前期平均间隔   :', avg(early) + 's   后期平均间隔:', avg(late) + 's');
-console.log('  ⚠ 等级节奏待实测校准（保底刷怪使击杀由玩家火力决定）');
+
+/* 真实情况：所有 build 开局都是同一把裸枪，强度是随构筑成型逐渐分化的。
+   所以强度乘数从 1.0 起，在前 5 分钟内爬到 s。 */
+function strengthAt(t, s) {
+  const k = Math.min(1, t / 300);
+  return 1 + (s - 1) * k;
+}
+
+function runPace(strength, burst) {
+  G.time = 0; G.player.level = 1; G.player.xp = 0;
+  G.player.xpNext = P.bootstrapXp;
+  G.xpRate = P.bootstrapXp / P.firstLevelAt; G.xpFrame = 0;
+  G.pendingLevels = 0; G.phase = 'sim';        // 不触发三选一 UI
+  const dt = 0.25;
+  const times = []; let prevLevel = 1;
+  let maxAhead = 0, maxBehind = 0;
+  while (G.time < RUNS) {
+    G.time += dt;
+    let inc = baseIncome(G.time) * strengthAt(G.time, strength);
+    if (burst && G.time > burst[0] && G.time < burst[1]) inc *= burst[2];
+    gainXp(inc * dt);
+    G.pendingLevels = 0;
+    trackXpRate(dt);
+    if (G.player.level > prevLevel) {
+      for (let q = prevLevel; q < G.player.level; q++) times.push(G.time);
+      prevLevel = G.player.level;
+    }
+    const d = expectedLevel(G.time) - G.player.level;
+    if (d < maxAhead) maxAhead = d;
+    if (d > maxBehind) maxBehind = d;
+  }
+  const gaps = times.map((v, i) => i ? v - times[i - 1] : v);
+  const avg = gaps.length > 1 ? (times[times.length - 1] - times[0]) / (gaps.length - 1) : 0;
+  return { levels: G.player.level - 1, first: times[0], avg, maxAhead, maxBehind, times };
+}
+
+console.log('  build 强度 | 升级次数 | 首次 | 平均间隔 | 最大超前 | 最大落后');
+let allOk = true;
+[0.25, 0.5, 1, 2, 4, 8].forEach(sN => {
+  const r = runPace(sN);
+  const ok = r.levels >= 18 && r.levels <= 28;   // 上沿放宽：9:00 后取消压制是有意设计
+  if (!ok) allOk = false;
+  console.log('   ×' + String(sN).padEnd(5) + '   |    ' + String(r.levels).padStart(2) +
+    '     | ' + r.first.toFixed(0).padStart(3) + 's | ' + r.avg.toFixed(1).padStart(5) + 's  |  ' +
+    r.maxAhead.toFixed(1).padStart(5) + '  |  ' + r.maxBehind.toFixed(1).padStart(4) + '   ' + (ok ? '✅' : '❌'));
+});
+console.log('  结果：' + (allOk ? '✅ 32 倍的 build 强度差距内，节奏均收敛' : '❌ 有 build 跑飞'));
+
+/* EMA 满足滞后会系统性地把需求定低 —— 校准 targetInterval 把它抵掉 */
+console.log('');
+console.log('  targetInterval 校准（目标：中等 build 得到 24 级）');
+const savedTI = P.targetInterval;
+[30, 32, 34, 36, 38].forEach(ti => {
+  P.targetInterval = ti;
+  const rs = [0.5, 1, 2, 4].map(x => runPace(x).levels);
+  console.log('    ' + ti + 's → 各强度级数 ' + rs.join(' / ') +
+    '   均值 ' + (rs.reduce((a, b) => a + b, 0) / rs.length).toFixed(1));
+});
+P.targetInterval = savedTI;
+
+/* 波动保留：中段爆发应该真的升得快，否则就是把玩家的能动性吃掉了 */
+const flat = runPace(1);
+const spike = runPace(1, [300, 360, 4]);
+const inWindow = a => a.times.filter(x => x > 300 && x < 375).length;
+console.log('\n  波动保留检验（5:00–6:00 注入 4 倍爆发）');
+console.log('    平稳局 该窗口升级 : ' + inWindow(flat) + ' 次');
+console.log('    爆发局 该窗口升级 : ' + inWindow(spike) + ' 次 ' +
+  (inWindow(spike) > inWindow(flat) ? '✅ 短期表现仍然有回报' : '❌ 波动被抹平'));
+console.log('    全局总级数 : 平稳 ' + flat.levels + ' vs 爆发 ' + spike.levels +
+  ' （应该接近 —— 漂移被外层收回）');
 
 /* ================================================================= 测试 5 */
 /* §36 固定种子可复现 */

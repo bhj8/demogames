@@ -20,6 +20,7 @@ const G = {
   stats: { kills: 0, shots: 0, hits: 0, procs: 0, dmgDealt: 0, dmgTaken: 0, blasts: 0, bolts: 0, splits: 0 },
   derived: null,
   conductCounter: 0,
+  xpRate: 0, xpFrame: 0, pacingMult: 1,
   pierceRamp: 0,
   overclock: 0,
   feedbackBudget: 4, feedbackTimer: 0,

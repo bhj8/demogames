@@ -568,18 +568,68 @@ function updateXp(dt) {
   R.xpMesh.instanceMatrix.needsUpdate = true;
 }
 
-function xpNeeded(level) {
-  const X = TUNE.XP;
-  return Math.round(X.curveBase + X.curveCoef * Math.pow(level, X.curveExp));
+/* ============================================================================
+   节奏控制器
+   玩家看不到经验数值，只看得到一条进度条 —— 这给了我们一个可用的空间：
+   只要需求只在【升级瞬间】变化，就完全不可见（那一刻进度条本来就归零）。
+   反过来，中途改需求会让进度条倒退，那是立刻会被发现的，所以绝对不做。
+   ========================================================================== */
+
+/* 期望等级（分数）。玩家从 1 级开始，第一次升级在 firstLevelAt，此后每 targetInterval 一次 */
+function expectedLevel(t) {
+  const P = TUNE.PACING;
+  return 1 + (t + (P.targetInterval - P.firstLevelAt)) / P.targetInterval;
+}
+
+/* 经验速率 EMA —— 只用来设定下一级需求，不参与任何战斗判定 */
+function trackXpRate(dt) {
+  const tau = TUNE.PACING.rateHalfLife / Math.LN2;
+  const a = 1 - Math.exp(-dt / tau);
+  const inst = G.xpFrame / Math.max(dt, 1e-5);
+  G.xpRate += (inst - G.xpRate) * a;
+  G.xpFrame = 0;
+}
+
+/* 下一级需要多少经验 */
+function nextRequirement() {
+  const P = TUNE.PACING, t = G.time;
+
+  /* 内层：按最近的收入定价，让任何 build 都落在 targetInterval 附近 */
+  const base = (G.xpRate > 0.02 ? G.xpRate : P.bootstrapXp / P.firstLevelAt) * P.targetInterval;
+
+  /* 外层：漂移纠正。落后 → 便宜；超前 → 变贵；死区内完全不动 */
+  const delta = expectedLevel(t) - G.player.level;     // >0 表示落后
+  const mag = Math.abs(delta);
+  let mult = 1;
+  if (mag > P.deadband) {
+    const k = Math.min(1, (mag - P.deadband) / (P.fullAt - P.deadband));
+    if (delta > 0) {
+      mult = 1 - k * (1 - P.minReqMult);
+    } else {
+      mult = 1 + k * (P.maxReqMult - 1);
+      /* 后期取消压制，强 build 直接放飞 */
+      const fade = clamp((t - P.suppressFadeStart) / (P.suppressFadeEnd - P.suppressFadeStart), 0, 1);
+      mult = lerp(mult, 1, fade);
+    }
+  }
+  G.pacingMult = mult;
+
+  let req = base * mult;
+  /* 相邻两级的需求不允许突变，否则一次爆发会让节奏抽风 */
+  const prev = G.player.xpNext || req;
+  req = clamp(req, prev * P.reqStepMin, prev * P.reqStepMax);
+  return Math.max(4, Math.round(req));
 }
 
 function gainXp(v) {
   const p = G.player;
   p.xp += v;
-  while (p.xp >= p.xpNext) {
+  G.xpFrame += v;
+  let guard = 0;
+  while (p.xp >= p.xpNext && guard++ < 12) {
     p.xp -= p.xpNext;
     p.level++;
-    p.xpNext = xpNeeded(p.level);
+    p.xpNext = nextRequirement();
     G.pendingLevels++;
   }
   if (G.pendingLevels > 0 && G.phase === 'play') openModChoice();
@@ -716,7 +766,7 @@ function makePlayer() {
     pos: new THREE.Vector3(0, 0, 0), vel: new THREE.Vector3(),
     yaw: 0, pitch: 0, radius: TUNE.PLAYER.radius,
     hp: TUNE.PLAYER.maxHp, maxHp: TUNE.PLAYER.maxHp,
-    level: 1, xp: 0, xpNext: xpNeeded(1),
+    level: 1, xp: 0, xpNext: TUNE.PACING.bootstrapXp,
     iframe: 0, dashIFrame: 0, dashCd: 0, dashT: 0, dashDir: new THREE.Vector3(),
     gun: { ammo: TUNE.GUN.magazine, reloadT: 0, fireT: 0, bloom: 0, recoil: 0, held: false, holdT: 0, idleT: 0 },
     bobT: 0
@@ -1269,7 +1319,7 @@ const DebugPanel = {
       }
     }
     /* 补等级，让火力大致跟上时间点 */
-    const wantLevel = Math.round(3 + t / 33);
+    const wantLevel = Math.round(expectedLevel(t));
     while (G.player.level < wantLevel) {
       const avail = MODS.filter(modAvailable);
       if (!avail.length) break;
@@ -1296,6 +1346,11 @@ const DebugPanel = {
       ' &nbsp; 弹 <b>' + G.bullets.count + '</b> &nbsp; 特效 <b>' +
       (R.rings.count + R.puffs.count + R.sparks.count + R.bolts.count) + '</b>' +
       ' &nbsp; 危险区 <b>' + G.hazards.count + '</b>' +
+      '<br>期望 <b>' + expectedLevel(G.time).toFixed(1) + '</b> 实际 <b>' + G.player.level +
+      '</b> 差 <b style="color:' + (Math.abs(expectedLevel(G.time) - G.player.level) > TUNE.PACING.deadband ? '#ffd06a' : '#7ef0a8') + '">' +
+      (expectedLevel(G.time) - G.player.level).toFixed(1) + '</b>' +
+      ' &nbsp; 需求倍率 <b>' + (G.pacingMult || 1).toFixed(2) + '</b>' +
+      ' &nbsp; xp/s <b>' + (G.xpRate || 0).toFixed(1) + '</b>' +
       '<br>目标在场 <b>' + (Director.target || 0) + '</b> &nbsp; 刷怪间隔 <b>' + (Director.interval || 0).toFixed(2) + 's</b> &nbsp; 触发/帧 <b>' + G.procThisFrame + '</b> &nbsp; 深度上限 <b>' + G.derived.maxDepth + '</b>' +
       ' &nbsp; 经验球 <b>' + G.xp.length + '</b>' +
       '<br>变种占比 <b>' + Math.round(Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation) * 100) + '%</b>' +
@@ -1325,6 +1380,9 @@ function boot() {
   G.tutorialQueue = [];
   G.pendingLevels = 0;
   G.mutIndex = 0; G.tlIndex = 0;
+  /* EMA 预置成目标节奏，避免开局冷启动时需求算得离谱 */
+  G.xpRate = TUNE.PACING.bootstrapXp / TUNE.PACING.firstLevelAt;
+  G.xpFrame = 0; G.pacingMult = 1;
   G.bossAlive = null; G.surge = false;
 
   recompute();
@@ -1390,6 +1448,7 @@ function frame(now) {
       updatePendings(dt);
       updateHazards(dt);
       updateXp(dt);
+      trackXpRate(dt);
       runTutorialQueue(dt);
       updateShake(dt);
       if (DebugPanel.god) G.player.hp = G.player.maxHp;
