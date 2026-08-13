@@ -108,6 +108,9 @@ function recompute() {
   if (G.player && d.maxHp > oldMax) G.player.hp += (d.maxHp - oldMax);  // §23 等额治疗
   if (G.player) { G.player.maxHp = d.maxHp; G.player.hp = Math.min(G.player.hp, d.maxHp); }
 
+  /* todo3 §7.6：构筑化学反应的纯被动部分折进 derived，热路径不做查表 */
+  if (typeof SYN !== 'undefined' && SYN.build) SYN.applyDerived(d);
+
   G.derived = d;
   return d;
 }
@@ -194,7 +197,7 @@ function damageEnemy(e, amount, ctx, opts) {
 
   G.bus.emit('damage', { enemy: e, amount: amount, ctx: ctx, opts: opts });
   /* §5.1 攀爬过程中可以被玩家射落 */
-  if (NAV.enabled) NAV.onDamaged(e);
+  if (typeof NAV !== 'undefined' && NAV.enabled) NAV.onDamaged(e);
 
   if (e.hp <= 0) killEnemy(e, ctx, opts);
   return amount;
@@ -469,7 +472,7 @@ function updatePendings(dt) {
 /* 地面危险区在立体地图下必须同层才结算 ——
    屋顶的酸池不该穿过楼板伤到街面的玩家（todo3 §5 / §8.2）。 */
 function hazardSameFloor(h) {
-  if (!CITY.enabled) return true;
+  if (typeof CITY === 'undefined' || !CITY.enabled) return true;
   return Math.abs(G.player.pos.y - h.zone.mesh.position.y) < 2.6;
 }
 

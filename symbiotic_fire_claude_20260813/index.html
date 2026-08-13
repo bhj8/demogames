@@ -311,6 +311,32 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 #dbgbtns button,#dbgvariant button{font-size:10px;padding:4px 8px;letter-spacing:.04em;
   background:rgba(255,255,255,.05);border:1px solid rgba(140,180,215,.22);border-radius:2px}
 #dbglog{color:rgba(219,231,240,.4);font-size:10px;max-height:80px;overflow:hidden}
+
+/* ---- todo3 §7.10 统一进化卡面 ---- */
+#cards .qreveal{display:flex;align-items:baseline;gap:10px;justify-content:center;
+  font-size:26px;letter-spacing:.18em;animation:qpop .34s ease-out both}
+#cards .qreveal b{color:var(--qc);text-shadow:0 0 18px var(--qc)}
+#cards .qreveal span{font-size:12px;color:#8fa2b4;letter-spacing:.1em}
+@keyframes qpop{from{opacity:0;transform:scale(.86)}to{opacity:1;transform:scale(1)}}
+#cards .emark{display:inline-block;margin-left:8px;padding:1px 7px;border-radius:9px;
+  font-size:11px;letter-spacing:.05em;border:1px solid currentColor}
+#cards .emark.pity{color:#7ef0a8}
+#cards .emark.map{color:#ff8a1e}
+#cards .card.evo{animation:ecard .30s ease-out both}
+@keyframes ecard{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+#cards .card.evo .qtag{font-size:11px;letter-spacing:.14em;opacity:.85;margin-bottom:2px}
+#cards .card.evo .crel{margin-top:auto;padding-top:8px;font-size:11px;color:#8fa2b4;
+  border-top:1px solid #ffffff14}
+#cards .card.evo.q-epic{box-shadow:0 0 26px #b060ff33}
+#cards .card.evo.q-legend{box-shadow:0 0 30px #ffb02044}
+/* ---- todo3 §11 立体城市 + 统一进化实验面板 ---- */
+#dbgmove{font:11px/1.5 ui-monospace,monospace;color:#9fd8ff;margin-top:4px}
+#dbgevo{font:11px/1.5 ui-monospace,monospace;color:#ffd06a;margin-top:4px}
+#nextdraw{position:fixed;left:50%;top:64px;transform:translateX(-50%);
+  font:12px/1.4 ui-monospace,monospace;padding:3px 10px;border-radius:11px;
+  background:#0d1117cc;border:1px solid currentColor;opacity:0;transition:opacity .25s;
+  pointer-events:none;z-index:40}
+#nextdraw.on{opacity:1}
 </style>
 </head>
 <body>
@@ -364,6 +390,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
   </div>
 </div>
 
+<div id="nextdraw"></div>
 <div id="cards"></div>
 
 <div id="menu" class="on">
@@ -398,6 +425,8 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 <div id="debug">
   <h4>运行状态</h4>
   <div id="dbgstats"></div>
+  <div id="dbgmove"></div>
+  <div id="dbgevo"></div>
   <h4>控制  ( F1 开关面板 )</h4>
   <div id="dbgbtns"></div>
   <h4>强制生成变种</h4>

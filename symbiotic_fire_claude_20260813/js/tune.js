@@ -57,7 +57,8 @@ const TUNE = {
     pickupRadius: 2.6,
     magnetRadius: 7.5,            // 主动吸附
     autoHomeAfter: 9.0,           // §31 存在 8–12 秒后自动飞向玩家
-    flySpeed: 15
+    flySpeed: 15,
+    crossLayerDelay: 2.5          // todo3 §6.1 玩家离开该层后多久进入跨层追踪
   },
 
   /* --- 节奏控制器 ---
@@ -626,7 +627,15 @@ TUNE.EVOLUTION = {
   maxBaseMutations: 3,       // 每局最多 3 个基础变异
   minBaseMutations: 2,
   relevantMin: 2,            // 至少 2 张候选与当前构筑直接相关
-  progressBase: 34,          // 进度定价的目标间隔（沿用 PACING 的自校准思路）
+  /* 进度定价：沿用 PACING 的两层控制。目标平均间隔 =(cutoff-firstAt)/(targetCount-1)≈43s；
+     EMA 滞后会系统性把需求定低，所以 progressBase 要比目标间隔高一截，
+     具体值由 testsim 的 100/10000 局模拟校准，不是拍的。 */
+  progressBase: 50,
+  firstNeed: 22,             // 第一次进化的固定需求（此时还没有收入样本）
+  driftDeadband: 0.8,        // ±0.8 次以内完全不干预
+  driftFullAt: 3.0,
+  driftMin: 0.40,            // 落后时需求最低 40%
+  driftMax: 2.20,            // 超前时需求最高 220%
   safeDelayMax: 12           // 安全窗口最多延迟多久，超过则强制弹出
 };
 
