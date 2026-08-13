@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>SYMBIOTIC FIRE · 共生火力</title>
+<style>
+:root{
+  --bg:#080a0e;
+  --ink:#dbe7f0;
+  --dim:rgba(219,231,240,.45);
+  --you:#5fc8ff;        /* 玩家收益：青蓝 §13.2 */
+  --horde:#ff5f7a;      /* 尸潮后果：红   §13.2 */
+  --line:rgba(140,180,215,.18);
+  --panel:rgba(10,14,20,.90);
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;overflow:hidden;background:#000}
+body{
+  font-family:'Segoe UI',-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+  color:var(--ink);user-select:none;-webkit-user-select:none;cursor:default;
+}
+canvas#gl{display:block;position:fixed;inset:0}
+
+/* ---------------------------------------------------------------- 准星 */
+#cross{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:26px;height:26px;pointer-events:none;z-index:4}
+#cross i{position:absolute;background:rgba(240,250,255,.95);
+  box-shadow:0 0 0 1px rgba(0,0,0,.75),0 0 5px rgba(0,0,0,.9)}
+#cross i:nth-child(1){left:50%;top:0;width:2px;height:8px;margin-left:-1px}
+#cross i:nth-child(2){left:50%;bottom:0;width:2px;height:8px;margin-left:-1px}
+#cross i:nth-child(3){top:50%;left:0;height:2px;width:8px;margin-top:-1px}
+#cross i:nth-child(4){top:50%;right:0;height:2px;width:8px;margin-top:-1px}
+#cross u{position:absolute;left:50%;top:50%;width:2px;height:2px;margin:-1px 0 0 -1px;
+  background:rgba(230,242,252,.55);border-radius:50%}
+
+/* ------------------------------------------------------- 受伤 / 治疗反馈 */
+#hurtflash,#healflash,#vignette{position:fixed;inset:0;pointer-events:none;z-index:5}
+#vignette{background:radial-gradient(ellipse at center,transparent 40%,rgba(150,0,20,.85) 100%);
+  opacity:0;transition:opacity .3s}
+#hurtflash{opacity:0}
+#hurtflash.on{animation:hf .42s ease-out}
+@keyframes hf{0%{opacity:1}100%{opacity:0}}
+#healflash{background:radial-gradient(ellipse at center,transparent 55%,rgba(60,220,140,.30) 100%);opacity:0}
+#healflash.on{animation:hf .5s ease-out}
+
+/* 受伤方向扇形 §31 */
+#dmgdirs,#threats{position:fixed;left:50%;top:50%;width:0;height:0;pointer-events:none;z-index:6}
+.dmgdir{position:absolute;left:50%;top:50%;width:0;height:0;opacity:0;
+  border-left:34px solid transparent;border-right:34px solid transparent;
+  border-bottom:20px solid #ff4d5e;transform-origin:50% 118px;
+  margin-top:-118px;filter:blur(1px);transition:opacity .12s}
+.threat{position:absolute;left:50%;top:50%;width:0;height:0;opacity:0;
+  border-left:9px solid transparent;border-right:9px solid transparent;
+  border-bottom:13px solid #ff8a4a;transform-origin:50% 168px;margin-top:-168px}
+
+/* ------------------------------------------------------------------ HUD */
+#hud{position:fixed;inset:0;pointer-events:none;z-index:7}
+
+/* 左下：生命 */
+#hpwrap{position:absolute;left:26px;bottom:26px;width:264px}
+#hpbar{height:15px;background:rgba(255,255,255,.07);border:1px solid var(--line);
+  border-radius:2px;overflow:hidden}
+#hpfill{height:100%;width:100%;background:linear-gradient(90deg,#3ad07a,#7ef0a8);
+  transition:width .14s ease-out}
+#hpnum{font-size:11px;letter-spacing:.09em;color:var(--dim);margin-top:5px;
+  font-variant-numeric:tabular-nums}
+
+/* 右下：弹匣 + 冲刺 */
+#gunwrap{position:absolute;right:26px;bottom:26px;width:210px;text-align:right}
+#ammo{font-size:30px;font-weight:600;line-height:1;letter-spacing:.02em;
+  font-variant-numeric:tabular-nums}
+#ammo.pulse{animation:ap .3s ease-out}
+@keyframes ap{0%{color:#7ef0a8;transform:scale(1.10)}100%{color:var(--ink);transform:scale(1)}}
+#ammobarwrap{height:4px;background:rgba(255,255,255,.08);margin-top:7px;border-radius:2px;overflow:hidden}
+#ammobar{height:100%;width:100%;background:#d8e4ee;transition:width .07s linear}
+#dashwrap{height:3px;background:rgba(255,255,255,.08);margin-top:6px;border-radius:2px;overflow:hidden}
+#dashfill{height:100%;width:100%;background:#5fc8ff}
+#dashlabel{font-size:9px;letter-spacing:.24em;color:var(--dim);margin-top:5px}
+
+/* 顶部中央：时间 + 等级经验 */
+#top{position:absolute;left:50%;top:20px;transform:translateX(-50%);
+  width:420px;text-align:center}
+#clock{font-size:26px;font-weight:600;letter-spacing:.06em;line-height:1;
+  font-variant-numeric:tabular-nums;text-shadow:0 2px 12px rgba(0,0,0,.8)}
+#clock.urgent{color:#ffd06a;animation:cu 1s ease-in-out infinite}
+@keyframes cu{50%{opacity:.45}}
+#xpwrap{height:6px;background:rgba(255,255,255,.09);border-radius:3px;
+  overflow:hidden;margin-top:9px}
+#xpfill{height:100%;width:0;background:linear-gradient(90deg,#4bd8a8,#a8f0d0);
+  transition:width .12s ease-out}
+#lvlrow{display:flex;justify-content:space-between;align-items:center;margin-top:5px;
+  font-size:10px;letter-spacing:.2em;color:var(--dim)}
+
+/* 顶部右：四个共同变异槽 §32 */
+#slots{position:absolute;right:26px;top:22px;display:flex;gap:7px}
+.slot{width:34px;height:34px;border:1px solid var(--line);border-radius:3px;
+  display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:600;
+  background:rgba(8,12,18,.6)}
+.slot.empty{color:rgba(219,231,240,.2)}
+
+/* Boss 血条 */
+#bosswrap{position:absolute;left:50%;top:96px;transform:translateX(-50%);
+  width:520px;opacity:0;transition:opacity .35s}
+#bosswrap.on{opacity:1}
+#bossname{font-size:12px;letter-spacing:.22em;text-align:center;margin-bottom:6px;
+  text-shadow:0 0 10px rgba(0,0,0,.9)}
+#bossbar{height:9px;background:rgba(255,255,255,.08);border:1px solid var(--line);overflow:hidden}
+#bossfill{height:100%;width:100%;background:linear-gradient(90deg,#ff5f7a,#ffb0be);
+  transition:width .2s ease-out}
+
+/* Toast / Hint */
+#toast{position:absolute;left:50%;top:140px;transform:translateX(-50%);
+  font-size:17px;font-weight:600;letter-spacing:.03em;opacity:0;
+  transition:opacity .3s;text-shadow:0 2px 14px rgba(0,0,0,.95);
+  max-width:76vw;text-align:center;line-height:1.5}
+#toast.on{opacity:1}
+#toast.big{font-size:23px;letter-spacing:.05em}
+#hint{position:absolute;left:50%;bottom:120px;transform:translateX(-50%);
+  max-width:600px;padding:9px 15px;background:var(--panel);
+  border-left:3px solid var(--you);font-size:12.5px;line-height:1.55;
+  color:rgba(219,231,240,.85);opacity:0;transition:opacity .3s}
+#hint.on{opacity:1}
+
+/* ---------------------------------------------------------------- 三选一 */
+#cards{position:fixed;inset:0;z-index:20;display:none;flex-direction:column;
+  align-items:center;justify-content:center;gap:22px;
+  background:radial-gradient(ellipse at center,rgba(6,9,14,.88),rgba(3,4,7,.97));
+  backdrop-filter:blur(3px)}
+#cards.on{display:flex}
+.cardhead{text-align:center}
+.cardhead .ct{font-size:13px;letter-spacing:.34em;color:var(--dim)}
+.cardhead .cs{font-size:24px;font-weight:600;letter-spacing:.05em;margin-top:7px}
+.cardrow{display:flex;gap:20px}
+.card{width:274px;padding:20px;background:rgba(13,18,26,.96);
+  border:1px solid var(--line);border-radius:4px;cursor:pointer;
+  transition:transform .13s,border-color .13s,box-shadow .13s;pointer-events:auto}
+.card:hover{transform:translateY(-5px);border-color:rgba(180,215,240,.5)}
+.card.mutation:hover{border-color:var(--mc);box-shadow:0 10px 40px -12px var(--mc)}
+.cname{font-size:21px;font-weight:600;letter-spacing:.05em;
+  display:flex;align-items:baseline;justify-content:space-between}
+.cname.mod{color:var(--ink)}
+.cen{font-size:9.5px;letter-spacing:.2em;opacity:.5;font-weight:400}
+.cico{height:3px;border-radius:2px;margin:13px 0 15px}
+.card.mod .cname{margin-bottom:15px}
+.cline{font-size:14px;line-height:1.5;display:flex;gap:9px;align-items:flex-start;
+  margin-bottom:9px}
+.cline .tag{flex:0 0 auto;font-size:9.5px;letter-spacing:.14em;padding:2.5px 6px;
+  border-radius:2px;margin-top:1.5px}
+.cline.you{color:var(--you)}
+.cline.you .tag{background:rgba(95,200,255,.15);color:var(--you)}
+.cline.horde{color:var(--horde)}
+.cline.horde .tag{background:rgba(255,95,122,.15);color:var(--horde)}
+.tag.kfire{background:rgba(255,160,80,.14);color:#ffab5c}
+.tag.kchain{background:rgba(180,120,255,.14);color:#c497ff}
+.tag.klife{background:rgba(90,220,150,.14);color:#6ee0a0}
+/* §13.1 详细数值只在悬停时出现，主卡保持两句 */
+.cdetail{font-size:11.5px;line-height:1.65;color:rgba(219,231,240,.5);
+  margin-top:13px;padding-top:12px;border-top:1px solid var(--line);
+  max-height:0;overflow:hidden;opacity:0;transition:max-height .2s,opacity .2s,margin .2s,padding .2s;
+  margin-top:0;padding-top:0;border-top-color:transparent}
+.card:hover .cdetail{max-height:150px;opacity:1;margin-top:13px;padding-top:12px;
+  border-top-color:var(--line)}
+.pips{display:flex;gap:3px}
+.pips i{width:13px;height:3px;background:rgba(255,255,255,.16);border-radius:2px}
+.pips i.on{background:#7ec8ff}
+.cardfoot{font-size:11px;letter-spacing:.16em;color:rgba(219,231,240,.3)}
+
+/* ------------------------------------------------------------- 菜单/结算 */
+#menu,#pause,#results{position:fixed;inset:0;z-index:30;display:none;
+  flex-direction:column;align-items:center;justify-content:center;gap:16px;
+  background:radial-gradient(ellipse at center,rgba(6,9,14,.92),rgba(2,3,5,.99))}
+#menu.on,#pause.on,#results.on{display:flex}
+.mtitle{font-size:44px;font-weight:700;letter-spacing:.14em;
+  background:linear-gradient(92deg,#5fc8ff,#ff5f7a);-webkit-background-clip:text;
+  background-clip:text;-webkit-text-fill-color:transparent}
+.msub{font-size:14.5px;color:rgba(219,231,240,.62);letter-spacing:.03em;
+  max-width:600px;text-align:center;line-height:1.85}
+.mkeys{display:flex;gap:26px;margin-top:14px;font-size:11.5px;color:var(--dim);
+  letter-spacing:.1em}
+.mkeys b{color:var(--ink);font-weight:600}
+button{font-family:inherit;font-size:13px;letter-spacing:.2em;color:var(--ink);
+  background:rgba(95,200,255,.10);border:1px solid rgba(95,200,255,.45);
+  padding:12px 34px;border-radius:3px;cursor:pointer;transition:background .15s}
+button:hover{background:rgba(95,200,255,.22)}
+#seedlabel{font-size:10.5px;letter-spacing:.18em;color:rgba(219,231,240,.28)}
+
+/* 结算 §37 */
+#results{gap:0;padding:40px;overflow-y:auto}
+.rtitle{font-size:34px;font-weight:700;letter-spacing:.1em}
+.rsub{font-size:13px;color:var(--dim);letter-spacing:.14em;margin-top:9px}
+.rsec{font-size:10px;letter-spacing:.3em;color:rgba(219,231,240,.32);
+  margin:26px 0 11px}
+.rmuts{display:flex;gap:11px;flex-wrap:wrap;justify-content:center;max-width:820px}
+.rmut{border:1px solid;border-radius:3px;padding:10px 14px;min-width:158px;
+  display:flex;flex-direction:column;gap:4px;background:rgba(255,255,255,.02)}
+.rmut b{font-size:14px}
+.rmut span{font-size:11px;color:var(--you)}
+.rmut span.h{color:var(--horde)}
+.runseen{font-size:11px;color:rgba(219,231,240,.3);margin-top:11px;letter-spacing:.08em}
+.rchain{font-size:14px;color:#c497ff;letter-spacing:.06em}
+.rmods{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;max-width:700px}
+.rmod{font-size:11.5px;padding:5px 10px;background:rgba(255,255,255,.05);
+  border:1px solid var(--line);border-radius:2px}
+.rseed{font-size:10px;color:rgba(219,231,240,.25);letter-spacing:.12em;margin-top:26px}
+.rbtns{display:flex;gap:13px;margin-top:18px}
+.rbtns button{padding:11px 24px;font-size:12px}
+i{color:rgba(219,231,240,.28);font-style:normal}
+
+/* ------------------------------------------------------------- 调试 §36 */
+#debug{position:fixed;left:14px;top:14px;z-index:40;display:none;
+  width:352px;padding:13px;background:rgba(4,7,11,.94);
+  border:1px solid rgba(120,220,255,.25);border-radius:3px;
+  font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.7}
+#debug.on{display:block}
+#debug h4{font-size:9.5px;letter-spacing:.28em;color:#5fc8ff;
+  font-weight:600;margin:11px 0 6px}
+#debug h4:first-child{margin-top:0}
+#dbgstats{color:rgba(219,231,240,.65)}
+#dbgstats b{color:#7ef0a8;font-weight:600}
+#dbgbtns,#dbgvariant{display:flex;flex-wrap:wrap;gap:4px}
+#dbgbtns button,#dbgvariant button{font-size:10px;padding:4px 8px;letter-spacing:.04em;
+  background:rgba(255,255,255,.05);border:1px solid rgba(140,180,215,.22);border-radius:2px}
+#dbglog{color:rgba(219,231,240,.4);font-size:10px;max-height:80px;overflow:hidden}
+</style>
+</head>
+<body>
+
+<canvas id="gl"></canvas>
+
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div>
+<div id="vignette"></div>
+<div id="hurtflash"></div>
+<div id="healflash"></div>
+<div id="dmgdirs"></div>
+<div id="threats"></div>
+
+<div id="hud">
+  <div id="top">
+    <div id="clock">12:00</div>
+    <div id="xpwrap"><div id="xpfill"></div></div>
+    <div id="lvlrow"><span>LV <b id="lvlnum">1</b></span><span>距离撤离</span></div>
+  </div>
+
+  <div id="slots"></div>
+
+  <div id="bosswrap">
+    <div id="bossname">尸王</div>
+    <div id="bossbar"><div id="bossfill"></div></div>
+  </div>
+
+  <div id="toast"></div>
+  <div id="hint"></div>
+
+  <div id="hpwrap">
+    <div id="hpbar"><div id="hpfill"></div></div>
+    <div id="hpnum">120 / 120</div>
+  </div>
+
+  <div id="gunwrap">
+    <div id="ammo">30 / 30</div>
+    <div id="ammobarwrap"><div id="ammobar"></div></div>
+    <div id="dashwrap"><div id="dashfill"></div></div>
+    <div id="dashlabel">DASH</div>
+  </div>
+</div>
+
+<div id="cards"></div>
+
+<div id="menu" class="on">
+  <div class="mtitle">SYMBIOTIC FIRE</div>
+  <div class="msub">
+    灾难现场只剩最后 <b>12 分钟</b>撤离窗口。<br>
+    你捡到一把会吞噬病毒并进化的生物枪 —— 但<b style="color:#ff5f7a">枪学会的变异，尸潮也会学会</b>。<br>
+    <span style="font-size:13px;opacity:.75">喂养你的枪，也喂养尸潮。</span>
+  </div>
+  <div class="mkeys">
+    <span><b>WASD</b> 移动</span>
+    <span><b>鼠标</b> 瞄准</span>
+    <span><b>按住左键</b> 射击</span>
+    <span><b>Shift/空格</b> 冲刺</span>
+    <span><b>R</b> 换弹</span>
+    <span><b>Esc</b> 暂停</span>
+  </div>
+  <button id="start" style="margin-top:20px">进 入 现 场</button>
+  <div id="seedlabel">种子</div>
+</div>
+
+<div id="pause">
+  <div class="mtitle" style="font-size:30px">已暂停</div>
+  <div class="msub" style="font-size:13px">尸潮不会等你</div>
+  <button id="resume">继 续</button>
+</div>
+
+<div id="results"></div>
+
+<div id="debug">
+  <h4>运行状态</h4>
+  <div id="dbgstats"></div>
+  <h4>控制  ( F1 开关面板 )</h4>
+  <div id="dbgbtns"></div>
+  <h4>强制生成变种</h4>
+  <div id="dbgvariant"></div>
+  <h4>日志</h4>
+  <div id="dbglog"></div>
+</div>
+
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+</body>
+</html>

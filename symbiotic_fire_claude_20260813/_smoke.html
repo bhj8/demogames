@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>body{margin:0;background:#000}canvas{display:block}</style>
+</head>
+<body>
+<!-- 冒烟测试用的最小 DOM：id 与 index.html 保持一致 -->
+<canvas id="gl"></canvas>
+<div id="cross"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
+<div id="dmgdirs"></div><div id="threats"></div>
+<div id="clock"></div><div id="xpfill"></div><div id="lvlnum"></div>
+<div id="slots"></div><div id="bosswrap"></div><div id="bossname"></div><div id="bossfill"></div>
+<div id="toast"></div><div id="hint"></div>
+<div id="hpfill"></div><div id="hpnum"></div>
+<div id="ammo"></div><div id="ammobar"></div><div id="dashfill"></div>
+<div id="cards"></div>
+<div id="menu"></div><div id="pause"></div><div id="results"></div>
+<button id="start"></button><div id="seedlabel"></div><button id="resume"></button>
+<div id="debug"><div id="dbgstats"></div><div id="dbgbtns"></div>
+<div id="dbgvariant"></div><div id="dbglog"></div></div>
+
+<script>
+window.__err = [];
+window.onerror = (m, s, l, c, e) => { window.__err.push(m + ' @' + (s || '').split('/').pop() + ':' + l); };
+window.addEventListener('unhandledrejection', e => window.__err.push('reject:' + e.reason));
+</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* 内联脚本与 game.js 共享全局词法作用域，可以直接摸到 const G / R / frame */
+function report(lines) {
+  document.title = 'RESULT>>' + lines.join(' | ') + '<<END';
+}
+addEventListener('load', () => {
+  setTimeout(() => {
+    const out = [];
+    const guard = fn => { try { fn(); return null; } catch (e) { return e.message; } };
+
+    if (window.__err.length) { report(['BOOT_ERR:' + window.__err.join(';')]); return; }
+    out.push('boot=ok');
+    /* frame() 自己会 requestAnimationFrame —— 掐掉它，只跑我手动推的帧，
+       否则软件渲染下会无限自转，测试永远不结束 */
+    window.requestAnimationFrame = () => 0;
+    out.push('drawcalls_geo=' + Object.keys(R.geo).length);
+
+    /* 进入战斗 */
+    G.phase = 'play';
+    let t = 0, autoPicks = 0;
+    /* 三选一会冻结世界 —— 自动选第一张，否则测试会停在 choose 相 */
+    const step = n => {
+      for (let i = 0; i < n; i++) {
+        t += 16.7; frame(t);
+        let guardN = 0;
+        while (G.phase === 'choose' && guardN++ < 40) {
+          const c = document.querySelector('#cards .card');
+          if (!c || !c.onclick) break;
+          c.onclick(); autoPicks++;
+        }
+      }
+    };
+    const stepUntil = (cond, max) => {
+      for (let i = 0; i < max; i++) { step(1); if (cond()) return true; }
+      return false;
+    };
+
+    let err = guard(() => step(120));           // ~2s
+    if (err) { report(['STEP1_ERR:' + err]); return; }
+    out.push('frames120=ok');
+
+    /* 强制拿满 4 个共同变异，并把变种放进池子 */
+    err = guard(() => {
+      ['blast', 'fission', 'conduct', 'ossify'].forEach(id => { takeMutation(id); G.phase = 'play'; });
+      G.tutorialQueue.forEach(q => q.t = 0.01);
+      step(60);
+    });
+    if (err) { report(['MUT_ERR:' + err]); return; }
+    out.push('mutations=' + G.mutations.length);
+    out.push('variantPool=' + G.variantPool.length);
+
+    /* 触发链压力：大量改装 + 密集怪 */
+    err = guard(() => {
+      ['caliber', 'caliber', 'bolt', 'catalyst', 'spread', 'cascade', 'hunter', 'aftershock', 'feedback', 'twin']
+        .forEach(id => { G.mods[id] = (G.mods[id] || 0) + 1; });
+      recompute();
+      for (let i = 0; i < 90; i++) {
+        const a = i * 0.7, r = 4 + (i % 7);
+        configureEnemy(G.enemies.get(), ENEMIES.grunt,
+          new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r));
+      }
+      G.player.gun.held = true;
+      step(180);
+    });
+    if (err) { report(['CHAIN_ERR:' + err]); return; }
+    out.push('kills=' + G.stats.kills);
+    out.push('procs=' + G.stats.procs);
+    out.push('splits=' + G.stats.splits + ',blasts=' + G.stats.blasts + ',bolts=' + G.stats.bolts);
+    out.push('alive=' + G.enemies.count);
+
+    /* 每种变种都强制生成一次，检查模型/骨板/尸爆路径 */
+    err = guard(() => {
+      MUTATIONS.forEach(m => {
+        configureEnemy(G.enemies.get(), G.variantTpl[m.id],
+          new THREE.Vector3(RNG.fx.range(-8, 8), 0, RNG.fx.range(-8, 8)));
+      });
+      step(60);
+      /* 全部打死，跑一遍尸潮侧后果（尸爆 / 幼体 / 电场） */
+      G.enemies.live.forEach(e => { if (!e._dead && !e.dead && !e.boss) killEnemy(e, makeAttack('debug')); });
+      step(90);   // 1.5s：尸爆引信(0.8s)已炸完，电场(0.7s后起，持续2.5s)应仍在
+    });
+    if (err) { report(['VARIANT_ERR:' + err]); return; }
+    out.push('hazards=' + G.hazards.length + ',minions=' + G.enemies.live.filter(e => !e._dead && e.minion).length);
+
+    /* 中期 Boss */
+    let midOk;
+    err = guard(() => { DebugPanel.jump(364); midOk = stepUntil(() => G.bossAlive, 400); });
+    if (err) { report(['MIDBOSS_ERR:' + err]); return; }
+    out.push('midboss=' + (G.bossAlive ? G.bossAlive.tpl.id : 'none:' + midOk));
+
+    /* 打死中期 Boss，再跳到 12:00 召唤尸王 */
+    let kingOk;
+    err = guard(() => {
+      if (G.bossAlive) { killEnemy(G.bossAlive, makeAttack('debug')); step(5); }
+      DebugPanel.jump(719);
+      kingOk = stepUntil(() => G.bossAlive && G.bossAlive.king, 400);
+    });
+    if (err) { report(['KING_ERR:' + err]); return; }
+    out.push('king=' + (G.bossAlive ? G.bossAlive.tpl.id + ':p' + G.bossAlive.phase : 'none:' + kingOk));
+
+    /* Boss 分阶段：直接扣血逼它换阶段 */
+    err = guard(() => {
+      if (G.bossAlive) {
+        for (let k = 0; k < 4; k++) {
+          G.bossAlive.hp = G.bossAlive.maxHp * (0.7 - k * 0.22);
+          step(30);
+        }
+      }
+    });
+    if (err) { report(['PHASE_ERR:' + err]); return; }
+    out.push('phase=' + (G.bossAlive ? G.bossAlive.phase : 'dead'));
+
+    /* 结算页 */
+    err = guard(() => { if (G.bossAlive) killEnemy(G.bossAlive, makeAttack('debug')); step(20); });
+    if (err) { report(['WIN_ERR:' + err]); return; }
+    out.push('over=' + G.over + ',won=' + G.won + ',autoPicks=' + autoPicks);
+    out.push('resultsShown=' + (document.getElementById('results').innerHTML.length > 200));
+
+    out.push('runtime_err=' + window.__err.length + (window.__err.length ? ':' + window.__err[0] : ''));
+    report(out);
+  }, 300);
+});
+</script>
+</body>
+</html>
