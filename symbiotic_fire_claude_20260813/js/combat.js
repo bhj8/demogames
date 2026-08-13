@@ -193,6 +193,8 @@ function damageEnemy(e, amount, ctx, opts) {
   G.stats.dmgDealt += amount;
 
   G.bus.emit('damage', { enemy: e, amount: amount, ctx: ctx, opts: opts });
+  /* §5.1 攀爬过程中可以被玩家射落 */
+  if (NAV.enabled) NAV.onDamaged(e);
 
   if (e.hp <= 0) killEnemy(e, ctx, opts);
   return amount;
@@ -464,6 +466,13 @@ function updatePendings(dt) {
   }
 }
 
+/* 地面危险区在立体地图下必须同层才结算 ——
+   屋顶的酸池不该穿过楼板伤到街面的玩家（todo3 §5 / §8.2）。 */
+function hazardSameFloor(h) {
+  if (!CITY.enabled) return true;
+  return Math.abs(G.player.pos.y - h.zone.mesh.position.y) < 2.6;
+}
+
 function updateHazards(dt) {
   for (let i = G.hazards.length - 1; i >= 0; i--) {
     const h = G.hazards[i];
@@ -483,7 +492,7 @@ function updateHazards(dt) {
     if (h.kind === 'field') {
       h.tickT -= dt;
       const d = Math.hypot(G.player.pos.x - h.zone.mesh.position.x, G.player.pos.z - h.zone.mesh.position.z);
-      if (d <= h.radius && h.tickT <= 0) {
+      if (d <= h.radius && hazardSameFloor(h) && h.tickT <= 0) {
         hurtPlayer(h.dmg, h.zone.mesh.position, 'shock');
         h.tickT = h.tick;
       }
@@ -498,7 +507,7 @@ function updateHazards(dt) {
     if (h.kind === 'acid') {
       h.tickT -= dt;
       const d = Math.hypot(G.player.pos.x - h.zone.mesh.position.x, G.player.pos.z - h.zone.mesh.position.z);
-      if (d <= h.radius && h.tickT <= 0) { hurtPlayer(h.dmg, h.zone.mesh.position, 'acid'); h.tickT = h.tick; }
+      if (d <= h.radius && hazardSameFloor(h) && h.tickT <= 0) { hurtPlayer(h.dmg, h.zone.mesh.position, 'acid'); h.tickT = h.tick; }
       const rem = h.dur - h.t;
       if (rem < 0.5) { h.zone.mesh.material.opacity *= rem / 0.5; h.zone.rim.material.opacity *= rem / 0.5; }
     }

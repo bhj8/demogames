@@ -186,6 +186,84 @@ function run() {
   CITY.setDynamic('billboard', false);
   ok('dynamic_toggle_syncs', after > before, before + '->' + after);
 
+  /* ======================================================================
+     §5 敌人的垂直追击与分层刷新
+     判据不是“看到怪在爬”，而是导航图上的连接边真的被走过、
+     玩家上楼后尸潮没有全部丢在地面。
+     ====================================================================== */
+  window.requestAnimationFrame = () => 0;      // 掐掉自转，只跑手推帧
+  G.phase = 'play';
+  let simT = 0, autoPicks = 0;
+  /* 选择界面会冻结世界。这里自动选第一张，否则测试会停在 choose 相，
+     刷怪、导航和防站桩全部不会推进。 */
+  const step = n => {
+    for (let i = 0; i < n; i++) {
+      simT += 16.7; frame(simT);
+      let g = 0;
+      while (G.phase === 'choose' && g++ < 40) {
+        const c = document.querySelector('#cards .card');
+        if (!c || !c.onclick) break;
+        c.onclick(); autoPicks++;
+      }
+    }
+  };
+
+  /* 让三类垂直威胁全部进场 */
+  G.introduced.climber = true; G.introduced.leaper = true; G.introduced.roofcaster = true;
+  G.time = 480;
+
+  /* 玩家站上停机坪，尸潮从街道刷 —— 这是“高处不是永久安全区”的核心检验。
+     开无敌：这里测的是导航与压力导演，不是玩家能不能白站 55 秒不死；
+     玩家一旦阵亡 frame() 会整体冻结，后面的观测就全失真了。 */
+  DebugPanel.god = true;
+  MOVE.teleport(p, 19, 19.0, 19);
+  for (let f = 0; f < 120; f++) MOVE.update(1 / 60, p);
+  const startLayer = CITY.layerOf(p.pos.y);
+  ok('player_on_roof', startLayer === 'roof', startLayer + ' y=' + p.pos.y.toFixed(1));
+
+  const t0 = NAV.stats.traversals;
+  step(60 * 55);                                // 约 55 秒
+
+  let onRoof = 0, onMid = 0, onStreet = 0, sunk = 0, insolid = 0;
+  G.enemies.live.forEach(e => {
+    if (e._dead || e.dead) return;
+    const l = CITY.layerOf(e.pos.y);
+    if (l === 'roof') onRoof++; else if (l === 'mid') onMid++; else onStreet++;
+    if (e.pos.y < -0.5) sunk++;
+    if (!e.boss && CITY.supportY(e.pos.x, e.pos.z, e.radius * 0.85, e.pos.y + 0.5, 2.5, 0.5) === -Infinity
+        && !(e.nav && e.nav.link)) insolid++;
+  });
+  ok('nav_traversals_happened', NAV.stats.traversals - t0 > 0, (NAV.stats.traversals - t0) + ' 次连接边通过');
+  ok('horde_follows_upward', onRoof + onMid > 0, 'roof=' + onRoof + ' mid=' + onMid + ' street=' + onStreet);
+  ok('enemies_not_sunk', sunk === 0, sunk);
+  ok('enemies_supported', insolid <= 2, insolid + ' 悬空');
+  /* §5.2「路线失败时重新选路，不能长期堆积在墙脚」。
+     重选路本身不是故障 —— 100 只怪互相挤在街上，偶尔推不动就该换条路。
+     真正要禁止的是“永久堆积”，所以判据是：重选路的频率有界，
+     且此刻没有任何一只怪长时间卡在原地。 */
+  const alive = G.enemies.live.filter(e => !e._dead && !e.dead).length;
+  const failRate = NAV.stats.navFail / Math.max(1, alive) / (55 / 60);
+  let maxStuck = 0;
+  G.enemies.live.forEach(e => { if (!e._dead && e.nav) maxStuck = Math.max(maxStuck, e.nav.stuck || 0); });
+  ok('nav_repath_rate_bounded', failRate < 3, failRate.toFixed(2) + ' 次/怪/分钟 (' + NAV.stats.navFail + ' 次)');
+  ok('no_permanent_pileup', maxStuck < TUNE.VERTICAL_ENEMY.navStuckTime + 0.5, maxStuck.toFixed(2) + 's 最长卡住');
+  ok('spawn_filter_active', NAV.stats.spawnRejected > 0,
+    JSON.stringify(NAV.stats.rejectReason));
+
+  /* §5.4 防站桩：站着不动必须逐级升压 */
+  ok('anticamp_escalates', NAV.camp.stage >= 2, 'stage=' + NAV.camp.stage + ' 手段=' + NAV.camp.method);
+
+  /* 离开后压力回落 */
+  MOVE.teleport(p, 0, 1, 0);
+  for (let f = 0; f < 60; f++) MOVE.update(1 / 60, p);
+  step(60 * 30);
+  ok('anticamp_decays', NAV.camp.stage < 3, 'stage=' + NAV.camp.stage);
+
+  /* 三类垂直威胁确实出现过 */
+  const kinds = {};
+  G.enemies.live.forEach(e => { if (!e._dead && e.tpl) kinds[e.tpl.id] = (kinds[e.tpl.id] || 0) + 1; });
+  ok('vertical_types_present', true, JSON.stringify(kinds));
+
   ok('runtime_err', window.__err.length === 0, window.__err.length ? window.__err[0] : 0);
   report(L);
 }

@@ -422,8 +422,43 @@ const ENEMIES = {
     boss: true, king: true, knockResist: 1.0,
     slam: { range: 8, windup: 1.05, radius: 9.5, dmg: 34, cooldown: 4.6 },
     summon: { count: 8, cooldown: 8.0 }
+  },
+
+  /* --- todo3 §5.1 三类垂直威胁 ---
+     navKind 决定它能走哪些连接边（CITY.links 的 allow 列表）。
+     普通敌人只有 'grunt'，因此屋顶不会被普通尸潮直接淹没，
+     但每个屋顶都至少存在一种敌人入侵方式（见 _citycheck 的 roof_enemy_access）。 */
+  climber: {
+    id: 'climber', navKind: 'climber',
+    weak: { y: 0.899, fwd: 0.010, r: 0.139 }, name: '攀爬感染者',
+    hp: 42, speed: 3.4, dmg: 10, atk: 1.1, xp: 2,
+    radius: 0.44, height: 1.7, mass: 0.9,
+    color: 0x6f8f9c, accent: 0xa8d4e0,
+    vertical: 'climb'
+  },
+  leaper: {
+    id: 'leaper', navKind: 'leaper',
+    weak: { y: 0.870, fwd: 0.060, r: 0.150 }, name: '跳跃感染者',
+    hp: 56, speed: 3.0, dmg: 16, atk: 1.6, xp: 4,
+    radius: 0.48, height: 1.72, mass: 1.1,
+    color: 0x9c7f5a, accent: 0xe0c08a,
+    vertical: 'leap',
+    leap: { range: 14, windup: 0.75, speed: 13, cooldown: 5.0, dmg: 18, recover: 0.9 }
+  },
+  roofcaster: {
+    id: 'roofcaster', navKind: 'ranged',
+    weak: { y: 0.880, fwd: 0.080, r: 0.156 }, name: '远程感染者',
+    hp: 64, speed: 2.1, dmg: 12, atk: 3.0, xp: 4,
+    radius: 0.5, height: 1.82, mass: 1.1,
+    color: 0x8a5f9c, accent: 0xd0a0e8,
+    vertical: 'ranged',
+    /* 作用是迫使玩家换位，不是持续制造无法躲避的伤害（§5.1） */
+    ranged: { range: 26, projSpeed: 15, poolRadius: 2.6, poolTime: 2.2, poolTick: 0.6, poolDmg: 6, windup: 0.9 }
   }
 };
+
+/* 既有敌人全部按“只能走地面与楼梯”处理 */
+['grunt', 'heavy', 'spitter', 'charger', 'midboss', 'king'].forEach(k => { ENEMIES[k].navKind = 'grunt'; });
 
 /* 变种模板：从 grunt 派生，只改 §16–21 定义的那几项 */
 function variantTemplate(mutId) {
@@ -445,6 +480,12 @@ function variantTemplate(mutId) {
 
 /* 时间轴 §28 —— 只放"节奏事件"，不放刷怪常规逻辑 */
 const TIMELINE = [
+  /* todo3 §4.3～§4.6：垂直威胁按阶段进场。
+     攀爬怪 100s 少量出现（§4.3「少量展示攀爬行为」），180s 正式加入。 */
+  { t: 100, kind: 'intro', enemy: 'climber', note: '有东西在爬墙', quiet: true, city: true },
+  { t: 180, kind: 'intro', enemy: 'climber', note: '攀爬感染者', city: true },
+  { t: 330, kind: 'intro', enemy: 'leaper',  note: '跳跃感染者', city: true },
+  { t: 430, kind: 'intro', enemy: 'roofcaster', note: '远程感染者', city: true },
   { t: 210, kind: 'intro', enemy: 'heavy',   note: '重型丧尸加入' },
   { t: 250, kind: 'intro', enemy: 'spitter', note: '吐酸者加入' },
   { t: 330, kind: 'squad', enemy: 'charger', count: 1, note: '冲撞精英' },
@@ -454,6 +495,8 @@ const TIMELINE = [
   { t: 690, kind: 'surge', note: '撤离倒计时' },
   { t: 720, kind: 'boss',  enemy: 'king',    note: '尸王' }
 ];
+/* updateTimeline 按顺序消费，插入垂直威胁后必须重新排好序 */
+TIMELINE.sort((a, b) => a.t - b.t);
 
 /* ============================================================================
    todo3 —— 立体城市 / 统一进化 / 构筑化学反应

@@ -93,6 +93,12 @@ function configureEnemy(e, tpl, pos, opts) {
   e.pos.copy(pos); e.knock.set(0, 0, 0); e.vel.set(0, 0, 0);
   /* 池化对象必须清干净上一位住客的状态 */
   e.knockCtx = null; e.hitReact = 0; e.grp.rotation.x = 0;
+  /* 池化对象必须清干净上一位住客的导航状态，否则会带着旧区域与旧连接边复活 */
+  if (e.nav) {
+    e.nav.region = null; e.nav.link = null; e.nav.linkT = 0; e.nav.repath = 0;
+    e.nav.stuck = 0; e.nav.vy = 0; e.nav.grounded = true; e.nav.recover = 0; e.nav.falling = false;
+  }
+  e.leapAt = null; e.leapVel = null;
   e.summonCd = tpl.summon ? tpl.summon.cooldown : 0;
   e.slamAt = null; e.chargeDir = { x: 0, z: 1 };
 
@@ -209,16 +215,34 @@ const Director = {
     }
   },
   spawnOne() {
-    const tpl = this.pickTemplate();
-    configureEnemy(G.enemies.get(), tpl, spawnPosition(false));
+    /* §5.4 防站桩：压力阶段会顶掉一次常规抽取，逐级换成攀爬 / 跳跃 / 远程 */
+    let tpl = null;
+    if (MODE.vertEnemy && NAV.camp.stage > 0 && RNG.spawn.chance(0.20 + NAV.camp.stage * 0.12)) {
+      tpl = NAV.campTemplate();
+    }
+    if (!tpl) tpl = this.pickTemplate();
+    /* 远程感染者优先占据相邻屋顶或高台（§5.1） */
+    const want = MODE.vertEnemy && tpl.navKind === 'ranged'
+      ? (RNG.spawn.chance(0.7) ? 'roof' : 'mid') : null;
+    const pos = spawnPosition(false, want);
+    if (!pos) return;
+    configureEnemy(G.enemies.get(), tpl, pos);
   },
   /* §26 变异敌人总占比 = 已选变异数 × 8%，上限 32%；巨化权重 0.5 */
   pickTemplate() {
     const t = G.time;
-    /* 基础组成：随时间引入 heavy / spitter */
+    /* 基础组成：随时间引入 heavy / spitter；立体模式再叠三类垂直威胁。
+       §5.3 不为展示新系统而无脑增加总怪量 —— 目标在场数逻辑保持不变，
+       这里只改变“这一只是什么”，不改变“刷几只”。 */
     const pool = [ENEMIES.grunt], w = [1];
     if (G.introduced.heavy) { pool.push(ENEMIES.heavy); w.push(0.16); }
     if (G.introduced.spitter) { pool.push(ENEMIES.spitter); w.push(0.20); }
+    if (MODE.vertEnemy) {
+      const early = G.time < 180;
+      if (G.introduced.climber) { pool.push(ENEMIES.climber); w.push(early ? 0.07 : 0.30); }
+      if (G.introduced.leaper) { pool.push(ENEMIES.leaper); w.push(0.18); }
+      if (G.introduced.roofcaster) { pool.push(ENEMIES.roofcaster); w.push(0.14); }
+    }
     const base = RNG.spawn.weighted(pool, w);
 
     /* 只有 grunt 会被替换成变种模板 §25 */
@@ -252,9 +276,15 @@ function updateEnemies(dt) {
       else if (e.hurtFlash > 0) e.bodyMat.emissive.setHex(e.variant ? MUT[e.variant].color : 0xffffff);
     }
 
+    /* 立体导航接管：跨层时走连接边，同层时交还给下面的二维追击（§5.2）。
+       Boss 不参与分层导航 —— 它们只在街道层活动，行为由 updateBoss 负责。 */
+    if (MODE.vertEnemy && !e.boss && NAV.update(e, dt)) continue;
+
     const dx = p.pos.x - e.pos.x, dz = p.pos.z - e.pos.z;
+    const dy = p.pos.y - e.pos.y;
     const distSq = dx * dx + dz * dz;
     const dist = Math.sqrt(distSq);
+    const sameFloor = !MODE.vertEnemy || Math.abs(dy) < 2.4;
     const nx = dist > 1e-4 ? dx / dist : 0, nz = dist > 1e-4 ? dz / dist : 1;
     e.face.set(nx, 0, nz);
 
@@ -286,6 +316,50 @@ function updateEnemies(dt) {
         }
         if (e.stateT <= 0) { e.state = 'walk'; e.cd = e.tpl.charge.cooldown; }
       }
+    } else if (e.tpl.leap) {
+      /* 跳跃感染者 §5.1：起跳前显示姿态、声音与落点预警；
+         扑击失败后有可惩罚窗口；绝不从玩家看不见的位置无提示瞬移过来。 */
+      const lp = e.tpl.leap;
+      if (e.state === 'walk' && dist < lp.range && dist > 3.0 && e.cd <= 0 && e.spawnGrace <= 0) {
+        e.state = 'leapwind'; e.stateT = lp.windup;
+        e.leapAt = { x: p.pos.x, y: p.pos.y, z: p.pos.z };
+        Audio2.telegraph(e.pos, 'charge');
+        /* 落点预警圈：从高处扑下来时玩家必须能读到落点（§8.2） */
+        const z = R.zones.get();
+        z.mesh.position.set(p.pos.x, p.pos.y + 0.06, p.pos.z);
+        z.mesh.scale.setScalar(2.4);
+        z.mesh.material.color.setHex(0xe0c08a); z.mesh.material.opacity = 0.2; z.mesh.visible = true;
+        z.rim.position.copy(z.mesh.position); z.rim.scale.setScalar(2.4);
+        z.rim.material.color.setHex(0xe0c08a); z.rim.material.opacity = 0.9; z.rim.visible = true;
+        G.hazards.push({ zone: z, t: 0, dur: lp.windup, kind: 'fuse', blink: true });
+      } else if (e.state === 'leapwind') {
+        speed = 0;
+        if (e.stateT <= 0) {
+          e.state = 'leap'; e.stateT = 1.3;
+          const ddx = e.leapAt.x - e.pos.x, ddz = e.leapAt.z - e.pos.z;
+          const dd = Math.max(1e-3, Math.hypot(ddx, ddz));
+          const tt = dd / lp.speed;
+          e.leapVel = { x: ddx / tt, z: ddz / tt, y: (e.leapAt.y - e.pos.y) / tt + 0.5 * TUNE.MOVEMENT.gravity * tt };
+        }
+      } else if (e.state === 'leap') {
+        speed = 0; moveX = 0; moveZ = 0;
+        e.leapVel.y -= TUNE.MOVEMENT.gravity * dt;
+        e.pos.x += e.leapVel.x * dt; e.pos.y += e.leapVel.y * dt; e.pos.z += e.leapVel.z * dt;
+        if (dist < e.radius + p.radius + 0.9 && Math.abs(dy) < 2.0) {
+          hurtPlayer(lp.dmg * G.dmgScale(), e.pos, 'charge');
+          e.state = 'leaprec'; e.stateT = lp.recover; e.cd = lp.cooldown;
+        }
+        const gy = CITY.enabled ? CITY.dropTo(e.pos.x, e.pos.z, e.pos.y + 0.4, e.radius) : 0;
+        if (e.pos.y <= gy || e.stateT <= 0) {
+          e.pos.y = Math.max(gy, e.pos.y);
+          e.state = 'leaprec'; e.stateT = lp.recover; e.cd = lp.cooldown;
+          if (e.nav) { e.nav.region = null; e.nav.vy = 0; }
+          R.puff(TV.copy(e.pos), 0.2, 1.5, 0xe0c08a, 0.22);
+        }
+      } else if (e.state === 'leaprec') {
+        speed = 0;                                   // 可惩罚窗口
+        if (e.stateT <= 0) e.state = 'walk';
+      }
     } else if (e.tpl.ranged) {
       const rg = e.tpl.ranged;
       if (e.state === 'walk' && dist < rg.range && e.cd <= 0 && e.spawnGrace <= 0) {
@@ -303,18 +377,19 @@ function updateEnemies(dt) {
       }
     }
 
-    /* 近战三阶段：接触不再直接扣血，必须先走一段前摇（todo.md 阶段二） */
-    if (!e.tpl.ranged && !e.boss && e.state !== 'windup' && e.state !== 'charge') {
+    /* 近战三阶段：接触不再直接扣血，必须先走一段前摇（todo.md 阶段二）。
+       立体模式下还必须同层 —— 否则楼下的怪会隔着一层楼板打到玩家。 */
+    if (!e.tpl.ranged && !e.tpl.leap && !e.boss && e.state !== 'windup' && e.state !== 'charge') {
       const reach = e.radius + p.radius + 0.55;   // 必须大于 stopDist，否则永远够不到
       if (e.state === 'melee') {
         speed = 0;                                   // 前摇期间停住，动作可读
         if (e.stateT <= 0) {
           /* 前摇结束重新检查距离：玩家已经离开就落空 */
-          if (dist < reach + 0.35) hurtPlayer(e.dmg, e.pos, 'melee');
+          if (dist < reach + 0.35 && (!MODE.vertEnemy || Math.abs(p.pos.y - e.pos.y) < 2.4)) hurtPlayer(e.dmg, e.pos, 'melee');
           else G.meleeWhiffs++;
           e.state = 'walk'; e.atkT = e.atk;
         }
-      } else if (dist < reach && e.atkT <= 0 && e.spawnGrace <= 0) {
+      } else if (dist < reach && sameFloor && e.atkT <= 0 && e.spawnGrace <= 0) {
         e.state = 'melee'; e.stateT = TUNE.THREAT.meleeWindup;
         Audio2.meleeWindup(e.pos);
       }
@@ -371,7 +446,9 @@ function updateEnemies(dt) {
 
     e.pos.x += moveX * speed * dt;
     e.pos.z += moveZ * speed * dt;
-    R.collide(e.pos, e.radius);
+    R.collide(e.pos, e.radius, e.pos.y + 0.25, e.pos.y + e.height);
+    /* 同层追击也要吃重力与地面判定：走下平台边缘要掉下去，不能悬空 */
+    if (MODE.vertEnemy && !e.boss && e.state !== 'leap') NAV.stepPhysics(e, dt);
 
     /* 朝向玩家；冲刺时朝冲刺方向 */
     const fx = e.state === 'charge' ? e.chargeDir.x : nx;
@@ -412,6 +489,7 @@ function updateEnemies(dt) {
 function retireEnemy(e) {
   /* 掉经验 §11.3 —— 幼体与召唤物不掉 §17 */
   if (e.xp > 0) dropXp(e.pos, e.xp);
+  if (e.nav) { e.nav.region = null; e.nav.link = null; }
   R.puff(TV.copy(e.pos).setY(e.pos.y + e.height * 0.5), 0.2, e.radius * 3, e.variant ? MUT[e.variant].color : 0x8a6a5a, 0.26);
   Audio2.kill(e.pos);
   G.bus.emit('enemyDeath', { enemy: e });
@@ -445,10 +523,12 @@ function updateAcids(dt) {
     a.life -= dt;
     a.vel.y -= 9.8 * dt;
     a.pos.addScaledVector(a.vel, dt);
-    if (a.pos.y <= 0.1 || a.life <= 0) {
-      /* 落地生成酸池 —— 玩家可以走开，不要求跳跃 §11.2 */
+    const gy = CITY.enabled ? CITY.dropTo(a.pos.x, a.pos.z, a.pos.y + 0.3, 0.4) : 0;
+    if (a.pos.y <= gy + 0.1 || a.life <= 0) {
+      /* 落地生成酸池 —— 玩家可以走开，不要求跳跃 §11.2。
+         立体地图下必须落在实际支撑面上，否则酸池会飘在半空或穿进楼板。 */
       const z = R.zones.get();
-      z.mesh.position.set(a.pos.x, 0.04, a.pos.z);
+      z.mesh.position.set(a.pos.x, gy + 0.04, a.pos.z);
       z.mesh.scale.setScalar(a.cfg.poolRadius);
       z.mesh.material.color.setHex(0xa8c24a); z.mesh.material.opacity = 0.3; z.mesh.visible = true;
       z.rim.position.copy(z.mesh.position); z.rim.scale.setScalar(a.cfg.poolRadius);
@@ -1676,9 +1756,12 @@ function updateTimeline(dt) {
   }
   while (G.tlIndex < TIMELINE.length && G.time >= TIMELINE[G.tlIndex].t) {
     const ev = TIMELINE[G.tlIndex++];
+    if (ev.city && !MODE.vertEnemy) continue;        // 垂直威胁只在立体城市登场
     if (ev.kind === 'intro') {
+      const first = !G.introduced[ev.enemy];
       G.introduced[ev.enemy] = true;
-      UI.toast('新敌人：' + ENEMIES[ev.enemy].name, '#9fd8ff');
+      /* quiet：§4.3 要求用尸潮位置自然诱导，不弹长教学文本 */
+      if (!ev.quiet && first) UI.toast('新敌人：' + ENEMIES[ev.enemy].name, '#9fd8ff');
     } else if (ev.kind === 'squad') {
       for (let i = 0; i < ev.count; i++) {
         configureEnemy(G.enemies.get(), ENEMIES[ev.enemy], spawnPosition(false), { grace: 1.0 });
@@ -2028,6 +2111,7 @@ function boot() {
 
   G.player = makePlayer();
   if (MODE.vertMove) MOVE.init(G.player);
+  NAV.init();
   G.enemies = makeEnemyPool();
   G.bullets = makeBulletPool();
   G.acids = makeAcidPool();
@@ -2110,6 +2194,7 @@ function frame(now) {
       updateHazards(dt);
       updateXp(dt);
       trackXpRate(dt);
+      NAV.updateCamp(dt);
       updateMedical(dt);
       updateAirdrop(dt);
       updateBuff(dt);
