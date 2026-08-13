@@ -1218,3 +1218,39 @@ id 保持不变。README 与旧文档里的旧名因此会与卡面不一致，�
    效果也都会真实触发，但**视觉上目前主要靠既有的环/闪/粒子复用**，
    还没有做到 §7.2 要求的「史诗必须改变视觉、声音、目标选择或空间用法中的至少两项」。
    这是下一轮最大的一块表现工作量。
+
+---
+
+### 修复记录：跳跃/登墙时画面冻结（Bao 试玩报告，2026-08-14）
+
+**现象**：跳起来爬墙偶尔卡住一会，音效还在、也在开枪，但画面不刷新，过一会自己恢复。
+
+**根因**：`updateEnemies` 的教学高亮分支假设「有 highlight 就一定是变种」：
+
+```js
+e.bodyMat.emissive.setHex(MUT[e.variant].color);   // variant 为 null → MUT[null] 是 undefined
+```
+
+而本轮 §7.8 新加的「标记跨层精英」会给**普通怪**打 `highlight = 12`
+（Debug 面板生成攀爬/跳跃/远程怪时同样如此）。于是每帧在这里抛异常。
+
+症状之所以是「音效和射击正常、只有画面冻结」，是因为主循环的顺序：
+`updatePlayer`（开枪、音效、相机）→ `updateEnemies`（抛异常）→ … → `R.render()`。
+`requestAnimationFrame` 在 `frame()` 开头就排好了，所以循环本身不会停，
+但异常之后的 `R.render()` 每帧都执行不到。`highlight` 在抛异常前已经递减，
+所以正好卡满 12 秒再自行恢复 —— 和「卡住一会」完全对上。
+
+**修复**：
+1. 高亮颜色改为 `variant ? 变异色 : (markedElite ? 标记色 : 白)`，并在结束时正确复位非变种敌人的自发光。
+2. `configureEnemy` 补上 `markedElite / boneMark / boneMarkCtx` 的复位 —— 池化对象不能带着上一位住客的标记复活。
+3. **纵深防御**：给主循环的逻辑段加 try/catch。逻辑异常不再顺带停掉渲染，
+   世界继续画，错误只报一次（console + Debug 日志 + 一条 toast）。
+   「画面冻结」是最难排查的故障形态，不值得为省一个 try/catch 再遇到第二次。
+
+**复现与验证**：新增 `_bughunt.html` —— 在全部 48 个贴墙起跳点按住 W+Space 并持续开枪，
+真跑 `frame()` 并逐帧 try/catch，同时检测「悬空且长时间不动」。
+修复前 6 处异常全部指向同一行；修复后 **CLEAN**：异常 0、悬空卡死 0，
+状态覆盖 登墙 808 帧 / 翻越 264 / 抓边 204 / 滑索 1。
+
+回归：testsim 无失败、testsim_evo PASS、_citycheck ALLPASS、
+_smoke 立体与 `?map=flat` 两种模式均通关且 `runtime_err=0`。

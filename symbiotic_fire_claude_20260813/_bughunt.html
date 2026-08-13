@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>body{background:#0d1117;color:#dbe7f0;font:12px/1.6 monospace;padding:14px;white-space:pre-wrap}</style>
+</head>
+<body>
+<canvas id="gl" width="16" height="16" style="display:none"></canvas>
+<div id="hud" style="display:none">
+  <div id="top"><div id="clock"></div><div id="xpwrap"><div id="xpfill"></div></div>
+  <div id="lvlrow"><b id="lvlnum"></b></div></div>
+  <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="toast"></div><div id="hint"></div><div id="buffbar"></div>
+  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
+  <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
+  <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
+</div>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="hitmark"><i></i><i></i></div>
+<div id="dmgnums"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
+<div id="dmgdirs"></div><div id="threats"></div><div id="shieldvig"></div><div id="shieldflash"></div>
+<div id="floattext"></div><svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="nextdraw"></div><div id="cards"></div>
+<div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
+<div id="pause"><button id="resume"></button></div><div id="results"></div>
+<div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
+<div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>
+window.__err = [];
+window.onerror = (m, s, l, c, e) => { window.__err.push(m + ' @' + (s || '').split('/').pop() + ':' + l + (e && e.stack ? '\n    ' + e.stack.split('\n')[1] : '')); };
+</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/build-synergy.js"></script>
+<script src="js/evolution-pool.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   跳跃 / 登墙 卡死复现器
+   玩家报告：跳起来爬墙偶尔卡住一会，音效还在、也在开枪，但画面不刷新。
+   「逻辑继续跑、画面不更新」= 每帧在 R.render() 之前抛了异常
+   （rAF 在 frame() 开头就排好了，所以循环不会停）。
+   这里真跑 frame()，逐帧 try/catch，把异常和当时的移动状态一起抓出来。
+   ========================================================================== */
+const L = [];
+function report(lines) {
+  document.getElementById('out').textContent = lines.join('\n');
+  document.title = 'RESULT>>' + lines.join(' | ') + '<<END';
+}
+
+addEventListener('load', () => setTimeout(() => {
+  try { run(); } catch (e) { report(['HARNESS_THROW:' + e.message + ' | ' + (e.stack || '').split('\n').slice(0, 3).join(' ⏎ ')]); }
+}, 300));
+
+function run() {
+  if (window.__err.length) { report(['BOOT_ERR:' + window.__err.join(';')]); return; }
+  window.requestAnimationFrame = () => 0;
+  G.phase = 'play';
+  DebugPanel.god = true;
+  const p = G.player;
+
+  /* 找出所有可墙跑立面，在每个面的外侧取贴墙起跳点 */
+  const spots = [];
+  CITY.solids.forEach(s => {
+    if (s.surf !== SURF.WALLRUN || !s.on) return;
+    const cy = 0.4;
+    const pad = p.radius + 0.06;
+    spots.push({ x: s.x0 - pad, z: (s.z0 + s.z1) / 2, yaw: Math.PI / 2, y: cy });
+    spots.push({ x: s.x1 + pad, z: (s.z0 + s.z1) / 2, yaw: -Math.PI / 2, y: cy });
+    spots.push({ x: (s.x0 + s.x1) / 2, z: s.z0 - pad, yaw: Math.PI, y: cy });
+    spots.push({ x: (s.x0 + s.x1) / 2, z: s.z1 + pad, yaw: 0, y: cy });
+  });
+  L.push('可墙跑立面贴墙起跳点：' + spots.length);
+
+  let t = 0;
+  const throws = [];
+  const frozen = [];
+  const stateHist = {};
+
+  /* 采样一半起跳点即可覆盖所有立面朝向；软件渲染下跑满全部会超时 */
+  for (let i = 0; i < spots.length; i += 2) {
+    const sp = spots[i];
+    MOVE.teleport(p, sp.x, sp.y, sp.z);
+    p.yaw = sp.yaw; p.pitch = 0;
+    p.vel.set(0, 0, 0);
+    /* 落到地面 */
+    for (let f = 0; f < 60; f++) MOVE.update(1 / 60, p);
+
+    /* 按住 W + Space（持续按住时应当自动翻越 / 抓边 / 登墙），并且一直开枪 */
+    KEY.KeyW = true; KEY.Space = true;
+    p.gun.held = true;
+
+    let lastX = p.pos.x, lastY = p.pos.y, lastZ = p.pos.z, still = 0;
+    for (let f = 0; f < 170; f++) {
+      /* 模拟真实按键：Space 每隔一会重新按一次（keydown 才会喂 jumpBuf） */
+      if (f % 22 === 0) MOVE.onJump();
+      t += 16.7;
+      try {
+        frame(t);
+      } catch (e) {
+        if (throws.length < 6) {
+          throws.push('[' + sp.x.toFixed(1) + ',' + sp.z.toFixed(1) + ' state=' + MOVE.pose.state + '] ' +
+            e.message + ' ⏎ ' + (e.stack || '').split('\n')[1].trim());
+        }
+        break;
+      }
+      stateHist[MOVE.pose.state] = (stateHist[MOVE.pose.state] || 0) + 1;
+
+      /* 卡死检测：非地面状态下位置连续不动 */
+      const moved = Math.hypot(p.pos.x - lastX, p.pos.y - lastY, p.pos.z - lastZ);
+      if (moved < 0.004 && !MOVE.pose.grounded) still++; else still = 0;
+      lastX = p.pos.x; lastY = p.pos.y; lastZ = p.pos.z;
+      if (still > 75 && frozen.length < 8) {          // 悬空且 1.25 秒没动
+        frozen.push('[' + p.pos.x.toFixed(1) + ',' + p.pos.y.toFixed(1) + ',' + p.pos.z.toFixed(1) +
+          '] state=' + MOVE.pose.state + ' vy=' + p.vel.y.toFixed(2) +
+          ' scripted=' + (MOVE.st.scripted ? MOVE.st.scripted.kind : '-') +
+          ' zip=' + (MOVE.st.zip ? 'Y' : '-') + ' climbT=' + MOVE.st.climbT.toFixed(2));
+        still = 0;
+      }
+    }
+    KEY.KeyW = false; KEY.Space = false; p.gun.held = false;
+  }
+
+  L.push('帧内异常：' + (throws.length ? '\n  ' + throws.join('\n  ') : '0'));
+  L.push('悬空卡死：' + (frozen.length ? '\n  ' + frozen.join('\n  ') : '0'));
+  L.push('状态分布：' + JSON.stringify(stateHist));
+  L.push('window.onerror：' + (window.__err.length ? '\n  ' + window.__err.slice(0, 4).join('\n  ') : '0'));
+  const bad = throws.length + frozen.length + window.__err.length;
+  L.unshift(bad ? 'FAIL(' + bad + ')' : 'CLEAN');
+  report(L);
+}
+</script>
+</body></html>

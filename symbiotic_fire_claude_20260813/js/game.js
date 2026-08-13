@@ -98,7 +98,7 @@ function configureEnemy(e, tpl, pos, opts) {
     e.nav.region = null; e.nav.link = null; e.nav.linkT = 0; e.nav.repath = 0;
     e.nav.stuck = 0; e.nav.vy = 0; e.nav.grounded = true; e.nav.recover = 0; e.nav.falling = false;
   }
-  e.leapAt = null; e.leapVel = null;
+  e.leapAt = null; e.leapVel = null; e.markedElite = false; e.boneMark = 0; e.boneMarkCtx = null;
   e.summonCd = tpl.summon ? tpl.summon.cooldown : 0;
   e.slamAt = null; e.chargeDir = { x: 0, z: 1 };
 
@@ -475,13 +475,22 @@ function updateEnemies(dt) {
       e.bodyMat.emissiveIntensity = 0.35 + Math.sin(G.time * 22) * 0.25;
     }
 
-    /* 教学高亮 §13.3 */
+    /* 教学高亮 §13.3
+       highlight 不等于「一定是变种」：todo3 §7.8 的跨层精英标记会给普通怪打
+       highlight，Debug 面板生成攀爬/跳跃/远程怪时也会。
+       原实现直接取 MUT[e.variant].color —— variant 为 null 时 MUT[null] 是 undefined，
+       于是每帧在这里抛异常，updateEnemies 之后的 R.render() 再也执行不到：
+       开枪、音效、相机全部正常，唯独画面不刷新，直到 highlight 递减到 0 才恢复。 */
     if (e.highlight > 0) {
       e.highlight -= dt;
       const f = Math.sin(G.time * 8) * 0.5 + 0.5;
-      e.bodyMat.emissive.setHex(MUT[e.variant].color);
+      const hl = e.variant ? MUT[e.variant].color : (e.markedElite ? 0xffc14d : 0xffffff);
+      e.bodyMat.emissive.setHex(hl);
       e.bodyMat.emissiveIntensity = 0.3 + f * 0.7;
-      if (e.highlight <= 0) e.bodyMat.emissiveIntensity = 0.16;
+      if (e.highlight <= 0) {
+        e.bodyMat.emissiveIntensity = e.variant ? 0.16 : 0;
+        if (!e.variant) e.bodyMat.emissive.setHex(0x000000);
+      }
     }
   }
   G.enemies.compact();
@@ -2451,6 +2460,7 @@ function frame(now) {
   const dt = raw * BOOT.timescale;
 
   if (active) {
+   try {
     G.time += dt;
     G.procThisFrame = 0;
 
@@ -2484,6 +2494,19 @@ function frame(now) {
       if (DebugPanel.god) G.player.hp = G.player.maxHp;
       if (G.time >= TUNE.RUN_SECONDS && !G.bossAlive && G.tlIndex >= TIMELINE.length) { /* Boss 已死由 retireEnemy 触发胜利 */ }
     }
+   } catch (err) {
+    /* 逻辑异常绝不能顺带停掉渲染。
+       rAF 在 frame() 开头就排好了，所以循环本身不会停 —— 但如果异常从这里冒出去，
+       后面的 R.render() 每帧都执行不到，表现为「音效还在、也在开枪，画面卡住」。
+       那是最难排查的故障形态，所以这里兜住它：世界继续渲染，错误只报一次。 */
+    if (!G._loopErr) {
+      G._loopErr = err;
+      console.error('[frame] 逻辑异常，已兜住以保住渲染：', err);
+      DebugPanel.log('⚠ 逻辑异常 ' + err.message);
+      G.ui.toast('内部错误：' + err.message, '#ff6a7a', true);
+    }
+    G._loopErrCount = (G._loopErrCount || 0) + 1;
+   }
   } else if (G.phase === 'choose') {
     /* §11.3 升级界面出现时游戏完全暂停 */
     updateShake(raw * 0.4);
