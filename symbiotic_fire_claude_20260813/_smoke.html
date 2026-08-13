@@ -14,6 +14,7 @@
 <div id="hpfill"></div><div id="hpnum"></div>
 <div id="ammo"></div><div id="ammobar"></div><div id="dashfill"></div>
 <div id="cards"></div>
+<div id="hitmark"><i></i><i></i></div><div id="dmgnums"></div>
 <div id="shieldvig"></div><div id="shieldflash"></div><div id="floattext"></div><div id="buffbar"></div>
 <svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
 <div class="objmark" id="medmark"><span></span></div>
@@ -285,6 +286,77 @@ addEventListener('load', () => {
         ' arrows=' + arrowsBehind + ' arcsWhenFacing=' + litFacing);
     });
     if (err) { report(['THREAT_ERR:' + err]); return; }
+
+    /* 弱点闭环：用无散布枪对准每种敌人的头部球心与躯干中心各打一发，
+       验证"瞄头稳定触发、瞄躯干不误判"，以及首轮的 3 发 / 1 发目标。 */
+    err = guard(() => {
+      DebugPanel.god = true; DebugPanel.noSpread = true;
+      G.time = 0;                                    // 回到开局血量，验证首轮数值
+      G.mods = {}; G.mutations = []; G.mutationSet = {}; recompute();
+      const rows = [];
+      ['grunt', 'heavy', 'spitter', 'charger', 'midboss'].forEach(kind => {
+        G.enemies.live.forEach(e => { if (!e._dead && !e.dead) G.enemies.release(e); });
+        G.enemies.compact();
+        G.player.pos.set(0, 0, 0); G.player.yaw = 0;
+
+        const shootAt = (target) => {
+          G.enemies.live.forEach(e => { if (!e._dead && !e.dead) G.enemies.release(e); });
+          G.enemies.compact();
+          const e = configureEnemy(G.enemies.get(), ENEMIES[kind], new THREE.Vector3(0, 0, -12), { grace: 9999 });
+          e.speed = 0; e.maxHp = e.hp = 1e7;
+          G.hash.clear(); G.hash.insert(e, e.pos.x, e.pos.z);
+          const from = new THREE.Vector3(0, TUNE.PLAYER.height, 0);
+          const to = target === 'head'
+            ? new THREE.Vector3(e.pos.x + e.face.x * e.weak.fwd * e.height,
+                                e.pos.y + e.weak.y * e.height,
+                                e.pos.z + e.face.z * e.weak.fwd * e.height)
+            : new THREE.Vector3(e.pos.x, e.pos.y + e.height * 0.42, e.pos.z);
+          const dir = to.clone().sub(from).normalize();
+          G.bullets.live.forEach(b => G.bullets.release(b)); G.bullets.compact();
+          const before = e.hp;
+          spawnBullet(from, dir, G.derived.damage, makeAttack('primary'), {});
+          for (let f = 0; f < 40; f++) updateBullets(1 / 240);
+          return { dmg: before - e.hp, weak: (G.stats.weakHits || 0) };
+        };
+        const w0 = G.stats.weakHits || 0;
+        const head = shootAt('head');
+        const headWeak = (G.stats.weakHits || 0) > w0;
+        const w1 = G.stats.weakHits || 0;
+        const body = shootAt('body');
+        const bodyWeak = (G.stats.weakHits || 0) > w1;
+        rows.push(kind + '[head ' + head.dmg.toFixed(0) + (headWeak ? '/W' : '/-') +
+                  ' body ' + body.dmg.toFixed(0) + (bodyWeak ? '/W' : '/-') + ']');
+      });
+      out.push('weak: ' + rows.join(' '));
+
+      /* 首轮目标：开局普通丧尸 身体 3 发 / 弱点 1 发 */
+      G.enemies.live.forEach(e => { if (!e._dead && !e.dead) G.enemies.release(e); });
+      G.enemies.compact();
+      const shots = (target) => {
+        const e = configureEnemy(G.enemies.get(), ENEMIES.grunt, new THREE.Vector3(0, 0, -12), { grace: 9999 });
+        e.speed = 0;
+        G.hash.clear(); G.hash.insert(e, e.pos.x, e.pos.z);
+        const from = new THREE.Vector3(0, TUNE.PLAYER.height, 0);
+        const to = target === 'head'
+          ? new THREE.Vector3(e.pos.x, e.pos.y + e.weak.y * e.height, e.pos.z + e.face.z * e.weak.fwd * e.height)
+          : new THREE.Vector3(e.pos.x, e.pos.y + e.height * 0.42, e.pos.z);
+        const dir = to.clone().sub(from).normalize();
+        let n = 0;
+        G.bullets.live.forEach(b => G.bullets.release(b)); G.bullets.compact();
+        while (!e.dead && n < 12) {
+          spawnBullet(from, dir, G.derived.damage, makeAttack('primary'), {});
+          for (let f = 0; f < 40; f++) updateBullets(1 / 240);
+          n++;
+          G.hash.clear(); if (!e.dead) G.hash.insert(e, e.pos.x, e.pos.z);
+        }
+        G.enemies.release(e); G.enemies.compact();
+        return n;
+      };
+      out.push('ttk@0s: bodyShots=' + shots('body') + ' headShots=' + shots('head') +
+        ' (目标 3 / 1)');
+      DebugPanel.noSpread = false;
+    });
+    if (err) { report(['WEAK_ERR:' + err]); return; }
 
     /* 强制拿满 4 个共同变异，并把变种放进池子 */
     err = guard(() => {

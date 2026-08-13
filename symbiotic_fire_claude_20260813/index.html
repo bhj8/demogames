@@ -34,6 +34,36 @@ canvas#gl{display:block;position:fixed;inset:0}
 #cross u{position:absolute;left:50%;top:50%;width:2px;height:2px;margin:-1px 0 0 -1px;
   background:rgba(230,242,252,.55);border-radius:50%}
 
+/* 命中标记：玩家不看伤害数字也要能分辨普通命中 / 弱点命中 / 弱点击杀 */
+#hitmark{position:fixed;left:50%;top:50%;width:0;height:0;pointer-events:none;z-index:6;opacity:0}
+#hitmark i{position:absolute;left:-9px;top:-1px;width:18px;height:2px;border-radius:1px;
+  background:#fff;box-shadow:0 0 3px rgba(0,0,0,.9);transform-origin:50% 50%}
+#hitmark i:nth-child(1){transform:rotate(45deg)}
+#hitmark i:nth-child(2){transform:rotate(-45deg)}
+#hitmark.normal{animation:hmN .07s ease-out}
+#hitmark.weak{animation:hmW .13s ease-out}
+#hitmark.weakkill{animation:hmK .22s ease-out}
+@keyframes hmN{0%{opacity:1;transform:scale(.75)}100%{opacity:0;transform:scale(1)}}
+@keyframes hmW{0%{opacity:1;transform:scale(.8)}60%{opacity:1;transform:scale(1.65)}
+  100%{opacity:0;transform:scale(1.9)}}
+@keyframes hmK{0%{opacity:1;transform:scale(.9) rotate(0deg)}
+  55%{opacity:1;transform:scale(2.1) rotate(45deg)}100%{opacity:0;transform:scale(2.4) rotate(90deg)}}
+#hitmark.weak i,#hitmark.weakkill i{height:3px;left:-12px;width:24px}
+#hitmark.weak i{background:#ffd24a}
+#hitmark.weakkill i{background:#ff7a4a;box-shadow:0 0 8px rgba(255,180,60,.9)}
+
+/* 伤害数字：正式界面只显示金色弱点伤害，调试模式才显示全部 */
+#dmgnums{position:fixed;inset:0;pointer-events:none;z-index:7}
+.dnum{position:absolute;font-size:19px;font-weight:700;opacity:0;
+  font-variant-numeric:tabular-nums;text-shadow:0 2px 8px rgba(0,0,0,.95);
+  transform:translate(-50%,-50%)}
+.dnum.on{animation:dn .75s ease-out}
+.dnum.kill{font-size:26px}
+.dnum.plain{font-size:14px;font-weight:600}
+@keyframes dn{0%{opacity:1;transform:translate(-50%,-50%) scale(.7)}
+  25%{opacity:1;transform:translate(-50%,-70%) scale(1.1)}
+  100%{opacity:0;transform:translate(-50%,-135%) scale(1)}}
+
 /* ------------------------------------------------------- 受伤 / 治疗反馈 */
 #hurtflash,#healflash,#vignette{position:fixed;inset:0;pointer-events:none;z-index:5}
 #vignette{background:radial-gradient(ellipse at center,transparent 40%,rgba(150,0,20,.85) 100%);
@@ -272,6 +302,8 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 <canvas id="gl"></canvas>
 
 <div id="cross"><i></i><i></i><i></i><i></i><u></u></div>
+<div id="hitmark"><i></i><i></i></div>
+<div id="dmgnums"></div>
 <div id="vignette"></div>
 <div id="hurtflash"></div>
 <div id="healflash"></div>

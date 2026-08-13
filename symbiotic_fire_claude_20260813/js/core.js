@@ -346,6 +346,25 @@ const Audio2 = {
     o.connect(g); o.start(t); o.stop(t + 0.3);
   },
 
+  /* 弱点确认：中央、短促、不做空间衰减，否则会被枪声和尸潮声淹没 */
+  weakConfirm(killed) {
+    if (!this.ready) return;
+    const t = this.t, dest = this.comp;
+    const o = this.ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(1250, t);
+    o.frequency.exponentialRampToValueAtTime(killed ? 700 : 1750, t + 0.055);
+    const g = this._env(dest, t, 0.001, killed ? 0.12 : 0.06, 0.26);
+    o.connect(g); o.start(t); o.stop(t + 0.16);
+    if (killed) {
+      const o2 = this.ctx.createOscillator();
+      o2.type = 'triangle'; o2.frequency.setValueAtTime(520, t + 0.05);
+      o2.frequency.exponentialRampToValueAtTime(240, t + 0.2);
+      const g2 = this._env(dest, t + 0.05, 0.002, 0.16, 0.2);
+      o2.connect(g2); o2.start(t + 0.05); o2.stop(t + 0.26);
+    }
+  },
+
   shieldHit(broken) {
     if (!this.ready) return;
     const t = this.t, dest = this.comp;

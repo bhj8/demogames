@@ -35,6 +35,8 @@ const G = {
 
 const V3 = new THREE.Vector3();
 const V3b = new THREE.Vector3();
+const _wc = { x: 0, y: 0, z: 0 };
+const _ext = new THREE.Vector3();
 
 /* ============================================================================
    派生数值 —— 所有改装与变异的加成在这里一次性算完，热路径不做查表
@@ -525,6 +527,35 @@ function spawnBullet(origin, dir, dmg, ctx, opts) {
   return b;
 }
 
+/* 线段 vs 球 —— 弱点判定专用。
+   绝不能再从身体圆柱的命中点反推头部：圆柱交点恒在圆柱表面上，
+   水平距离恒等于 radius+0.09，永远大于任何"靠近中心"的阈值，
+   结果就是 weak 永远为 false（这个 bug 让 weakpointMult 和瞄准模块彻底失效）。 */
+function segSphere(p0, p1, cx, cy, cz, r) {
+  const dx = p1.x - p0.x, dy = p1.y - p0.y, dz = p1.z - p0.z;
+  const fx = p0.x - cx, fy = p0.y - cy, fz = p0.z - cz;
+  const a = dx * dx + dy * dy + dz * dz;
+  if (a < 1e-9) return -1;
+  const b = 2 * (fx * dx + fy * dy + fz * dz);
+  const c = fx * fx + fy * fy + fz * fz - r * r;
+  const disc = b * b - 4 * a * c;
+  if (disc < 0) return -1;
+  const sq = Math.sqrt(disc);
+  let t = (-b - sq) / (2 * a);
+  if (t < 0) t = (-b + sq) / (2 * a);
+  if (t < 0 || t > 1) return -1;
+  return t;
+}
+
+/* 头部球的世界位置：跟随 pos / face / height */
+function weakCenter(e, out) {
+  const w = e.weak;
+  out.x = e.pos.x + e.face.x * w.fwd * e.height;
+  out.y = e.pos.y + w.y * e.height;
+  out.z = e.pos.z + e.face.z * w.fwd * e.height;
+  return out;
+}
+
 /* 线段 vs 竖直圆柱 —— 高速子弹必须做扫掠检测，否则会穿怪 */
 function segCylinder(p0, p1, cx, cz, r, y0, y1) {
   const dx = p1.x - p0.x, dz = p1.z - p0.z;
@@ -580,29 +611,55 @@ function updateBullets(dt) {
     const span = b.prev.distanceTo(b.pos) * 0.5 + 1.6;
     G.hash.query(midX, midZ, span, _hitCand);
 
-    let bestT = 2, bestE = null;
+    let bestT = 2, bestE = null, bestWeak = false, bestHitT = 0;
     for (let k = 0; k < _hitCand.length; k++) {
       const e = _hitCand[k];
       if (e.dead || b.hitList.has(e.uid)) continue;
-      const t = segCylinder(b.prev, b.pos, e.pos.x, e.pos.z, e.radius + 0.09 * b.scale, e.pos.y, e.pos.y + e.height);
-      if (t >= 0 && t < bestT) { bestT = t; bestE = e; }
+
+      /* 头部球与身体圆柱分别检测。粗略碰撞体只是代理 ——
+         准星穿过可见头部球时优先按弱点处理，即使身体交点更早。 */
+      let headT = -1;
+      if (e.weak) {
+        weakCenter(e, _wc);
+        headT = segSphere(b.prev, b.pos, _wc.x, _wc.y, _wc.z, e.weak.r * e.height + 0.06 * b.scale);
+      }
+      const bodyT = segCylinder(b.prev, b.pos, e.pos.x, e.pos.z,
+        e.radius + 0.09 * b.scale, e.pos.y, e.pos.y + e.height);
+      if (headT < 0 && bodyT < 0) continue;
+
+      /* 已确定命中这只敌人。但子步扫掠会把大体型敌人切开：
+         肉山身体半径 1.79、头球 0.98，两个入射点相差 0.8m，
+         可能落在不同子步里 —— 身体先中并锁上 hitList，头部就永远判不到。
+         所以再用一段覆盖整只敌人的射线复判一次头部。 */
+      let weakNow = headT >= 0;
+      let hitAt = weakNow ? headT : bodyT;
+      if (!weakNow && e.weak) {
+        const far = Math.hypot(_wc.x - b.prev.x, _wc.y - b.prev.y, _wc.z - b.prev.z)
+          + e.weak.r * e.height + 0.25;
+        _ext.copy(b.dir).multiplyScalar(far).add(b.prev);
+        const ht = segSphere(b.prev, _ext, _wc.x, _wc.y, _wc.z, e.weak.r * e.height + 0.06 * b.scale);
+        if (ht >= 0) {
+          weakNow = true;
+          /* 换算回当前子步的参数空间，供命中点插值使用 */
+          const segLen = b.prev.distanceTo(b.pos) || 1e-6;
+          hitAt = clamp(ht * far / segLen, 0, 1);
+        }
+      }
+
+      const order = Math.min(headT >= 0 ? headT : 2, bodyT >= 0 ? bodyT : 2);
+      if (order < bestT) { bestT = order; bestE = e; bestWeak = weakNow; bestHitT = hitAt; }
     }
 
     if (bestE) {
-      const point = V3.copy(b.prev).lerp(b.pos, bestT).clone();
-      resolveBulletHit(b, bestE, point);
+      const point = V3.copy(b.prev).lerp(b.pos, bestHitT).clone();
+      resolveBulletHit(b, bestE, point, bestWeak);
     }
   }
   G.bullets.compact();
 }
 
-function resolveBulletHit(b, e, point) {
+function resolveBulletHit(b, e, point, weak) {
   b.hitList.add(e.uid);
-
-  /* 弱点：头部球体 §11.3 */
-  const headY = e.pos.y + e.height * 0.86;
-  const weak = Math.abs(point.y - headY) < e.height * 0.15 &&
-    Math.hypot(point.x - e.pos.x, point.z - e.pos.z) < e.radius * 0.85;
 
   /* 骨板判定 §19：正面命中才吃骨板；背后与头部绕过 */
   const toHit = V3b.set(point.x - e.pos.x, 0, point.z - e.pos.z).normalize();
@@ -617,11 +674,27 @@ function resolveBulletHit(b, e, point) {
     dmg *= 1 + Math.min(p.rampMax, p.rampPerPierce * b.pierceHits);
   }
 
+  const hpBefore = e.hp;
   const dealt = damageEnemy(e, dmg, b.ctx, { point: point, weakpoint: weak, fromFront: fromFront, bullet: b });
+  const killed = e.dead && hpBefore > 0;
 
   G.stats.hits++;
-  R.spark(point, b.dir, weak ? 0xfff0b0 : (b.split ? MUT.fission.color : 0xffd08a));
-  Audio2.hit(point, weak);
+  if (weak && dealt > 0) {
+    /* 弱点世界反馈：金白粒子爆发，而不是只换个浅黄色 */
+    G.stats.weakHits = (G.stats.weakHits || 0) + 1;
+    if (killed) G.stats.weakKills = (G.stats.weakKills || 0) + 1;
+    R.spark(point, b.dir, 0xfff4c0);
+    R.spark(point, b.dir, 0xffd24a);
+    R.puff(point, 0.12, 1.05, 0xfff0b0, 0.2);
+    Audio2.weakConfirm(killed);
+    G.ui.hitMark(killed ? 'weakkill' : 'weak');
+    G.ui.dmgNumber(point, Math.round(dealt), killed);
+  } else {
+    R.spark(point, b.dir, b.split ? MUT.fission.color : 0xffd08a);
+    Audio2.hit(point, false);
+    if (dealt > 0) G.ui.hitMark('normal');
+    if (DebugPanel.showDmg && dealt > 0) G.ui.dmgNumber(point, Math.round(dealt), false, true);
+  }
 
   /* 击退 + 余震 §23 */
   if (dealt > 0) {

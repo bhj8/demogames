@@ -45,7 +45,7 @@ const TUNE = {
     bulletLife: 0.9,
     pierce: 0,
     pellets: 1,
-    weakpointMult: 2.0,
+    weakpointMult: 2.5,   // todo P1：修好判定后的首轮值（12×2.5=30，开局一枪爆头）
     knockback: 3.2
   },
 
@@ -310,28 +310,36 @@ MODS.forEach(m => { MODMAP[m.id] = m; });
    ========================================================================== */
 const ENEMIES = {
   grunt: {
-    id: 'grunt', name: '普通丧尸',
+    id: 'grunt',
+    /* 弱点球：yRatio / 前后偏移 / 半径，均为身高的比例（对齐 render.js 的模型头部） */
+    weak: { y: 0.899, fwd: 0.010, r: 0.139 }, name: '普通丧尸',
     hp: 30, speed: 3.15, dmg: 9, atk: 1.0, xp: 1,
     radius: 0.46, height: 1.75, mass: 1,
     color: 0x93a68c, accent: 0xbccbb0,
     canVariant: true
   },
   heavy: {
-    id: 'heavy', name: '重型丧尸',
+    id: 'heavy',
+    /* 弱点球：yRatio / 前后偏移 / 半径，均为身高的比例（对齐 render.js 的模型头部） */
+    weak: { y: 0.854, fwd: 0.017, r: 0.161 }, name: '重型丧尸',
     hp: 175, speed: 1.75, dmg: 20, atk: 1.7, xp: 5,
     radius: 0.82, height: 2.25, mass: 3.4,
     color: 0x7d8270, accent: 0xa9ae95,
     knockResist: 0.62
   },
   spitter: {
-    id: 'spitter', name: '吐酸者',
+    id: 'spitter',
+    /* 弱点球：yRatio / 前后偏移 / 半径，均为身高的比例（对齐 render.js 的模型头部） */
+    weak: { y: 0.880, fwd: 0.080, r: 0.156 }, name: '吐酸者',
     hp: 58, speed: 2.35, dmg: 11, atk: 2.6, xp: 3,
     radius: 0.5, height: 1.8, mass: 1.1,
     color: 0x93a84f, accent: 0xc8e063,
     ranged: { range: 17, projSpeed: 17, poolRadius: 2.4, poolTime: 3.4, poolTick: 0.5, poolDmg: 7, windup: 0.75 }
   },
   charger: {
-    id: 'charger', name: '冲撞精英',
+    id: 'charger',
+    /* 弱点球：yRatio / 前后偏移 / 半径，均为身高的比例（对齐 render.js 的模型头部） */
+    weak: { y: 0.660, fwd: 0.264, r: 0.185 }, name: '冲撞精英',
     hp: 420, speed: 3.0, dmg: 28, atk: 1.5, xp: 22,
     radius: 0.92, height: 2.35, mass: 5,
     color: 0xa85b4c, accent: 0xf07a60,
@@ -339,7 +347,9 @@ const ENEMIES = {
     charge: { range: 20, windup: 0.95, speed: 17, duration: 1.5, cooldown: 4.2, dmg: 40 }
   },
   midboss: {
-    id: 'midboss', name: '肉山',
+    id: 'midboss',
+    /* 弱点球：yRatio / 前后偏移 / 半径，均为身高的比例（对齐 render.js 的模型头部） */
+    weak: { y: 0.788, fwd: 0.025, r: 0.156 }, name: '肉山',
     hp: 3400, speed: 2.15, dmg: 34, atk: 1.8, xp: 90,
     radius: 1.7, height: 3.6, mass: 14,
     color: 0x95505c, accent: 0xe87c8c,
@@ -348,7 +358,9 @@ const ENEMIES = {
     summon: { count: 6, cooldown: 9.0 }
   },
   king: {
-    id: 'king', name: '尸王',
+    id: 'king',
+    /* 弱点球：yRatio / 前后偏移 / 半径，均为身高的比例（对齐 render.js 的模型头部） */
+    weak: { y: 0.788, fwd: 0.025, r: 0.156 }, name: '尸王',
     hp: 26000, speed: 2.5, dmg: 40, atk: 1.6, xp: 0,
     radius: 2.3, height: 4.8, mass: 30,
     color: 0x6e4256, accent: 0xff7f96,

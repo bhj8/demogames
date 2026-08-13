@@ -63,6 +63,7 @@ function configureEnemy(e, tpl, pos, opts) {
   e.atk = tpl.atk; e.atkT = RNG.spawn.range(0, 0.5);
   e.xp = tpl.xp * (opts.xpMult !== undefined ? opts.xpMult : 1);
   e.mass = tpl.mass; e.knockResist = tpl.knockResist || 0;
+  e.weak = tpl.weak || null;
   e.dead = false; e.hurtFlash = 0; e.state = 'walk'; e.stateT = 0; e.cd = RNG.spawn.range(0, 2);
   e.minion = !!opts.minion; e.boss = !!tpl.boss; e.king = !!tpl.king;
   e.phase = 0; e.phaseT = 0; e.highlight = opts.highlight || 0;
@@ -1139,7 +1140,8 @@ function fire() {
   g.bloom = Math.min(1, g.bloom + TUNE.GUN.bloomPerShot);
   g.recoil = Math.min(1.2, g.recoil + d.recoil);
 
-  const spread = (d.spreadBase + d.spreadBloom * g.bloom) * Math.PI / 180;
+  const spread = DebugPanel.noSpread ? 0
+    : (d.spreadBase + d.spreadBloom * g.bloom) * Math.PI / 180;
   const origin = TV.copy(R.camera.position).clone();
   const baseDir = R.camera.getWorldDirection(new THREE.Vector3());
 
@@ -1178,6 +1180,13 @@ const UI = {
     this.buffEl = $('buffbar');
     this.medMark = $('medmark'); this.dropMark = $('dropmark');
     this._arcs = Array.prototype.slice.call(document.querySelectorAll('#threatarcs path'));
+    this.hitMarkEl = $('hitmark');
+    /* 伤害数字池：9 发/秒 + 高密度下不能每帧新建 DOM */
+    this._dnums = []; this._dnumI = 0;
+    for (let i = 0; i < 12; i++) {
+      const d = document.createElement('div'); d.className = 'dnum';
+      $('dmgnums').appendChild(d); this._dnums.push(d);
+    }
     this._toastT = 0; this._hintT = 0; this._dirs = [];
     this._threats = [];
     for (let i = 0; i < 6; i++) {
@@ -1356,6 +1365,27 @@ const UI = {
     this.buffEl.style.color = BUFF_CSS[b.id];
     const extra = b.id === 'shield' ? ' · ' + Math.ceil(b.shield) : '';
     this.buffEl.textContent = BUFF_NAME[b.id] + extra + '  ' + b.t.toFixed(1) + 's';
+  },
+
+  hitMark(kind) {
+    const el = this.hitMarkEl;
+    el.className = '';
+    void el.offsetWidth;
+    el.className = kind;
+  },
+
+  /* 伤害数字锚在世界命中点上，投影到屏幕 */
+  dmgNumber(worldPos, value, killed, plain) {
+    const v = TV.copy(worldPos).project(R.camera);
+    if (v.z > 1) return;                        // 在身后，别画
+    const el = this._dnums[this._dnumI = (this._dnumI + 1) % this._dnums.length];
+    el.className = 'dnum' + (killed ? ' kill' : '') + (plain ? ' plain' : '');
+    el.style.left = ((v.x * 0.5 + 0.5) * innerWidth).toFixed(0) + 'px';
+    el.style.top = ((-v.y * 0.5 + 0.5) * innerHeight).toFixed(0) + 'px';
+    el.style.color = plain ? 'rgba(230,242,252,.75)' : (killed ? '#ff9a4a' : '#ffd24a');
+    el.textContent = value;
+    void el.offsetWidth;
+    el.classList.add('on');
   },
 
   shieldVig(frac) {
@@ -1581,6 +1611,13 @@ function showResults(won) {
   const unseen = MUTATIONS.filter(m => !G.mutationSet[m.id]).map(m => m.name).join(' / ');
 
   /* 本局触发链：只列实际发生过的，不做伤害瀑布 §32 */
+  const aim = [];
+  if (G.stats.weakHits) {
+    aim.push('弱点命中 ×' + G.stats.weakHits);
+    if (G.stats.weakKills) aim.push('爆头击杀 ×' + G.stats.weakKills);
+    aim.push('爆头率 ' + Math.round(G.stats.weakHits / Math.max(1, G.stats.hits) * 100) + '%');
+  }
+
   const supply = [];
   if (G.stats.medPicked) supply.push('医疗 ×' + G.stats.medPicked);
   if (G.stats.buffsTaken) supply.push('空投强化 ×' + G.stats.buffsTaken);
@@ -1598,6 +1635,8 @@ function showResults(won) {
     '<div class="rsec">本局共同变异</div><div class="rmuts">' + (muts || '<i>无</i>') + '</div>' +
     (unseen ? '<div class="runseen">本局未出现：' + unseen + '</div>' : '') +
     '<div class="rsec">触发链</div><div class="rchain">' + (chain.join(' · ') || '<i>未成型</i>') + '</div>' +
+    '<div class="rsec">枪法</div><div class="rchain" style="color:#ffd24a">' +
+      (aim.join(' · ') || '<i>本局没打中过弱点</i>') + '</div>' +
     '<div class="rsec">补给</div><div class="rchain" style="color:#7ef0a8">' +
       (supply.join(' · ') || '<i>本局没用上</i>') + '</div>' +
     '<div class="rsec">普通改装</div><div class="rmods">' + (mods || '<i>无</i>') + '</div>' +
@@ -1625,6 +1664,7 @@ function handleDebugKey(code) {
 
 const DebugPanel = {
   el: null, god: false, showEvents: false, frames: 0, fpsT: 0, fps: 0,
+  showWeak: false, noSpread: false, showDmg: false, _weakGizmos: null,
   init() {
     this.el = $('debug');
     if (BOOT.debug) this.el.classList.add('on');
@@ -1634,7 +1674,8 @@ const DebugPanel = {
       ['事件流', 'events'], ['重置种子', 'reseed'],
       ['医疗物', 'med'], ['充满空投', 'drop'],
       ['过载供弹', 'b_ammo'], ['肾上腺素', 'b_adren'], ['相位护盾', 'b_shield'],
-      ['正后方刷怪', 'behind']
+      ['正后方刷怪', 'behind'],
+      ['弱点球', 'weak'], ['无散布枪', 'nospread'], ['全部伤害数字', 'dmg'], ['靶场', 'range']
     ].map(([t, a]) => '<button data-a="' + a + '">' + t + '</button>').join('');
     $('dbgbtns').onclick = e => {
       const a = e.target.dataset.a; if (!a) return;
@@ -1647,6 +1688,21 @@ const DebugPanel = {
       else if (a === 'med') { G.medCooldown = 0; G.medPending = true; this.log('下一只非召唤物死亡将掉落医疗'); }
       else if (a === 'drop') { G.supplyCharge = 1; G.lastDropAt = -999; G.dropQueued = true; this.log('空投已排队'); }
       else if (a[0] === 'b' && a[1] === '_') { applyBuff(a.slice(2)); }
+      else if (a === 'weak') { this.showWeak = !this.showWeak; this.log('弱点球 ' + (this.showWeak ? 'ON' : 'off')); }
+      else if (a === 'nospread') { this.noSpread = !this.noSpread; this.log('无散布枪 ' + (this.noSpread ? 'ON' : 'off')); }
+      else if (a === 'dmg') { this.showDmg = !this.showDmg; this.log('全部伤害数字 ' + (this.showDmg ? 'ON' : 'off')); }
+      else if (a === 'range') {
+        /* 静止靶场：每种敌人一只，不动不打人，用来验证弱点球对齐 */
+        const p = G.player;
+        ['grunt', 'heavy', 'spitter', 'charger', 'midboss'].forEach((k, n) => {
+          const ang = p.yaw + Math.PI + (n - 2) * 0.22;
+          const d = 14 + n * 1.5;
+          const e = configureEnemy(G.enemies.get(), ENEMIES[k],
+            new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), { grace: 9999 });
+          e.speed = 0; e.atk = 9999; e.maxHp = e.hp = 1e7; e.tpl = Object.assign({}, e.tpl, { ranged: null, charge: null });
+        });
+        this.log('靶场已生成（静止、不攻击、高血量）');
+      }
       else if (a === 'behind') {
         /* 正后方生成一只普通怪，验证完整提示链：接近预警 → 攻击预警 → 命中反馈 */
         const p = G.player;
@@ -1706,8 +1762,38 @@ const DebugPanel = {
     l.innerHTML = '<div>' + s + '</div>' + l.innerHTML;
     if (l.children.length > 8) l.removeChild(l.lastChild);
   },
+  /* 把每只敌人的弱点球画出来 —— 判据要求"弱点球与可见头部对齐"必须眼见为实 */
+  updateWeakGizmos() {
+    if (!this._weakGizmos) {
+      this._weakGizmos = [];
+      const geo = new THREE.SphereGeometry(1, 10, 8);
+      const mat = new THREE.MeshBasicMaterial({ color: 0xffd24a, wireframe: true, transparent: true, opacity: 0.75 });
+      for (let i = 0; i < 40; i++) {
+        const m = new THREE.Mesh(geo, mat); m.visible = false;
+        R.scene.add(m); this._weakGizmos.push(m);
+      }
+    }
+    let n = 0;
+    if (this.showWeak) {
+      const list = G.enemies.live;
+      for (let i = 0; i < list.length && n < this._weakGizmos.length; i++) {
+        const e = list[i];
+        if (e._dead || e.dead || !e.weak) continue;
+        const g = this._weakGizmos[n++];
+        g.position.set(
+          e.pos.x + e.face.x * e.weak.fwd * e.height,
+          e.pos.y + e.weak.y * e.height,
+          e.pos.z + e.face.z * e.weak.fwd * e.height);
+        g.scale.setScalar(e.weak.r * e.height);
+        g.visible = true;
+      }
+    }
+    for (let i = n; i < this._weakGizmos.length; i++) this._weakGizmos[i].visible = false;
+  },
+
   update(dt, raw) {
     this.frames++; this.fpsT += raw;
+    this.updateWeakGizmos();
     if (this.fpsT >= 0.5) { this.fps = Math.round(this.frames / this.fpsT); this.frames = 0; this.fpsT = 0; }
     if (!this.el.classList.contains('on')) return;
     $('dbgstats').innerHTML =
@@ -1729,6 +1815,10 @@ const DebugPanel = {
       ' 距上次 <b>' + (G.time - G.lastDropAt).toFixed(0) + 's</b>' +
       ' 次数 <b>' + (G.dropCount || 0) + '</b>' + (G.dropQueued ? ' <b style="color:#5fe0ff">排队中</b>' : '') +
       ' Buff <b>' + (G.buff ? G.buff.id + ' ' + G.buff.t.toFixed(1) + 's' : '-') + '</b>' +
+      '<br>弱点命中 <b style="color:#ffd24a">' + (G.stats.weakHits || 0) + '</b>' +
+      ' 弱点击杀 <b style="color:#ff9a4a">' + (G.stats.weakKills || 0) + '</b>' +
+      ' 命中 <b>' + G.stats.hits + '</b>' +
+      ' 爆头率 <b>' + (G.stats.hits ? Math.round((G.stats.weakHits || 0) / G.stats.hits * 100) : 0) + '%</b>' +
       '<br>受伤 <b>' + G.hurtCount + '</b> 次  近战落空 <b>' + G.meleeWhiffs + '</b> 次' +
       ' &nbsp; 威胁扇区 <b>' + (UI._sectorScore ? Array.prototype.slice.call(UI._sectorScore)
         .map((v, i) => ({ v: v, i: i })).sort((a, b) => b.v - a.v).slice(0, 3)
