@@ -1,44 +1,45 @@
-# Void Protocol: Reference Load
+# VOID PROTOCOL: Reference Load — Full Campaign
 
-A standalone WebGL FPS prototype created from the PlaySense review of the original VOID PROTOCOL demo.
+This is the complete original VOID PROTOCOL browser campaign, preserved as the playable foundation and extended with one focused systemic experiment: every shot can rewrite who an enemy references.
 
 **Playable build:** https://void-protocol-reference-load.bhj.chatgpt.site
 
-## Core hypothesis
+## Complete campaign retained
 
-Shooting is not only damage. Hitting an enemy transfers its target from the Anchor to the player. Carrying more active references protects the Anchor and increases the HEAP reward multiplier, but concentrates danger on the player.
+- 3 procedural blocks and 18 total passes
+- 14 fault/enemy types, including the multi-part final UNREFERENCED encounter
+- 7 weapons, upgrades, ammo economy, pickups, shop, anchor defense, death/revive, minimap, terrain traversal, ending, and debug controls
+- Local Three.js runtime; no CDN dependency
 
-## What is implemented
+## Reference Load system
 
-- Six-pass 8–12 minute validation structure.
-- Explicit red Anchor targets and cyan player references.
-- Weighted Reference Load with ×1.00–×2.50 risk rewards.
-- PLACEHOLDER, LOD0, MAGENTA and SLEEPER teaching beats.
-- Three between-pass weapon patches.
-- HIGH POLY final boss with visible render-budget recovery.
-- Player death returns every reference to the Anchor without a hidden currency penalty.
-- Local event telemetry in `localStorage["void-protocol-telemetry"]`.
+- A hit transfers that enemy's target from the Anchor to the player.
+- Red target links mean the enemy is attacking the Anchor; cyan links mean it references the player.
+- Load is weighted: common 1, elite 2, boss 4.
+- Carried load raises HEAP rewards: 2 → ×1.2, 4 → ×1.5, 7 → ×2.0, 10 → ×2.5.
+- The multiplier applies only when the defeated enemy is actively targeting the player.
+- Player death immediately sends all references back to the Anchor and carries no hidden currency penalty.
+- Prep/shop screens predict the next pass composition; one-time diagnostic cards teach all 14 fault rules.
 
 ## Controls
 
-- WASD: move
-- Mouse: aim
-- Left click: fire
-- R: reload
-- Shift: sprint
-- Escape: release mouse / pause
+- WASD — move
+- Space — jump
+- Mouse — aim; left click fire; right click aim
+- Shift — sprint
+- R — reload
+- 1–7 / wheel — switch weapon
+- E near Anchor — open BUILD
+- Backtick — debug panel
 
-## Run locally
+## Run
+
+Open `index.html` through a local static server. The runtime is vendored at `vendor/three.min.js`.
+
+For example:
 
 ```bash
-npm install
-npm run dev
+python3 -m http.server 8000
 ```
 
-Production build:
-
-```bash
-npm run build
-```
-
-This directory is self-contained and does not depend on the other games in the repository.
+Then open `http://localhost:8000/void_protocol_reference_load_gpt_20260812/`.
