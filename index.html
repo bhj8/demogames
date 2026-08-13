@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Demo Games · AI 协作的可玩原型</title>
+<meta name="description" content="AI-assisted playable experiments and game design prototypes.">
+<style>
+:root{
+  --bg:#0b0f16; --bg2:#121826; --card:#151c2a; --line:#26324a;
+  --tx:#dbe7f0; --dim:#8b9cb0; --acc:#35e0ff; --warn:#ffc14d;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:
+    radial-gradient(1200px 600px at 15% -10%, #1b2740 0%, transparent 60%),
+    radial-gradient(900px 500px at 100% 0%, #241d33 0%, transparent 55%),
+    var(--bg);
+  color:var(--tx);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif;
+  min-height:100vh;
+}
+.wrap{max-width:1080px;margin:0 auto;padding:56px 22px 80px}
+
+header{margin-bottom:44px}
+.kicker{
+  font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:.24em;color:var(--acc);text-transform:uppercase;margin-bottom:14px
+}
+h1{font-size:clamp(30px,5.2vw,46px);line-height:1.15;margin:0 0 12px;letter-spacing:-.01em}
+h1 b{color:var(--acc);font-weight:inherit}
+.sub{color:var(--dim);max-width:60ch;margin:0}
+
+.grid{display:grid;gap:22px;grid-template-columns:repeat(auto-fit,minmax(310px,1fr))}
+
+.card{
+  display:flex;flex-direction:column;
+  background:var(--card);border:1px solid var(--line);border-radius:14px;
+  overflow:hidden;text-decoration:none;color:inherit;
+  transition:transform .18s ease,border-color .18s ease,box-shadow .18s ease;
+}
+.card:hover{transform:translateY(-4px);border-color:#3d5578;box-shadow:0 14px 40px #0006}
+.card:focus-visible{outline:2px solid var(--acc);outline-offset:3px}
+
+.cover{position:relative;aspect-ratio:16/9;background:#0d1219;overflow:hidden;border-bottom:1px solid var(--line)}
+.cover img,.cover svg{width:100%;height:100%;display:block;object-fit:cover}
+.badge{
+  position:absolute;top:11px;left:11px;z-index:2;
+  font:11px/1 ui-monospace,monospace;letter-spacing:.12em;
+  padding:5px 9px;border-radius:20px;background:#0b0f16dd;border:1px solid currentColor
+}
+.badge.new{color:var(--warn)}
+.badge.arch{color:var(--dim)}
+
+.body{padding:16px 18px 18px;display:flex;flex-direction:column;flex:1}
+.title{font-size:18px;font-weight:650;margin:0 0 3px;letter-spacing:.01em}
+.meta{font:11px/1 ui-monospace,monospace;color:var(--dim);margin-bottom:10px;letter-spacing:.06em}
+.pitch{color:#b9c8d8;font-size:14px;margin:0 0 14px;flex:1}
+.tags{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
+.tag{
+  font:11px/1 ui-monospace,monospace;padding:4px 8px;border-radius:5px;
+  background:#1e2939;color:#9db3cc;border:1px solid #2b3950
+}
+.play{
+  display:inline-flex;align-items:center;gap:7px;align-self:flex-start;
+  font-size:14px;font-weight:600;color:#08131c;background:var(--acc);
+  padding:9px 16px;border-radius:8px
+}
+.card:hover .play{filter:brightness(1.12)}
+
+.note{
+  margin-top:44px;padding:18px 20px;border-left:3px solid var(--line);
+  background:#111825aa;border-radius:0 10px 10px 0;color:var(--dim);font-size:14px
+}
+.note b{color:var(--tx);font-weight:600}
+.note code{
+  font:12px/1.5 ui-monospace,monospace;background:#0b0f16;
+  padding:2px 6px;border-radius:4px;color:var(--warn);border:1px solid #26324a
+}
+footer{margin-top:34px;color:#5d6b7d;font-size:13px}
+footer a{color:#7f93aa}
+@media (max-width:560px){.wrap{padding:36px 16px 60px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="kicker">Demo Games</div>
+  <h1>AI 协作做出来的<b>可玩原型</b></h1>
+  <p class="sub">每个都是完整可玩的浏览器 demo，点开就跑，零安装。设计文档、实现记录和自检结果都在各自仓库目录里。</p>
+</header>
+
+<div class="grid">
+
+  <!-- ============ SYMBIOTIC FIRE ============ -->
+  <a class="card" href="symbiotic_fire_claude_20260813/">
+    <div class="cover">
+      <span class="badge new">最新</span>
+      <img src="symbiotic_fire_claude_20260813/shot_play.png" alt="SYMBIOTIC FIRE 游戏画面" loading="lazy">
+    </div>
+    <div class="body">
+      <h2 class="title">SYMBIOTIC FIRE · 共生火力</h2>
+      <div class="meta">FPS 幸存者 · 12 分钟一局</div>
+      <p class="pitch">在立体丧尸城市里飞檐走壁、边移动边射击。每次进化都会让对应变异同时进入尸潮 —— 你不只构筑自己，也在亲手塑造这一局必须面对的末日。</p>
+      <div class="tags">
+        <span class="tag">三层城市</span><span class="tag">跑酷</span>
+        <span class="tag">统一进化</span><span class="tag">15 组化学反应</span>
+        <span class="tag">固定种子</span>
+      </div>
+      <span class="play">开始游玩 →</span>
+    </div>
+  </a>
+
+  <!-- ============ VOID PROTOCOL · REFERENCE LOAD ============ -->
+  <a class="card" href="void_protocol_reference_load_gpt_20260812/">
+    <div class="cover">
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="VOID PROTOCOL Reference Load 封面">
+        <defs>
+          <linearGradient id="g1" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#101a2c"/><stop offset="1" stop-color="#1d1430"/>
+          </linearGradient>
+        </defs>
+        <rect width="320" height="180" fill="url(#g1)"/>
+        <g stroke="#2a3a5c" stroke-width="1" opacity=".55">
+          <path d="M0 130h320M0 100h320M0 150h320"/>
+          <path d="M60 0v180M140 0v180M220 0v180"/>
+        </g>
+        <!-- 节点与引用连线 -->
+        <g stroke="#35e0ff" stroke-width="1.6" opacity=".85" fill="none">
+          <path d="M70 118 L118 78 L186 96 L246 60"/>
+          <path d="M118 78 L150 132"/>
+        </g>
+        <g fill="#35e0ff">
+          <circle cx="70" cy="118" r="4.5"/><circle cx="118" cy="78" r="6"/>
+          <circle cx="186" cy="96" r="4.5"/><circle cx="150" cy="132" r="4"/>
+        </g>
+        <circle cx="246" cy="60" r="9" fill="none" stroke="#ff5f7a" stroke-width="2.4"/>
+        <circle cx="246" cy="60" r="3.4" fill="#ff5f7a"/>
+        <rect x="18" y="18" width="52" height="9" rx="4.5" fill="#35e0ff" opacity=".5"/>
+        <rect x="18" y="33" width="30" height="6" rx="3" fill="#8b9cb0" opacity=".4"/>
+      </svg>
+    </div>
+    <div class="body">
+      <h2 class="title">VOID PROTOCOL · Reference Load</h2>
+      <div class="meta">锚点防守 FPS · 完整战役</div>
+      <p class="pitch">完整原版战役，外加一个系统性实验：每一枪都可能改写敌人引用了谁。3 大关 18 波次、14 种故障、7 把武器，风险自定，没有隐藏死亡税。</p>
+      <div class="tags">
+        <span class="tag">引用路由</span><span class="tag">18 波次</span>
+        <span class="tag">14 种故障</span><span class="tag">风险自定</span>
+      </div>
+      <span class="play">开始游玩 →</span>
+    </div>
+  </a>
+
+  <!-- ============ VOID PROTOCOL · 诊断构建 ============ -->
+  <a class="card" href="voidprotocol_claude_20260812/">
+    <div class="cover">
+      <span class="badge arch">早期</span>
+      <svg viewBox="0 0 320 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="VOID PROTOCOL 诊断构建封面">
+        <defs>
+          <linearGradient id="g2" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#0f1a1c"/><stop offset="1" stop-color="#141d2e"/>
+          </linearGradient>
+        </defs>
+        <rect width="320" height="180" fill="url(#g2)"/>
+        <!-- 锚点 -->
+        <g opacity=".9">
+          <circle cx="160" cy="96" r="30" fill="none" stroke="#2fe07a" stroke-width="1.6" opacity=".45"/>
+          <circle cx="160" cy="96" r="19" fill="none" stroke="#2fe07a" stroke-width="2"/>
+          <circle cx="160" cy="96" r="7" fill="#2fe07a"/>
+        </g>
+        <!-- 来袭方向 -->
+        <g fill="#ff8a4a">
+          <path d="M40 50 l13 6 -13 6z"/><path d="M282 128 l-13 -6 13 -6z"/>
+          <path d="M52 140 l11 -9 3 14z"/>
+        </g>
+        <g stroke="#ff8a4a" stroke-width="1.1" opacity=".4" stroke-dasharray="4 4">
+          <path d="M53 56 L138 90M276 128 L182 100M64 136 L142 106"/>
+        </g>
+        <g stroke="#2a3f4c" stroke-width="1" opacity=".6">
+          <path d="M0 158h320"/><path d="M0 40h320"/>
+        </g>
+        <rect x="18" y="18" width="46" height="8" rx="4" fill="#2fe07a" opacity=".45"/>
+      </svg>
+    </div>
+    <div class="body">
+      <h2 class="title">VOID PROTOCOL · 诊断构建</h2>
+      <div class="meta">锚点防守 FPS · 单文件</div>
+      <p class="pitch">按 PlaySense 改进方案重做的原版锚点防守，主题是「诊断式射击」。波次预览可下注、可提前召唤，商店数学透明，种子可复现（URL 加 <code>#12345</code>）。</p>
+      <div class="tags">
+        <span class="tag">波次下注</span><span class="tag">空投节点</span>
+        <span class="tag">种子复现</span><span class="tag">S/A/B/C 评级</span>
+      </div>
+      <span class="play">开始游玩 →</span>
+    </div>
+  </a>
+
+</div>
+
+<div class="note">
+  <b>SYMBIOTIC FIRE 的两个回退开关</b> —— 直接加在网址后面即可，不需要改代码：<br>
+  <code>?map=flat</code> 回到改造前的平面地图版本 ·
+  <code>?evolution=off</code> 回到旧的两层升级流程 ·
+  <code>?seed=12345</code> 固定种子复现整局 ·
+  <code>?debug=1</code> 启动即开调试面板
+</div>
+
+<footer>
+  源码与设计文档：<a href="https://github.com/bhj8/demogames">github.com/bhj8/demogames</a>
+</footer>
+
+</div>
+</body>
+</html>
