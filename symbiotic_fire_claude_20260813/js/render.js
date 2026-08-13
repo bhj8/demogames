@@ -52,7 +52,7 @@ function mat4(x, y, z, sx, sy, sz, ry) {
 const R = {
   scene: null, camera: null, renderer: null, gunCam: null, gunScene: null,
   sun: null, hemi: null,
-  arenaHalf: 36,
+  arenaHalf: 28,   // 56×56m —— 再大就会出现"看不到怪"的空窗
   geo: {}, matlib: {},
 
   init(canvas) {
@@ -68,7 +68,7 @@ const R = {
     this.scene = new T.Scene();
     this.scene.background = new T.Color(0x121722);
     /* 雾必须推得够远：尸潮的可读性优先于氛围（§7.4） */
-    this.scene.fog = new T.Fog(0x121722, 58, 165);
+    this.scene.fog = new T.Fog(0x121722, 48, 135);
 
     this.camera = new T.PerspectiveCamera(TUNE.PLAYER.fovBase, innerWidth / innerHeight, 0.05, 400);
 
@@ -148,9 +148,9 @@ const R = {
     this.obstacles = [];
     const pillarMat = new T.MeshLambertMaterial({ color: 0x2a323d });
     const layout = [
-      [-13, -13, 3.0, 2.6], [13, -13, 3.0, 2.6], [-13, 13, 3.0, 2.6], [13, 13, 3.0, 2.6],
-      [-25, 0, 2.4, 2.2], [25, 0, 2.4, 2.2], [0, -25, 2.4, 2.2], [0, 25, 2.4, 2.2],
-      [-24, -24, 2.0, 1.9], [24, 24, 2.0, 1.9], [-24, 24, 2.0, 1.9], [24, -24, 2.0, 1.9]
+      [-10.5, -10.5, 2.5, 2.6], [10.5, -10.5, 2.5, 2.6],
+      [-10.5, 10.5, 2.5, 2.6], [10.5, 10.5, 2.5, 2.6],
+      [-19, 0, 1.9, 2.2], [19, 0, 1.9, 2.2], [0, -19, 1.9, 2.2], [0, 19, 1.9, 2.2]
     ];
     layout.forEach(([x, z, r, h]) => {
       const m = new T.Mesh(this.geo.cyl, pillarMat);
@@ -165,7 +165,7 @@ const R = {
     /* 远处轮廓，给"灾难现场"一点氛围但不产生可读性噪音 */
     const skyMat = new T.MeshLambertMaterial({ color: 0x151a22 });
     for (let i = 0; i < 26; i++) {
-      const a = (i / 26) * Math.PI * 2, d = 56 + (i % 5) * 9;
+      const a = (i / 26) * Math.PI * 2, d = 46 + (i % 5) * 9;
       const b = new T.Mesh(this.geo.box, skyMat);
       const h = 10 + (i * 7 % 26);
       b.position.set(Math.cos(a) * d, h / 2, Math.sin(a) * d);

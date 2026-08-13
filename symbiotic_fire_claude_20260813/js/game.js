@@ -101,9 +101,12 @@ function configureEnemy(e, tpl, pos, opts) {
 function spawnPosition(forceFront) {
   const p = G.player;
   const S = TUNE.SPAWN;
-  for (let tries = 0; tries < 24; tries++) {
-    const ang = forceFront
-      ? p.yaw + Math.PI + RNG.spawn.range(-0.5, 0.5)
+  for (let tries = 0; tries < 28; tries++) {
+    /* 大部分刷在视野前方 —— 玩家转一圈找不到怪是最糟的体验。
+       剩下的仍然四面八方，靠 §31 的背后距离与威胁指示器兜底。 */
+    const front = forceFront || RNG.spawn.chance(S.frontBias);
+    const ang = front
+      ? p.yaw + Math.PI + RNG.spawn.range(-1.05, 1.05)   // 正面 ±60°
       : RNG.spawn.range(0, Math.PI * 2);
     const dist = forceFront ? TUNE.VARIANT.tutorialDist : RNG.spawn.range(S.minDist, S.maxDist);
     const x = p.pos.x + Math.sin(ang) * dist;

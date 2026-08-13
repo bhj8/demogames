@@ -195,12 +195,16 @@ function simulateRun() {
 const sim = simulateRun();
 const early = sim.gaps.slice(0, 5), late = sim.gaps.slice(-5);
 const avg = a => (a.reduce((s, v) => s + v, 0) / a.length).toFixed(1);
-console.log('  首次升级       :', sim.firstLevelAt.toFixed(1) + 's',
-  sim.firstLevelAt <= 25 ? '✅ ≤25s' : '❌ 超过 25s');
+/* 注意：加入"保底在场数"之后，这个基于刷怪速率的模型已经不再成立 ——
+   场上永远有怪 ⟹ 击杀速度由玩家 DPS 决定，不由刷怪速率决定。
+   下面的数字只是速率模型给出的上界，真实节奏必须靠实测校准，
+   所以这里不再打 ✅/❌，避免给出假的通过信号。 */
+console.log('  [速率模型上界，非判定]');
+console.log('  首次升级       :', sim.firstLevelAt.toFixed(1) + 's');
 console.log('  3:00 / 6:00 / 9:00 等级 :', sim.marks[180], '/', sim.marks[360], '/', sim.marks[540]);
-console.log('  总升级次数     :', sim.level - 1,
-  (sim.level - 1 >= 18 && sim.level - 1 <= 25) ? '✅ 落在 18–25' : '❌ 超出 18–25');
+console.log('  总升级次数     :', sim.level - 1);
 console.log('  前期平均间隔   :', avg(early) + 's   后期平均间隔:', avg(late) + 's');
+console.log('  ⚠ 等级节奏待实测校准（保底刷怪使击杀由玩家火力决定）');
 
 /* ================================================================= 测试 5 */
 /* §36 固定种子可复现 */

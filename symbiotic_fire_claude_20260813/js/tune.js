@@ -55,8 +55,8 @@ const TUNE = {
      （25→15 线性收窄 ⟹ 约 37 级，而改装池总共只有 34 次可选，会被抽空）。
      取舍：保留"间隔收窄"的方向（41s → 24s），放弃绝对值。 */
   XP: {
-    curveBase: 4,
-    curveCoef: 24,
+    curveBase: 40,
+    curveCoef: 8,
     curveExp: 0.90,
     pickupRadius: 2.6,
     magnetRadius: 7.5,            // 主动吸附
@@ -66,22 +66,23 @@ const TUNE = {
 
   /* --- 刷怪 §29 --- */
   SPAWN: {
-    baseRate: 1.15,               // 每秒
-    rateCoef: 7.0,
-    rateExp: 1.5,
+    baseRate: 1.6,                // 每秒
+    rateCoef: 8.0,
+    rateExp: 1.4,
     aliveCap: 150,                // §35 性能目标
-    minDist: 14,
-    maxDist: 28,
+    minDist: 11,
+    maxDist: 21,
     rearConeDeg: 100,             // §31 背后禁区
-    rearMinDist: 22,              // 背后 22m / 3.15m·s⁻¹ ≈ 7 秒预警
+    rearMinDist: 17,              // 背后至少 17m ≈ 5.4 秒预警，仍比正面远
+    frontBias: 0.65,              // 65% 刷在视野前方，保证"一直有怪打"
     hpScalePerMin: 0.26,
     dmgScalePerMin: 0.075,
-    /* 保底在场数：幸存者品类不能出现"场上没怪"的空窗。
-       低于保底就临时加速刷新，而不是一次性把人塞满。 */
-    floorBase: 9,
-    floorCoef: 46,
-    floorExp: 1.15,
-    floorTopUpRate: 10            // 低于保底时每秒额外补的只数
+    /* 保底在场数 —— 硬性要求：任何时刻都必须有怪可打。
+       低于门槛就临时加速刷新，而不是一次性把人塞满（那会让怪凭空出现在视野里）。 */
+    floorBase: 20,
+    floorCoef: 108,
+    floorExp: 0.85,
+    floorTopUpRate: 30            // 低于保底时每秒额外补的只数
   },
 
   /* --- 变种投放 §26 --- */
@@ -89,7 +90,7 @@ const TUNE = {
     perMutation: 0.08,            // 每种共同变异 +8%
     cap: 0.32,
     tutorialDelay: 12.0,          // §12.2 10–15 秒后才进入生成池
-    tutorialDist: 24
+    tutorialDist: 17   // 场地缩小后必须跟着收，否则教学生成会顶到墙外
   },
 
   /* --- 触发链 §34/§35 --- */

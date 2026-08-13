@@ -71,28 +71,52 @@ addEventListener('load', () => {
     if (err) { report(['STEP1_ERR:' + err]); return; }
     out.push('frames120=ok');
 
-    /* 密度探针：模拟一个"见怪就秒"的强力玩家，看场上会不会出现空窗。
-       幸存者品类最忌讳没怪可打。 */
+    /* 密度探针：按真实 DPS 打最近的敌人（不是瞬秒），量的是
+       "玩家视野里到底有没有东西可打"。前方 90° 视锥内的数量才是关键指标。 */
     err = guard(() => {
-      BOOT.timescale = 5;
-      let minAlive = 9999, sum = 0, n = 0, zeroFrames = 0;
-      for (let i = 0; i < 900; i++) {          // 900 帧 × 5 倍速 ≈ 75 秒游戏时间
+      BOOT.timescale = 4;
+      DebugPanel.god = true;               // 探针要量密度，不是量难度；不能让玩家死了冻住计时
+      let minAll = 9999, sumAll = 0, minFront = 9999, sumFront = 0, n = 0, emptyFront = 0;
+      const DPS = 12 * 9 * 0.55;
+      for (let i = 0; i < 1100; i++) {
+        /* 模拟真人：边绕圈走位边转视角，这样"前方有没有怪"是对所有朝向的平均 */
+        G.player.yaw += 0.9 * 0.0167 * 4;
+        const orbit = G.time * 0.35;
+        G.player.pos.x = Math.cos(orbit) * 9;
+        G.player.pos.z = Math.sin(orbit) * 9;
         step(1);
+        const dt = 0.0167 * 4;
+        // 对最近的敌人施加与玩家火力相当的伤害
+        let near = null, nd = 1e9;
         G.enemies.live.forEach(e => {
-          if (e._dead || e.dead || e.boss) return;
-          if (Math.hypot(e.pos.x - G.player.pos.x, e.pos.z - G.player.pos.z) < 20) {
-            killEnemy(e, makeAttack('primary'));
-          }
+          if (e._dead || e.dead) return;
+          const d = Math.hypot(e.pos.x - G.player.pos.x, e.pos.z - G.player.pos.z);
+          if (d < nd) { nd = d; near = e; }
         });
-        if (G.time > 8) {
+        if (near && nd < 40) damageEnemy(near, DPS * dt, makeAttack('primary'), { point: near.pos });
+        if (G.time > 10) {
+          let front = 0;
+          G.enemies.live.forEach(e => {
+            if (e._dead || e.dead) return;
+            const world = Math.atan2(e.pos.x - G.player.pos.x, e.pos.z - G.player.pos.z);
+            let rel = world - (G.player.yaw + Math.PI);
+            while (rel > Math.PI) rel -= Math.PI * 2;
+            while (rel < -Math.PI) rel += Math.PI * 2;
+            if (Math.abs(rel) < 0.79) front++;      // 前方 ±45°
+          });
           const a = G.enemies.count;
-          minAlive = Math.min(minAlive, a); sum += a; n++;
-          if (a === 0) zeroFrames++;
+          minAll = Math.min(minAll, a); sumAll += a;
+          minFront = Math.min(minFront, front); sumFront += front;
+          if (front === 0) emptyFront++;
+          n++;
         }
       }
       BOOT.timescale = 1;
-      out.push('density@' + Math.round(G.time) + 's: min=' + minAlive +
-        ',avg=' + Math.round(sum / n) + ',emptyFrames=' + zeroFrames);
+      /* 后续阶段继续无敌：这里验的是代码路径覆盖，不是难度 */
+      G.player.hp = G.player.maxHp;
+      out.push('density@' + Math.round(G.time) + 's all(min/avg)=' + minAll + '/' + Math.round(sumAll / n) +
+        ' front45(min/avg)=' + minFront + '/' + Math.round(sumFront / n) +
+        ' emptyFrontFrames=' + emptyFront + '/' + n);
     });
     if (err) { report(['DENSITY_ERR:' + err]); return; }
 
