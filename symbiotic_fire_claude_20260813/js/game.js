@@ -23,8 +23,14 @@ const UP = new THREE.Vector3(0, 1, 0);
    ?map=flat 一次性关掉全部 todo3 开关，回到 todo/todo2 的平面版本；
    这是隔离与回滚的唯一入口，其余代码只读 MODE.city / TUNE.FEATURES.*
    ========================================================================== */
+/* todo4 §1：三个回退入口。默认是城市尺度新地图。
+     city-scale   —— todo4 城市尺度地图（默认）
+     vertical-old —— todo3 立体地图
+     flat         —— todo/todo2 平面地图 */
+const MAP_MODE = QS.get('map') || 'city-scale';
 const MODE = {
-  city: QS.get('map') !== 'flat',
+  city: MAP_MODE !== 'flat',
+  scale: MAP_MODE === 'city-scale',
   get vertMove() { return this.city && TUNE.FEATURES.verticalMovement; },
   get vertEnemy() { return this.city && TUNE.FEATURES.verticalEnemies; },
   get mapEvents() { return this.city && TUNE.FEATURES.dynamicMapEvents; },
@@ -38,6 +44,12 @@ if (!MODE.city) {
   TUNE.FEATURES.mapBuildInfluence = false;
 }
 if (QS.get('evolution') === 'off') TUNE.FEATURES.unifiedEvolution = false;
+/* todo4 §8：静态地图通过验收前，新地图模式下动态事件保持关闭。
+   §5：依赖旧几何的地图能力卡也先停用，等新地图静态空间成立后再接回。 */
+if (MAP_MODE === 'city-scale') {
+  TUNE.FEATURES.dynamicMapEvents = false;
+  TUNE.FEATURES.mapBuildInfluence = false;
+}
 
 /* ============================================================================
    敌人

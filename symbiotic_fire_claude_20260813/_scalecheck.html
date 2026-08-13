@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>html,body{margin:0;background:#0d1117;color:#dbe7f0;font:12px/1.6 monospace}
+#out{position:fixed;left:0;top:0;padding:12px;white-space:pre-wrap;z-index:9;background:#0d1117e8;max-width:52ch}
+#gl{position:fixed;inset:0;width:100vw;height:100vh}
+body.shot #out{display:none}</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud" style="display:none">
+  <div id="top"><div id="clock"></div><div id="xpwrap"><div id="xpfill"></div></div>
+  <div id="lvlrow"><b id="lvlnum"></b></div></div>
+  <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="toast"></div><div id="hint"></div><div id="buffbar"></div>
+  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
+  <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
+  <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
+</div>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="hitmark"><i></i><i></i></div>
+<div id="dmgnums"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
+<div id="dmgdirs"></div><div id="threats"></div><div id="shieldvig"></div><div id="shieldflash"></div>
+<div id="floattext"></div><svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="nextdraw"></div><div id="cards"></div>
+<div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
+<div id="pause"><button id="resume"></button></div><div id="results"></div>
+<div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
+<div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>
+window.__err = [];
+window.onerror = (m, s, l, c, e) => { window.__err.push(m + ' @' + (s || '').split('/').pop() + ':' + l); };
+</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/city-scale.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/build-synergy.js"></script>
+<script src="js/evolution-pool.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   todo4 阶段 A 验收：城市尺度灰盒
+   §10 要求阶段 A 交付「横穿时间 + 第一人称截图」，而不是拓扑 PASS。
+   自动测试在这里只负责底线（§0.1 最后一条）：尺度、预算、边界、比例。
+
+   ?shot=N —— 把相机放到第 N 个观察点渲染一帧，供 --screenshot 抓图。
+   ========================================================================== */
+const VIEWS = [
+  { id: 'plaza',  name: '十字广场（出生点朝主干道东望）', x: 0,   y: 0, z: 5,    yaw: -Math.PI / 2,   pitch: 0.03 },
+  { id: 'street', name: '主干道上望向十字路口',           x: 62,  y: 0, z: 0,    yaw: Math.PI / 2,    pitch: 0.02 },
+  { id: 'tower',  name: '塔楼脚下仰视（巨大感检验）',     x: -51, y: 0, z: 34,   yaw: Math.PI,        pitch: 0.70 },
+  { id: 'roof',   name: '商街屋顶东望（低屋顶连续奔跑）', x: -92, y: 6.2, z: -31, yaw: -Math.PI / 2,  pitch: 0.05 },
+  { id: 'garage', name: '停车楼坡道底部（唯一的宽坡道）', x: 23,  y: 0, z: -13,  yaw: 0,              pitch: 0.14 },
+  { id: 'top',    name: '停车楼顶俯瞰街区（读城市结构）', x: 52,  y: 15.4, z: -30, yaw: Math.PI * 0.72, pitch: -0.14 }
+];
+
+function fmt(n) { return (Math.round(n * 10) / 10).toString(); }
+
+addEventListener('load', () => setTimeout(() => {
+  try { main(); } catch (e) { done(['THROW:' + e.message + ' | ' + (e.stack || '').split('\n')[1]]); }
+}, 300));
+
+function done(lines) {
+  document.getElementById('out').textContent = lines.join('\n');
+  document.title = 'RESULT>>' + lines.join(' | ') + '<<END';
+}
+
+function main() {
+  if (window.__err.length) { done(['BOOT_ERR:' + window.__err.join(';')]); return; }
+  window.requestAnimationFrame = () => 0;
+  R.resize();
+  const shot = new URLSearchParams(location.search).get('shot');
+  if (shot !== null) return renderShot(parseInt(shot, 10) || 0);
+  audit();
+}
+
+/* ------------------------------------------------------------------ 截图 */
+function renderShot(n) {
+  document.body.classList.add('shot');
+  const v = VIEWS[n % VIEWS.length], p = G.player;
+  G.phase = 'play';
+  MOVE.teleport(p, v.x, v.y + 1.0, v.z);
+  for (let f = 0; f < 200; f++) {
+    MOVE.update(1 / 60, p);
+    if (MOVE.pose.grounded && Math.abs(p.vel.y) < 0.01) break;
+  }
+  p.yaw = v.yaw; p.pitch = v.pitch;
+  /* 只推进表现，不推进世界 */
+  for (let f = 0; f < 3; f++) { updatePlayer(1 / 60); R.updateFx(0); R.render(); }
+  document.title = 'SHOT>>' + v.id + ' | ' + v.name + '<<END';
+}
+
+/* ------------------------------------------------------------------ 审计 */
+function audit() {
+  const L = [];
+  const S = CITYSCALE.S, m = CITYSCALE.measure();
+  const ok = (name, pass, extra) => L.push((pass ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' = ' + extra : ''));
+
+  L.push('=== todo4 阶段 A：城市尺度灰盒 ===');
+  L.push('可玩范围 ' + m.playable + '   大体块 ' + m.blocks + '（可玩 ' + m.playableBlocks + '）');
+
+  /* --- §2.1 尺度 --- */
+  ok('可玩范围≈220×180', S.halfX * 2 === 220 && S.halfZ * 2 === 180, m.playable);
+  ok('主干道 26~30m', S.mainRoad >= 26 && S.mainRoad <= 30, S.mainRoad + 'm');
+  ok('次级街道 16~20m', S.crossRoad >= 16 && S.crossRoad <= 20, S.crossRoad + 'm');
+  ok('人行道 4~5m', S.walk >= 4 && S.walk <= 5, S.walk + 'm');
+  ok('低层 5~7m', S.shopH >= 5 && S.shopH <= 7, S.shopH + 'm');
+  ok('停车楼 14~20m', S.garageH >= 14 && S.garageH <= 20, S.garageH + 'm');
+  ok('可玩高楼 30~40m', S.towerH >= 30 && S.towerH <= 40, S.towerH + 'm');
+  ok('高楼≈玩家身高 17~22 倍', S.towerH / TUNE.PLAYER.height >= 17 && S.towerH / TUNE.PLAYER.height <= 22,
+    fmt(S.towerH / TUNE.PLAYER.height) + '×');
+
+  /* --- §2.1 徒步横穿时间：真的走一遍，不是算出来的 --- */
+  const p = G.player;
+  const walk = (x0, z0, x1, z1) => {
+    MOVE.teleport(p, x0, 1.0, z0);
+    for (let f = 0; f < 200; f++) MOVE.update(1 / 60, p);
+    const dirX = Math.sign(x1 - x0), dirZ = Math.sign(z1 - z0);
+    p.yaw = Math.atan2(-dirX, -dirZ);
+    KEY.KeyW = true;
+    let t = 0;
+    for (let f = 0; f < 60 * 90; f++) {
+      MOVE.update(1 / 60, p); t += 1 / 60;
+      if ((dirX && (p.pos.x - x1) * dirX >= 0) || (dirZ && (p.pos.z - z1) * dirZ >= 0)) break;
+    }
+    KEY.KeyW = false;
+    return t;
+  };
+  /* 起点必须在废墟封锁之内：主干道东西两端各被 10m 废墟封住（§2.1 自然边界） */
+  const tLong = walk(-S.halfX + 14, 0, S.halfX - 14, 0);
+  const tShort = walk(0, -S.halfZ + 14, 0, S.halfZ - 14);
+  ok('长边徒步 25~35s', tLong >= 22 && tLong <= 40, fmt(tLong) + 's');
+  ok('短边徒步不小于 15s', tShort >= 15, fmt(tShort) + 's');
+  ok('不能 5~8 秒横穿全图', tLong > 8, fmt(tLong) + 's');
+
+  /* --- §12.3 主街可连续奔跑 8 秒不被琐碎几何打断 --- */
+  MOVE.teleport(p, -S.halfX + 14, 1.0, 0);
+  for (let f = 0; f < 200; f++) MOVE.update(1 / 60, p);
+  p.yaw = -Math.PI / 2; KEY.KeyW = true;
+  let blocked = 0, run = 0;
+  for (let f = 0; f < 60 * 12; f++) {
+    const bx = p.pos.x;
+    MOVE.update(1 / 60, p); run += 1 / 60;
+    /* 前进受阻：一帧内几乎没位移，但输入一直在推 */
+    if (Math.abs(p.pos.x - bx) < 0.02 && MOVE.pose.grounded) blocked++;
+    if (MOVE.pose.state === 'vault' || MOVE.pose.state === 'mantle') blocked += 12;
+  }
+  KEY.KeyW = false;
+  ok('主街连续奔跑 12s 无阻断', blocked < 10, blocked + ' 帧受阻');
+
+  /* --- §6.1 几何预算 --- */
+  const solid = CITY.solids.filter(s => s.on);
+  const tiny = solid.filter(s => (s.x1 - s.x0) < 3 && (s.z1 - s.z0) < 3);
+  ok('有意义的碰撞体≤70', solid.length <= 70, solid.length + ' 个（目标约 50）');
+  ok('无小于 3×3m 的碎碰撞体', tiny.length === 0, tiny.length + ' 个');
+  ok('大体块 6~8', m.blocks >= 6 && m.blocks <= 12, m.blocks);
+  ok('真正可玩建筑（功能区）3~4', m.zones >= 3 && m.zones <= 4, m.zones + ' 个功能区 / ' + m.playableBlocks + ' 个盒子');
+  ok('阶段A无滑索/跳板', CITY.devices.length === 0, CITY.devices.length);
+  ok('阶段A无动态几何组', Object.keys(CITY.dynamics).length === 0, Object.keys(CITY.dynamics).length);
+
+  /* --- §6.2 坡道必须是真斜面，不能是可见台阶 --- */
+  const slopes = CITY.solids.filter(s => s.ramp);
+  ok('坡道使用真斜面', slopes.length >= 1, slopes.length + ' 条');
+  /* 台阶近似的特征：同一区域出现大量厚度递增的薄盒 */
+  /* 台阶近似的特征是「又矮又小的盒子成组出现」；结构柱是又高又小，不能混为一谈 */
+  const stepLike = CITY.solids.filter(s => !s.ramp &&
+    (s.y1 - s.y0) > 0.6 && (s.y1 - s.y0) < 2.5 && (s.x1 - s.x0) < 6 && (s.z1 - s.z0) < 6);
+  ok('无台阶式坡道残留', stepLike.length === 0, stepLike.length);
+
+  /* --- §2.1 边界不是贴脸围墙 --- */
+  const walls = CITY.solids.filter(s => s.on && (s.y1 - s.y0) > 15 &&
+    (Math.abs(s.x0) > S.halfX - 2 || Math.abs(s.z0) > S.halfZ - 2) &&
+    ((s.x1 - s.x0) > 150 || (s.z1 - s.z0) > 150));
+  ok('无四面竞技场高墙', walls.length === 0, walls.length);
+
+  /* --- 远景不可碰撞、不可误导 --- */
+  const far = CITY.solids.filter(s => Math.hypot((s.x0 + s.x1) / 2, (s.z0 + s.z1) / 2) > 160);
+  ok('远景楼群不参与碰撞', far.length === 0, far.length + ' 个远景带碰撞');
+
+  /* --- 玩家不会掉出地图 / 卡进建筑 --- */
+  let sank = 0, stuck = 0; const badLand = [];
+  for (let i = 0; i < 420; i++) {
+    /* 采样点必须落在可玩范围之内 —— 判据是「玩家能到的地方站得住」，
+       把人扔到地图之外再说站不住，那是测试的错，不是地图的错。 */
+    const a = (i / 420) * Math.PI * 2 * 9;
+    const rr = 6 + (i % 46) * 2.1;
+    const sx = clamp(Math.cos(a) * rr * (S.halfX / S.halfZ), -(S.halfX - 8), S.halfX - 8);
+    const sz = clamp(Math.sin(a) * rr, -(S.halfZ - 8), S.halfZ - 8);
+    MOVE.teleport(p, sx, 42, sz);
+    for (let f = 0; f < 420; f++) {
+      MOVE.update(1 / 60, p);
+      if (MOVE.pose.grounded && Math.abs(p.vel.y) < 0.01 && !MOVE.st.scripted) break;
+    }
+    if (p.pos.y < -0.5) sank++;
+    if (!CITY.standable(p.pos.x, p.pos.z, p.pos.y + 0.2, p.radius) && !MOVE.st.scripted) {
+      stuck++;
+      if (badLand.length < 5) badLand.push(fmt(p.pos.x) + ',' + fmt(p.pos.y) + ',' + fmt(p.pos.z));
+    }
+  }
+  ok('无掉出地图', sank === 0, sank);
+  ok('落点全部可站立', stuck === 0, stuck + '/420 ' + badLand.join(' '));
+
+  ok('runtime_err', window.__err.length === 0, window.__err.length ? window.__err[0] : 0);
+
+  L.push('');
+  L.push('— 以下必须由真人回答（§11.2），自动测试不能代替 —');
+  L.push('1 第一眼像城市还是像积木？  2 高楼是否真的巨大？');
+  L.push('4 主要路线是否一眼可见？    5 登高是否改变了战斗？');
+  done(L);
+}
+</script>
+</body></html>

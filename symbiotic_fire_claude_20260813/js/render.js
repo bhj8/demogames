@@ -122,8 +122,21 @@ const R = {
     if (typeof MODE !== 'undefined' && MODE.city) {
       this.obstacles = [];
       this.arenaHalf = TUNE.VERTICAL_MAP.half;
-      this.scene.fog = new T.Fog(0x121722, 55, 165);
-      CITY.build(this.scene);
+      /* 城市尺度地图要看到远景天际线，雾必须推得更远（§2.1）。
+         同时补光：原来的亮度是按 56m 竞技场调的，放进 220m 城市后
+         建筑大体块会糊成一片黑，玩家根本读不出体量与层级（§2.2）。 */
+      this.scene.fog = new T.Fog(0x18202c, MODE.scale ? 130 : 55, MODE.scale ? 520 : 165);
+      if (MODE.scale) {
+        this.scene.background = new T.Color(0x18202c);
+        this.camera.far = 1000; this.camera.updateProjectionMatrix();
+        this.hemi.intensity = 1.25;
+        this.hemi.color.setHex(0x9fb4d4); this.hemi.groundColor.setHex(0x2e3540);
+        this.sun.intensity = 1.15;
+        this.sun.position.set(120, 190, -90);
+        this.lamp.distance = 34; this.lamp.intensity = 0.55;
+      }
+      CITY.build(this.scene, MAP_MODE);
+      this.arenaHalf = CITY.half;
       return;
     }
     const H = this.arenaHalf;
@@ -188,8 +201,8 @@ const R = {
      立体城市下转交 citymap.js 做圆柱 vs AABB 的水平推出（垂直由调用方处理）。 */
   collide(p, radius, yBot, yTop) {
     if (CITY.enabled) {
-      const H2 = CITY.half - 1.2 - radius;
-      p.x = clamp(p.x, -H2, H2); p.z = clamp(p.z, -H2, H2);
+      p.x = clamp(p.x, -(CITY.halfX - 1.2 - radius), CITY.halfX - 1.2 - radius);
+      p.z = clamp(p.z, -(CITY.halfZ - 1.2 - radius), CITY.halfZ - 1.2 - radius);
       const b = yBot === undefined ? p.y + 0.12 : yBot;
       const t = yTop === undefined ? p.y + 1.7 : yTop;
       CITY.depenetrate(p, radius, b, t, null);

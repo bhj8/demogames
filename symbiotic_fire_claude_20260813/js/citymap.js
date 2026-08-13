@@ -17,7 +17,7 @@ const SURF = {
 
 const CITY = {
   enabled: false,
-  half: 35,
+  half: 35, halfX: 35, halfZ: 35,      // 非方形地图必须分轴，否则会把边界夹错
   solids: [],
   dynamics: {},          // 事件可切换的几何：id -> {solids:[], meshes:[], on}
   regions: [],
@@ -29,9 +29,9 @@ const CITY = {
   _grid: null, _cell: 6, _parts: null, _built: false,
 
   /* ------------------------------------------------------------------ 构建 */
-  build(scene) {
+  build(scene, layout) {
     const M = TUNE.VERTICAL_MAP;
-    this.half = M.half;
+    this.half = M.half; this.halfX = M.half; this.halfZ = M.half;
     this._cell = M.spawnCell;
     this.solids.length = 0;
     this.regions.length = 0;
@@ -46,21 +46,32 @@ const CITY = {
     this.group = new THREE.Group();
     scene.add(this.group);
 
-    this._buildShell();
-    this._buildStreet();
-    this._buildParking();
-    this._buildConstruction();
-    this._buildHospital();
-    this._buildMall();
-    this._buildMidRing();
-    this._buildDevices();
-    this._buildDynamics();
+    this.layout = layout || 'vertical-old';
+    if (this.layout === 'city-scale') {
+      /* todo4：城市尺度地图。布局与旧立体地图完全独立，
+         CITY 只提供碰撞、查询与层级 API，几何由 city-scale.js 注册。 */
+      CITYSCALE.build(this);
+      this._flushParts();
+      this.reindex();
+      CITYSCALE.buildNav(this);
+      CITYSCALE.buildSpawnPoints(this);
+    } else {
+      this._buildShell();
+      this._buildStreet();
+      this._buildParking();
+      this._buildConstruction();
+      this._buildHospital();
+      this._buildMall();
+      this._buildMidRing();
+      this._buildDevices();
+      this._buildDynamics();
 
-    this._flushParts();
-    this._mountZips();
-    this.reindex();
-    this._buildNav();
-    this._buildSpawnPoints();
+      this._flushParts();
+      this._mountZips();
+      this.reindex();
+      this._buildNav();
+      this._buildSpawnPoints();
+    }
     this._built = true;
     this.enabled = true;
     return this;
@@ -97,8 +108,47 @@ const CITY = {
     return s;
   },
 
-  /* 阶梯化坡道：AABB 世界里没有真斜面，用 stepHeight 以下的台阶模拟连续坡。
-     玩家 stepHeight=0.42，所以每级必须小于它，否则会变成一路翻越。 */
+  /* --- 斜面 ---
+     todo4 §6.2 点名禁止「可见的坡道碰撞台阶」，所以坡道不再用台阶近似，
+     而是一个带高度函数的实体：表面高度沿 axis 线性插值，
+     碰撞按「你在斜面之上就站住、在斜面之内才被推出」处理。
+     可见模型是一块旋转过的连续板，与碰撞体各自独立（§6.2 可见/碰撞分离）。 */
+  addSlope(cx, cz, sx, sz, yLow, yHigh, axis, opts) {
+    opts = opts || {};
+    const s = {
+      x0: cx - sx / 2, x1: cx + sx / 2,
+      z0: cz - sz / 2, z1: cz + sz / 2,
+      y0: Math.min(yLow, yHigh) - (opts.thickness || 1.2), y1: Math.max(yLow, yHigh),
+      surf: SURF.DECK, id: opts.id || null, on: true,
+      ramp: { axis: axis, lo: yLow, hi: yHigh }
+    };
+    this.solids.push(s);
+    if (!opts.noDraw) {
+      const len = axis === 'x' ? sx : sz;
+      const rise = yHigh - yLow;
+      const ang = Math.atan2(rise, len);
+      const m = new THREE.Mesh(R.geo.box,
+        this._mats ? this._mats[opts.mat || 'deck'] : new THREE.MeshLambertMaterial({ color: 0x333d4c }));
+      m.position.set(cx, (yLow + yHigh) / 2, cz);
+      m.userData = { mat: opts.mat || 'garage' };
+      if (axis === 'x') { m.rotation.z = -ang; m.scale.set(Math.hypot(len, rise), 0.5, sz); }
+      else { m.rotation.x = ang; m.scale.set(sx, 0.5, Math.hypot(len, rise)); }
+      this._slopeMeshes = this._slopeMeshes || [];
+      this._slopeMeshes.push(m);
+    }
+    return s;
+  },
+
+  /* 斜面在 (x,z) 处的表面高度 */
+  rampY(s, x, z) {
+    const r = s.ramp;
+    const t = r.axis === 'x'
+      ? (x - s.x0) / Math.max(1e-6, s.x1 - s.x0)
+      : (z - s.z0) / Math.max(1e-6, s.z1 - s.z0);
+    return lerp(r.lo, r.hi, clamp(t, 0, 1));
+  },
+
+  /* 阶梯化坡道：保留给旧立体地图，新地图一律用 addSlope。 */
   addRamp(x0, z0, x1, z1, y0, y1, width, mat) {
     const rise = y1 - y0;
     const steps = Math.max(2, Math.ceil(rise / (TUNE.MOVEMENT.stepHeight * 0.8)));
@@ -123,6 +173,16 @@ const CITY = {
       mall:     new THREE.MeshLambertMaterial({ color: 0x352a40 }),
       prop:     new THREE.MeshLambertMaterial({ color: 0x3d4654 }),
       decor:    new THREE.MeshLambertMaterial({ color: 0x1b212b }),
+      /* todo4 城市尺度：不可玩建筑与可玩建筑在材质上必须能分开（§6.3） */
+      road:     new THREE.MeshLambertMaterial({ color: 0x1a1f27 }),
+      walk:     new THREE.MeshLambertMaterial({ color: 0x2b323c }),
+      shop:     new THREE.MeshLambertMaterial({ color: 0x4a3f34 }),
+      garage:   new THREE.MeshLambertMaterial({ color: 0x39434f }),
+      office:   new THREE.MeshLambertMaterial({ color: 0x2c3646 }),
+      site:     new THREE.MeshLambertMaterial({ color: 0x4d3f2c }),
+      filler:   new THREE.MeshLambertMaterial({ color: 0x222833 }),
+      far:      new THREE.MeshLambertMaterial({ color: 0x171c25 }),
+      line:     new THREE.MeshBasicMaterial({ color: 0x6b7482 }),
       /* 路线语言：三种标识各自唯一，且都不复用变异色 */
       edge:     new THREE.MeshBasicMaterial({ color: 0xffc14d }),                 // 可翻越
       band:     new THREE.MeshBasicMaterial({ color: 0x35e0ff }),                 // 可墙跑
@@ -137,6 +197,10 @@ const CITY = {
     }
     this._parts = null;
     this._mats = mats;
+    if (this._slopeMeshes) {
+      this._slopeMeshes.forEach(m => { m.material = mats[m.userData.mat || 'garage']; this.group.add(m); });
+      this._slopeMeshes = null;
+    }
   },
 
   /* ------------------------------------------------------------ 宽相位索引 */
@@ -193,6 +257,9 @@ const CITY = {
       for (let i = 0; i < list.length; i++) {
         const s = list[i];
         if (yTop <= s.y0 + 1e-4 || yBot >= s.y1 - 1e-4) continue;
+        /* 斜面：只有当脚底明显低于该处坡面时才算撞进坡体，
+           否则玩家是「站在坡上」，绝不能被水平推开。 */
+        if (s.ramp && yBot >= this.rampY(s, clamp(pos.x, s.x0, s.x1), clamp(pos.z, s.z0, s.z1)) - 0.35) continue;
         const cx = clamp(pos.x, s.x0, s.x1), cz = clamp(pos.z, s.z0, s.z1);
         const dx = pos.x - cx, dz = pos.z - cz;
         const d2 = dx * dx + dz * dz;
@@ -233,11 +300,13 @@ const CITY = {
     const lo = fromY - down, hi = fromY + up;
     for (let i = 0; i < list.length; i++) {
       const s = list[i];
-      if (s.y1 < lo || s.y1 > hi) continue;
       const cx = clamp(x, s.x0, s.x1), cz = clamp(z, s.z0, s.z1);
       const dx = x - cx, dz = z - cz;
       if (dx * dx + dz * dz >= radius * radius) continue;
-      if (s.y1 > best) best = s.y1;
+      /* 斜面按脚下位置求表面高度，而不是按包围盒顶面 */
+      const top = s.ramp ? this.rampY(s, clamp(x, s.x0, s.x1), clamp(z, s.z0, s.z1)) : s.y1;
+      if (top < lo || top > hi) continue;
+      if (top > best) best = top;
     }
     return best;
   },
@@ -262,7 +331,7 @@ const CITY = {
      医疗、空投与刷怪点全部走它 —— §5.3 / §6.2 / §6.3 要求验证可达且可站立。 */
   standable(x, z, y, radius, need) {
     const r = radius || 0.6, h = need || TUNE.MOVEMENT.headroom;
-    if (Math.abs(x) > this.half - 1.5 || Math.abs(z) > this.half - 1.5) return false;
+    if (Math.abs(x) > this.halfX - 1.5 || Math.abs(z) > this.halfZ - 1.5) return false;
     const sup = this.supportY(x, z, r, y, 0.9, 0.9);
     if (sup === -Infinity) return false;
     return this.ceilingY(x, z, r, sup + 0.05) >= sup + h;
