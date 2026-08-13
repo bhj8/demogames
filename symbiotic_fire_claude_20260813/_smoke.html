@@ -71,6 +71,31 @@ addEventListener('load', () => {
     if (err) { report(['STEP1_ERR:' + err]); return; }
     out.push('frames120=ok');
 
+    /* 密度探针：模拟一个"见怪就秒"的强力玩家，看场上会不会出现空窗。
+       幸存者品类最忌讳没怪可打。 */
+    err = guard(() => {
+      BOOT.timescale = 5;
+      let minAlive = 9999, sum = 0, n = 0, zeroFrames = 0;
+      for (let i = 0; i < 900; i++) {          // 900 帧 × 5 倍速 ≈ 75 秒游戏时间
+        step(1);
+        G.enemies.live.forEach(e => {
+          if (e._dead || e.dead || e.boss) return;
+          if (Math.hypot(e.pos.x - G.player.pos.x, e.pos.z - G.player.pos.z) < 20) {
+            killEnemy(e, makeAttack('primary'));
+          }
+        });
+        if (G.time > 8) {
+          const a = G.enemies.count;
+          minAlive = Math.min(minAlive, a); sum += a; n++;
+          if (a === 0) zeroFrames++;
+        }
+      }
+      BOOT.timescale = 1;
+      out.push('density@' + Math.round(G.time) + 's: min=' + minAlive +
+        ',avg=' + Math.round(sum / n) + ',emptyFrames=' + zeroFrames);
+    });
+    if (err) { report(['DENSITY_ERR:' + err]); return; }
+
     /* 强制拿满 4 个共同变异，并把变种放进池子 */
     err = guard(() => {
       ['blast', 'fission', 'conduct', 'ossify'].forEach(id => { takeMutation(id); G.phase = 'play'; });

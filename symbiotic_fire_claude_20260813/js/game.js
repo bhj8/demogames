@@ -137,9 +137,16 @@ const Director = {
   acc: 0,
   update(dt) {
     if (G.bossAlive && G.bossAlive.king) return;   // 尸王阶段停常规刷怪，避免不可读
-    const t = G.time;
-    const rate = TUNE.SPAWN.baseRate + TUNE.SPAWN.rateCoef * Math.pow(Math.min(1, t / TUNE.RUN_SECONDS), TUNE.SPAWN.rateExp);
+    const t = G.time, S = TUNE.SPAWN;
+    const k = Math.min(1, t / TUNE.RUN_SECONDS);
+    const rate = S.baseRate + S.rateCoef * Math.pow(k, S.rateExp);
     this.acc += rate * dt * (G.surge ? 1.8 : 1);
+
+    /* 保底在场数：低于门槛就加速补怪，确保任何时刻都有事情做。
+       用加速而不是瞬间填满 —— 一帧塞进几十只会突然出现在视野里。 */
+    const floor = Math.min(S.aliveCap, Math.round(S.floorBase + S.floorCoef * Math.pow(k, S.floorExp)));
+    this.floor = floor;
+    if (G.enemies.count < floor) this.acc += S.floorTopUpRate * dt;
     while (this.acc >= 1) {
       this.acc -= 1;
       if (G.enemies.count >= TUNE.SPAWN.aliveCap) { this.acc = 0; break; }
@@ -394,7 +401,7 @@ function updateBoss(e, dt, dist, nx, nz) {
       G.ui.bossPhase(e.phase, id);
       R.ring(e.pos, 1, 16, MUT[id].color, 1.1);
       Audio2.boss();
-      G.shake(0.5, null);
+      G.shake(0.28, null);
       if (e.phase === 4) e.speed *= 1.25;         // 狂暴 §27
     }
     if (e.phaseT > 0) { e.phaseT -= dt; e.mvs = 0; return; }
@@ -420,7 +427,7 @@ function updateBoss(e, dt, dist, nx, nz) {
       if (d <= sl.radius) hurtPlayer(sl.dmg * G.dmgScale(), TV.set(e.slamAt.x, 0, e.slamAt.z), 'slam');
       R.ring(TV.set(e.slamAt.x, 0, e.slamAt.z), 0.5, sl.radius, 0xff7a3c, 0.5);
       Audio2.blast(e.pos, true);
-      G.shake(0.55, null);
+      G.shake(0.30, null);
       /* 阶段变异的表达：借用概念，不照搬普通变种技能 §27 */
       bossMutationFlavor(e, TV.set(e.slamAt.x, 0, e.slamAt.z));
       e.state = 'walk';
@@ -815,7 +822,7 @@ function updatePlayer(dt) {
   R.camera.position.set(p.pos.x, TUNE.PLAYER.height + bob, p.pos.z);
   R.camera.rotation.set(0, 0, 0);
   R.camera.rotateY(p.yaw);
-  R.camera.rotateX(p.pitch + g.recoil * 0.06 + G.shakePitch);
+  R.camera.rotateX(p.pitch + g.recoil * TUNE.FX.recoilCamera + G.shakePitch);
   R.camera.rotateZ(G.shakeRoll);
   R.camera.position.x += G.shakeX; R.camera.position.z += G.shakeZ;
 
@@ -829,8 +836,8 @@ function updatePlayer(dt) {
   const gun = R.gun;
   gun.position.x = lerp(gun.position.x, 0.24 - p.vel.x * 0.004, 1 - Math.exp(-10 * dt));
   gun.position.y = lerp(gun.position.y, -0.21 + bob * 0.6, 1 - Math.exp(-10 * dt));
-  gun.position.z = -0.66 + g.recoil * 0.05;
-  gun.rotation.x = g.recoil * 0.12;
+  gun.position.z = -0.66 + g.recoil * 0.10;
+  gun.rotation.x = g.recoil * TUNE.FX.recoilGunKick;
   gun.rotation.z = lerp(gun.rotation.z, -p.vel.x * 0.006, 1 - Math.exp(-8 * dt));
   R.muzzleFlash.material.opacity = Math.max(0, R.muzzleFlash.material.opacity - dt * 22);
   R.muzzleFlash.scale.setScalar(0.10 + R.muzzleFlash.material.opacity * 0.10);
@@ -864,7 +871,7 @@ function fire() {
 
   R.muzzleFlash.material.opacity = 0.85;
   Audio2.shot(1 + G.overclock * 0.35);
-  G.shakeAdd(0.045);
+  /* 开火不震屏 —— 后坐全部表现在枪模型上 */
   G.bus.emit('fire', {});
 }
 
@@ -1073,12 +1080,13 @@ G.shake = function (a, pos) {
   G.shakeAdd(a);
 };
 function updateShake(dt) {
-  G.shakeAmt = Math.max(0, G.shakeAmt - dt * 2.4);
+  const F = TUNE.FX;
+  G.shakeAmt = Math.max(0, G.shakeAmt - dt * F.shakeDecay);
   const s = G.shakeAmt * G.shakeAmt;
-  G.shakeX = RNG.fx.range(-1, 1) * s * 0.16;
-  G.shakeZ = RNG.fx.range(-1, 1) * s * 0.16;
-  G.shakePitch = RNG.fx.range(-1, 1) * s * 0.022;
-  G.shakeRoll = RNG.fx.range(-1, 1) * s * 0.016;
+  G.shakeX = RNG.fx.range(-1, 1) * s * F.shakePos;
+  G.shakeZ = RNG.fx.range(-1, 1) * s * F.shakePos;
+  G.shakePitch = RNG.fx.range(-1, 1) * s * F.shakePitch;
+  G.shakeRoll = RNG.fx.range(-1, 1) * s * F.shakeRoll;
 }
 
 /* ============================================================================
@@ -1111,7 +1119,7 @@ function updateTimeline(dt) {
       UI.bossFill.style.background = 'linear-gradient(90deg,#ff5f7a,#ffb0be)';
       UI.toast(ENEMIES[ev.enemy].name + ' 出现', '#ff5f7a', true);
       Audio2.boss();
-      G.shakeAdd(0.8);
+      G.shakeAdd(0.40);
     } else if (ev.kind === 'surge') {
       G.surge = true;
       UI.toast('撤离倒计时 —— 尸潮全面涌来', '#ffd06a', true);
@@ -1272,7 +1280,7 @@ const DebugPanel = {
       ' &nbsp; 弹 <b>' + G.bullets.count + '</b> &nbsp; 特效 <b>' +
       (R.rings.count + R.puffs.count + R.sparks.count + R.bolts.count) + '</b>' +
       ' &nbsp; 危险区 <b>' + G.hazards.count + '</b>' +
-      '<br>触发/帧 <b>' + G.procThisFrame + '</b> &nbsp; 深度上限 <b>' + G.derived.maxDepth + '</b>' +
+      '<br>保底在场 <b>' + (Director.floor || 0) + '</b> &nbsp; 触发/帧 <b>' + G.procThisFrame + '</b> &nbsp; 深度上限 <b>' + G.derived.maxDepth + '</b>' +
       ' &nbsp; 经验球 <b>' + G.xp.length + '</b>' +
       '<br>变种占比 <b>' + Math.round(Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation) * 100) + '%</b>' +
       ' &nbsp; 超频 <b>' + Math.round(G.overclock * 100) + '%</b>' +

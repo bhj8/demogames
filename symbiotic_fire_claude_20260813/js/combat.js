@@ -230,7 +230,7 @@ function installPlayerMutations() {
       R.puff(V3.copy(ev.enemy.pos).setY(ev.enemy.pos.y + 0.8), 0.3, radius * 0.7, 0xffb35c, 0.26);
     }
     Audio2.blast(ev.enemy.pos, false);
-    G.shake(0.16, ev.enemy.pos);
+    G.shake(0.10, ev.enemy.pos);
   }, 10);
 
   /* --- 分裂 §17：主弹首次命中 → 分出 2 枚 --- */
@@ -406,7 +406,7 @@ function updatePendings(dt) {
       R.ring(p.pos, 0.3, p.radius, MUT.blast.color, 0.4);
       R.puff(V3.copy(p.pos).setY(1.0), 0.4, p.radius * 0.8, 0xff9a4a, 0.3);
       Audio2.blast(p.pos, false);
-      G.shake(0.28, p.pos);
+      G.shake(0.16, p.pos);
 
     } else if (p.kind === 'enemyField') {
       const z = R.zones.get();
@@ -627,7 +627,7 @@ function hurtPlayer(amount, fromPos, kind) {
   p.iframe = TUNE.PLAYER.hurtIFrame;
   G.stats.dmgTaken += amount;
   Audio2.hurt(kind);
-  G.shake(0.30, null);
+  G.shake(0.16, null);
 
   /* 方向指示：把伤害来源投到屏幕平面 */
   let ang = 0;

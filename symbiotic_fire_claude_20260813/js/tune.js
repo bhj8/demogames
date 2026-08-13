@@ -55,8 +55,8 @@ const TUNE = {
      （25→15 线性收窄 ⟹ 约 37 级，而改装池总共只有 34 次可选，会被抽空）。
      取舍：保留"间隔收窄"的方向（41s → 24s），放弃绝对值。 */
   XP: {
-    curveBase: 0,
-    curveCoef: 16,
+    curveBase: 4,
+    curveCoef: 24,
     curveExp: 0.90,
     pickupRadius: 2.6,
     magnetRadius: 7.5,            // 主动吸附
@@ -66,16 +66,22 @@ const TUNE = {
 
   /* --- 刷怪 §29 --- */
   SPAWN: {
-    baseRate: 0.7,                // 每秒
-    rateCoef: 6.5,
-    rateExp: 1.6,
+    baseRate: 1.15,               // 每秒
+    rateCoef: 7.0,
+    rateExp: 1.5,
     aliveCap: 150,                // §35 性能目标
-    minDist: 19,
-    maxDist: 34,
+    minDist: 14,
+    maxDist: 28,
     rearConeDeg: 100,             // §31 背后禁区
-    rearMinDist: 27,
+    rearMinDist: 22,              // 背后 22m / 3.15m·s⁻¹ ≈ 7 秒预警
     hpScalePerMin: 0.26,
-    dmgScalePerMin: 0.075
+    dmgScalePerMin: 0.075,
+    /* 保底在场数：幸存者品类不能出现"场上没怪"的空窗。
+       低于保底就临时加速刷新，而不是一次性把人塞满。 */
+    floorBase: 9,
+    floorCoef: 46,
+    floorExp: 1.15,
+    floorTopUpRate: 10            // 低于保底时每秒额外补的只数
   },
 
   /* --- 变种投放 §26 --- */
@@ -95,9 +101,17 @@ const TUNE = {
     conductionHits: 6
   },
 
-  /* --- 后期表现上限 §31 --- */
+  /* --- 后期表现上限 §31 ---
+     震屏纪律：位置抖动（相机平移）是晕动症的主因，几乎压到零；
+     方向上只留很小的 roll。枪模型自己的后坐可以做大，那不晕。 */
   FX: {
-    shakeMax: 1.35,
+    shakeMax: 0.55,
+    shakeDecay: 4.5,
+    shakePos: 0.03,               // 相机位移系数（原 0.16）
+    shakePitch: 0.006,            // 俯仰抖动，最晕，压到最低
+    shakeRoll: 0.010,
+    recoilCamera: 0.012,          // 后坐传给相机的比例（原 0.06）
+    recoilGunKick: 0.22,          // 后坐传给枪模型的比例（原 0.12，可以大）
     blastSoundMergeWindow: 0.06,
     maxConcurrentBlastFx: 24
   }
