@@ -207,6 +207,11 @@ const Audio2 = {
     this.master = this.ctx.createGain();
     this.master.gain.value = 0.55;
     this.comp.connect(this.master); this.master.connect(this.ctx.destination);
+    /* 玩家自己的枪声走独立通道，绕开世界音效的压缩与 voice cap ——
+       尸潮和连锁特效再吵，也不能把玩家的输入确认音吞掉（todo2 §8）。 */
+    this.weaponBus = this.ctx.createGain();
+    this.weaponBus.gain.value = 0.85;
+    this.weaponBus.connect(this.master);
     this.ready = true;
   },
   resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); },
@@ -248,22 +253,122 @@ const Audio2 = {
     return s;
   },
 
-  /* 开火 —— pitch 随超频升高 §18 */
-  shot(pitch) {
-    if (!this.ready || this._voices > 26) return;
-    const t = this.t, dest = this.comp;
+  /* 开火 —— 分层：枪口爆发 / 机械声 / 枪体 / 短尾音（todo2 §8）。
+     每枪有轻微的音高与响度扰动，避免机关枪式复制粘贴。 */
+  shot(pitch, heavy) {
+    if (!this.ready) return;                 // 玩家枪声永不因 voice cap 被跳过
+    const t = this.t, dest = this.weaponBus;
+    const h = heavy || 1;
+    const jitter = 0.94 + Math.random() * 0.12;
+    const p = pitch * jitter;
+
+    /* 1. muzzle transient：最尖的那一下 */
+    const n1 = this._noise();
+    const f1 = this.ctx.createBiquadFilter();
+    f1.type = 'bandpass'; f1.frequency.value = 2600 / h * p; f1.Q.value = 0.6;
+    const g1 = this._env(dest, t, 0.0008, 0.028, 0.22 * h);
+    n1.connect(f1); f1.connect(g1); n1.start(t); n1.stop(t + 0.05);
+
+    /* 2. body：决定枪体重量 */
+    const o2 = this.ctx.createOscillator();
+    o2.type = 'square';
+    o2.frequency.setValueAtTime(250 * p / h, t);
+    o2.frequency.exponentialRampToValueAtTime(52 * p / h, t + 0.075 * h);
+    const g2 = this._env(dest, t, 0.002, 0.08 * h, 0.20 * h);
+    o2.connect(g2); o2.start(t); o2.stop(t + 0.14 * h);
+
+    /* 3. mechanical click：枪机与撞针 */
+    const o3 = this.ctx.createOscillator();
+    o3.type = 'square';
+    o3.frequency.setValueAtTime(1500 * p, t + 0.004);
+    o3.frequency.exponentialRampToValueAtTime(700 * p, t + 0.03);
+    const g3 = this._env(dest, t + 0.004, 0.0006, 0.026, 0.075);
+    o3.connect(g3); o3.start(t + 0.004); o3.stop(t + 0.05);
+
+    /* 4. tail：很短的空间尾音 */
+    const n4 = this._noise();
+    const f4 = this.ctx.createBiquadFilter();
+    f4.type = 'lowpass'; f4.frequency.setValueAtTime(1400, t);
+    f4.frequency.exponentialRampToValueAtTime(240, t + 0.19);
+    const g4 = this._env(dest, t + 0.012, 0.004, 0.18 * h, 0.075 * h);
+    n4.connect(f4); f4.connect(g4); n4.start(t + 0.012); n4.stop(t + 0.24 * h);
+  },
+
+  armorHit() {
+    if (!this.ready) return;
+    const t = this.t, dest = this.weaponBus;
     const o = this.ctx.createOscillator();
     o.type = 'square';
-    o.frequency.setValueAtTime(240 * pitch, t);
-    o.frequency.exponentialRampToValueAtTime(58 * pitch, t + 0.07);
-    const g = this._env(dest, t, 0.002, 0.075, 0.20);
-    o.connect(g); o.start(t); o.stop(t + 0.1);
-
+    o.frequency.setValueAtTime(2400, t);
+    o.frequency.exponentialRampToValueAtTime(1400, t + 0.035);
+    const g = this._env(dest, t, 0.0006, 0.035, 0.2);
+    o.connect(g); o.start(t); o.stop(t + 0.06);
     const n = this._noise();
     const f = this.ctx.createBiquadFilter();
-    f.type = 'bandpass'; f.frequency.value = 1800 * pitch; f.Q.value = 0.7;
-    const ng = this._env(dest, t, 0.001, 0.055, 0.16);
-    n.connect(f); f.connect(ng); n.start(t); n.stop(t + 0.09);
+    f.type = 'highpass'; f.frequency.value = 3200;
+    const g2 = this._env(dest, t, 0.001, 0.05, 0.14);
+    n.connect(f); f.connect(g2); n.start(t); n.stop(t + 0.08);
+  },
+
+  dryClick() {
+    if (!this.ready) return;
+    const t = this.t, dest = this.weaponBus;
+    const o = this.ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(1750, t);
+    o.frequency.exponentialRampToValueAtTime(520, t + 0.02);
+    const g = this._env(dest, t, 0.0008, 0.022, 0.16);
+    o.connect(g); o.start(t); o.stop(t + 0.04);
+  },
+
+  lastRound() {
+    if (!this.ready) return;
+    const t = this.t, dest = this.weaponBus;
+    const o = this.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(1450, t + 0.02);
+    o.frequency.exponentialRampToValueAtTime(880, t + 0.11);
+    const g = this._env(dest, t + 0.02, 0.002, 0.11, 0.13);
+    o.connect(g); o.start(t + 0.02); o.stop(t + 0.15);
+  },
+
+  magOut() { this._mech(320, 150, 0.09, 'sawtooth', 0.15); },
+  magIn() { this._mech(200, 420, 0.07, 'square', 0.18); },
+  boltPull() {
+    if (!this.ready) return;
+    this._mech(620, 240, 0.05, 'square', 0.16);
+    const t = this.t;
+    const n = this._noise();
+    const f = this.ctx.createBiquadFilter();
+    f.type = 'highpass'; f.frequency.value = 1800;
+    const g = this._env(this.weaponBus, t + 0.04, 0.002, 0.06, 0.12);
+    n.connect(f); f.connect(g); n.start(t + 0.04); n.stop(t + 0.12);
+  },
+  _mech(f0, f1, dur, type, vol) {
+    if (!this.ready) return;
+    const t = this.t, dest = this.weaponBus;
+    const o = this.ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(f0, t);
+    o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = this._env(dest, t, 0.001, dur, vol);
+    o.connect(g); o.start(t); o.stop(t + dur + 0.05);
+  },
+
+  /* 弹壳落地：世界声，高射速时会被合并 */
+  _lastShell: 0,
+  shellDrop(pos) {
+    if (!this.ready) return;
+    const now = performance.now();
+    if (now - this._lastShell < 55) return;      // 合并，但抛壳视觉不受影响
+    this._lastShell = now;
+    const t = this.t, dest = this._panner(pos);
+    const o = this.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(2100 + Math.random() * 600, t);
+    o.frequency.exponentialRampToValueAtTime(900, t + 0.05);
+    const g = this._env(dest, t, 0.001, 0.05, 0.05);
+    o.connect(g); o.start(t); o.stop(t + 0.08);
   },
 
   hit(pos, weak) {

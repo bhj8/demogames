@@ -14,6 +14,7 @@
 <div id="hpfill"></div><div id="hpnum"></div>
 <div id="ammo"></div><div id="ammobar"></div><div id="dashfill"></div>
 <div id="cards"></div>
+<div id="reloadwrap"><div id="reloadbar"></div></div>
 <div id="hitmark"><i></i><i></i></div><div id="dmgnums"></div>
 <div id="shieldvig"></div><div id="shieldflash"></div><div id="floattext"></div><div id="buffbar"></div>
 <svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
@@ -33,6 +34,7 @@ window.addEventListener('unhandledrejection', e => window.__err.push('reject:' +
 <script src="js/tune.js"></script>
 <script src="js/core.js"></script>
 <script src="js/render.js"></script>
+<script src="js/weapon.js"></script>
 <script src="js/combat.js"></script>
 <script src="js/game.js"></script>
 <script>
@@ -357,6 +359,115 @@ addEventListener('load', () => {
       DebugPanel.noSpread = false;
     });
     if (err) { report(['WEAK_ERR:' + err]); return; }
+
+    /* ---- todo2：枪械表现层验收 ---- */
+
+    /* 每枪必须同时驱动枪机、抛壳、曳光；连续射击仍是离散的机械周期 */
+    err = guard(() => {
+      DebugPanel.god = true;
+      G.player.pos.set(0, 0, 0);
+      G.player.gun.ammo = G.derived.magazine; G.player.gun.reloadT = 0;
+      WEAPON.on('reloadEnd');
+      const s0 = WEAPON.stats.shells, t0 = WEAPON.stats.tracers;
+      const boltSeen = [];
+      G.player.gun.held = true;
+      for (let i = 0; i < 30; i++) { step(1); boltSeen.push(WEAPON.boltSpring.x); }
+      G.player.gun.held = false;
+      const shells = WEAPON.stats.shells - s0, tracers = WEAPON.stats.tracers - t0;
+      /* 枪机应当来回往复，而不是停在一个固定偏移上 */
+      const bmax = Math.max.apply(null, boltSeen), bmin = Math.min.apply(null, boltSeen);
+      out.push('weapon: shells=' + shells + ' tracers=' + tracers +
+        ' boltCycle=' + (bmax - bmin).toFixed(3) + ' kickAlive=' + (Math.abs(WEAPON.kickZ.v) > 0.001));
+    });
+    if (err) { report(['WFX_ERR:' + err]); return; }
+
+    /* 分阶段换弹：顺序、弹量恢复时点、reloadEnd 之前不得射击 */
+    err = guard(() => {
+      G.player.gun.ammo = 0; G.player.gun.reloadT = 0; G.player.gun.held = false;
+      G.player.gun.emptyT = 0;
+      let sawEmptyBoltLock = false;
+      /* 先打最后一发，验证空仓锁膛 */
+      G.player.gun.ammo = 1; WEAPON.boltLocked = false;
+      G.player.gun.fireT = 0;
+      G.player.gun.held = true;
+      let guardS = 0;
+      while (G.player.gun.ammo > 0 && guardS++ < 40) step(1);   // 等到那一发真的打出去
+      G.player.gun.held = false;
+      sawEmptyBoltLock = WEAPON.boltLocked;
+
+      const phases = [];
+      let ammoBeforeMagIn = -1, firedDuringReload = 0;
+      firedDuringReload = 0;
+      for (let i = 0; i < 200; i++) {
+        const wasActive = WEAPON.reload.active;
+        const shotsBefore = G.stats.shots;
+        G.player.gun.held = true;                   // 换弹途中一直扣扳机
+        step(1);
+        /* 只统计"整帧都在换弹中"的射击：reloadEnd 当帧开火是合法的 */
+        if (wasActive && WEAPON.reload.active) firedDuringReload += G.stats.shots - shotsBefore;
+        if (WEAPON.reload.active) {
+          if (phases[phases.length - 1] !== WEAPON.reload.phase) phases.push(WEAPON.reload.phase);
+          if (WEAPON.reload.phase < 3) ammoBeforeMagIn = G.player.gun.ammo;
+        }
+        if (!WEAPON.reload.active && phases.length) break;
+      }
+      G.player.gun.held = false;
+      out.push('reload: phases=' + phases.join('>') +
+        ' ammoBeforeMagIn=' + ammoBeforeMagIn +
+        ' ammoAfter=' + G.player.gun.ammo +
+        ' firedDuringReload=' + firedDuringReload +
+        ' boltLockedOnEmpty=' + sawEmptyBoltLock);
+    });
+    if (err) { report(['RELOAD_ERR:' + err]); return; }
+
+    /* §13：换个世界朝向做同样的本地移动，枪摆必须一致
+       （之前用 p.vel.x 是世界坐标，转身后含义会变） */
+    err = guard(() => {
+      const sample = (yaw, vx, vz) => {
+        WEAPON.sway.x = WEAPON.sway.y = WEAPON.sway.vx = WEAPON.sway.vy = 0;
+        WEAPON.bobT = 0; WEAPON.breathT = 0;
+        G.player.yaw = yaw; G.mouseDX = 0; G.mouseDY = 0;
+        G.player.gun.held = false;
+        for (let i = 0; i < 20; i++) {
+          G.player.vel.set(vx, 0, vz);
+          step(1);
+        }
+        return WEAPON.rig.children[0].parent.position.x;
+      };
+      const a = sample(0, 1, 0);            // 面向 -Z 时向世界 +X 移动
+      const b = sample(Math.PI / 2, 0, -1); // 转 90° 后做同样的"本地"移动
+      out.push('localSway: yaw0=' + a.toFixed(4) + ' yaw90=' + b.toFixed(4) +
+        ' same=' + (Math.abs(a - b) < 0.002));
+      G.player.vel.set(0, 0, 0);
+    });
+    if (err) { report(['SWAY_ERR:' + err]); return; }
+
+    /* §12 高负载：90 只敌人 + 全变异连锁 + 持续射击，枪械反馈不得缺失 */
+    err = guard(() => {
+      G.enemies.live.forEach(e => { if (!e._dead && !e.dead) G.enemies.release(e); });
+      G.enemies.compact();
+      MUTATIONS.forEach(m => { if (!G.mutationSet[m.id]) { G.mutations.push(m.id); G.mutationSet[m.id] = true; } });
+      ['caliber', 'caliber', 'bolt', 'catalyst', 'spread', 'cascade', 'twin'].forEach(id => { G.mods[id] = (G.mods[id] || 0) + 1; });
+      recompute();
+      for (let i = 0; i < 90; i++) {
+        const a = i * 0.37, r = 6 + (i % 9) * 1.6;
+        configureEnemy(G.enemies.get(), ENEMIES.grunt,
+          new THREE.Vector3(Math.cos(a) * r, 0, Math.sin(a) * r), {});
+      }
+      G.player.gun.ammo = G.derived.magazine;
+      G.player.gun.held = true;
+      const s0 = WEAPON.stats.shells, t0 = WEAPON.stats.tracers;
+      const t1 = Date.now();
+      for (let i = 0; i < 120; i++) step(1);
+      const ms = Date.now() - t1;
+      G.player.gun.held = false;
+      out.push('load: enemies=' + G.enemies.count +
+        ' shellsFired=' + (WEAPON.stats.shells - s0) +
+        ' tracers=' + (WEAPON.stats.tracers - t0) +
+        ' shellsLive=' + WEAPON.shellMesh.count +
+        ' ' + (ms / 120).toFixed(1) + 'ms/frame(sw)');
+    });
+    if (err) { report(['LOAD_ERR:' + err]); return; }
 
     /* 强制拿满 4 个共同变异，并把变种放进池子 */
     err = guard(() => {

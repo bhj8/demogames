@@ -286,94 +286,9 @@ const R = {
     return geo;
   },
 
-  /* ------------------------------------------------------------ 枪械模型 */
-  buildGun() {
-    const grp = new T.Group();
-    const g = this.geo;
-    const steel = new T.MeshLambertMaterial({ color: 0x40474f });
-    const dark = new T.MeshLambertMaterial({ color: 0x22262b });
-    const add = (geo, mat, x, y, z, sx, sy, sz, rx) => {
-      const m = new T.Mesh(geo, mat);
-      m.position.set(x, y, z); m.scale.set(sx, sy, sz);
-      if (rx) m.rotation.x = rx;
-      grp.add(m); return m;
-    };
-    add(g.box, dark, 0, 0, 0, 0.085, 0.10, 0.46);                 // 机匣
-    add(g.cyl, steel, 0, 0.012, -0.42, 0.032, 0.42, 0.032, Math.PI / 2); // 枪管
-    this.gunMuzzleLocal = new T.Vector3(0, 0.012, -0.64);
-    add(g.box, dark, 0, -0.075, 0.10, 0.055, 0.16, 0.10);          // 弹匣
-    add(g.box, dark, 0, -0.10, 0.19, 0.05, 0.13, 0.06);            // 握把
-    add(g.box, steel, 0, 0.062, -0.06, 0.03, 0.03, 0.20);          // 导轨
-    add(g.box, dark, 0, 0.005, 0.26, 0.06, 0.07, 0.13);            // 枪托
+  /* 枪械模型已迁到 js/weapon.js（todo2 §1：表现层与伤害层解耦） */
 
-    /* 六个器官槽位 —— 选中共同变异时立即长出来 §13.3 */
-    this.gunOrgans = {};
-    const organ = (id, build) => { const o = new T.Group(); o.visible = false; grp.add(o); build(o); this.gunOrgans[id] = o; };
-    const om = (c) => new T.MeshLambertMaterial({ color: c, emissive: c, emissiveIntensity: 0.45 });
-
-    organ('blast', o => {                        // 橙色腺囊
-      const m = om(MUT.blast.color);
-      [[-0.075, -0.02, -0.16], [0.075, -0.02, -0.16], [0, -0.05, -0.30]].forEach(([x, y, z]) => {
-        const s = new T.Mesh(g.sphHi, m); s.position.set(x, y, z); s.scale.setScalar(0.085); o.add(s);
-      });
-    });
-    organ('fission', o => {                      // 紫色分叉枪口
-      const m = om(MUT.fission.color);
-      [-1, 1].forEach(s => {
-        const b = new T.Mesh(g.cyl, m);
-        b.position.set(0.045 * s, 0.012, -0.55); b.scale.set(0.022, 0.20, 0.022);
-        b.rotation.x = Math.PI / 2; b.rotation.z = 0.14 * s; o.add(b);
-      });
-      const core = new T.Mesh(g.oct, m); core.position.set(0, 0.012, -0.42); core.scale.setScalar(0.07); o.add(core);
-    });
-    organ('overclock', o => {                    // 红色血管，随超频搏动
-      const m = om(MUT.overclock.color);
-      this.gunVeinMat = m;
-      [[-0.09, 0.02, -0.05], [0.09, 0.02, -0.05], [0, 0.06, 0.06]].forEach(([x, y, z]) => {
-        const v = new T.Mesh(g.box, m); v.position.set(x, y, z); v.scale.set(0.014, 0.014, 0.36); o.add(v);
-      });
-    });
-    organ('ossify', o => {                       // 骨白包裹层（不是纯白，否则整把枪糊成一片）
-      const m = om(0xcfc6b2); m.emissiveIntensity = 0.06;
-      [[-0.10, 0, -0.10, 0.02, 0.11, 0.34], [0.10, 0, -0.10, 0.02, 0.11, 0.34], [0, 0.075, -0.20, 0.09, 0.02, 0.22]]
-        .forEach(([x, y, z, sx, sy, sz]) => {
-          const p = new T.Mesh(g.box, m); p.position.set(x, y, z); p.scale.set(sx, sy, sz); o.add(p);
-        });
-    });
-    organ('conduct', o => {                      // 青色神经束
-      const m = om(MUT.conduct.color);
-      for (let i = 0; i < 5; i++) {
-        const n = new T.Mesh(g.box, m);
-        n.position.set((i % 2 ? 1 : -1) * 0.075, 0.03 - i * 0.012, -0.02 - i * 0.09);
-        n.scale.set(0.012, 0.012, 0.11); n.rotation.z = (i % 2 ? 0.5 : -0.5); o.add(n);
-      }
-      const coil = new T.Mesh(g.cyl, m); coil.position.set(0, 0.07, -0.32);
-      coil.scale.set(0.05, 0.03, 0.05); o.add(coil);
-    });
-    organ('giant', o => {                        // 黄色重型枪口
-      const m = om(MUT.giant.color);
-      const mz = new T.Mesh(g.cyl, m); mz.position.set(0, 0.012, -0.60);
-      mz.scale.set(0.075, 0.14, 0.075); mz.rotation.x = Math.PI / 2; o.add(mz);
-      const br = new T.Mesh(g.box, m); br.position.set(0, -0.06, -0.20); br.scale.set(0.13, 0.03, 0.16); o.add(br);
-    });
-
-    /* 枪口火焰 —— §31 不能连续遮住准星，所以做小且短 */
-    this.muzzleFlash = new T.Mesh(g.sph, new T.MeshBasicMaterial({
-      color: 0xffd9a0, transparent: true, opacity: 0, depthWrite: false, blending: T.AdditiveBlending
-    }));
-    this.muzzleFlash.position.copy(this.gunMuzzleLocal);
-    this.muzzleFlash.scale.setScalar(0.12);
-    grp.add(this.muzzleFlash);
-
-    /* 别让枪吃掉半个屏幕：推远 + 整体缩小，给尸潮留视野 */
-    grp.scale.setScalar(0.72);
-    grp.position.set(0.24, -0.21, -0.66);
-    this.gunScene.add(grp);
-    this.gun = grp;
-    return grp;
-  },
-
-  setGunOrgan(id, on) { if (this.gunOrgans[id]) this.gunOrgans[id].visible = on; },
+  setGunOrgan(id, on) { WEAPON.setOrgan(id, on); },   // 保留旧接口，转发到表现层
 
   /* --------------------------------------------------------------- 特效池 */
   _buildFxPools() {

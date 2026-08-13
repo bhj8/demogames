@@ -24,13 +24,14 @@ canvas#gl{display:block;position:fixed;inset:0}
 
 /* ---------------------------------------------------------------- 准星 */
 #cross{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);
-  width:26px;height:26px;pointer-events:none;z-index:4}
+  width:0;height:0;pointer-events:none;z-index:4;--sp:5px}
 #cross i{position:absolute;background:rgba(240,250,255,.95);
   box-shadow:0 0 0 1px rgba(0,0,0,.75),0 0 5px rgba(0,0,0,.9)}
-#cross i:nth-child(1){left:50%;top:0;width:2px;height:8px;margin-left:-1px}
-#cross i:nth-child(2){left:50%;bottom:0;width:2px;height:8px;margin-left:-1px}
-#cross i:nth-child(3){top:50%;left:0;height:2px;width:8px;margin-top:-1px}
-#cross i:nth-child(4){top:50%;right:0;height:2px;width:8px;margin-top:-1px}
+/* 间距由 --sp 驱动：每枪张开、稳定后收拢（todo2 §10.1） */
+#cross i:nth-child(1){left:0;top:0;width:2px;height:8px;margin-left:-1px;margin-top:calc(-8px - var(--sp))}
+#cross i:nth-child(2){left:0;top:0;width:2px;height:8px;margin-left:-1px;margin-top:var(--sp)}
+#cross i:nth-child(3){left:0;top:0;height:2px;width:8px;margin-top:-1px;margin-left:calc(-8px - var(--sp))}
+#cross i:nth-child(4){left:0;top:0;height:2px;width:8px;margin-top:-1px;margin-left:var(--sp)}
 #cross u{position:absolute;left:50%;top:50%;width:2px;height:2px;margin:-1px 0 0 -1px;
   background:rgba(230,242,252,.55);border-radius:50%}
 
@@ -50,6 +51,12 @@ canvas#gl{display:block;position:fixed;inset:0}
   55%{opacity:1;transform:scale(2.1) rotate(45deg)}100%{opacity:0;transform:scale(2.4) rotate(90deg)}}
 #hitmark.weak i,#hitmark.weakkill i{height:3px;left:-12px;width:24px}
 #hitmark.weak i{background:#ffd24a}
+#hitmark.kill{animation:hmW .16s ease-out}
+#hitmark.kill i{background:#ff5a4a;height:3px;left:-11px;width:22px}
+#hitmark.armor{animation:hmA .1s ease-out}
+#hitmark.armor i{background:#dfe6f5;height:2px;left:-7px;width:14px}
+@keyframes hmA{0%{opacity:1;transform:scale(1.15) rotate(45deg)}
+  100%{opacity:0;transform:scale(.95) rotate(45deg)}}
 #hitmark.weakkill i{background:#ff7a4a;box-shadow:0 0 8px rgba(255,180,60,.9)}
 
 /* 伤害数字：正式界面只显示金色弱点伤害，调试模式才显示全部 */
@@ -143,6 +150,15 @@ canvas#gl{display:block;position:fixed;inset:0}
 #gunwrap{position:absolute;right:26px;bottom:26px;width:210px;text-align:right}
 #ammo{font-size:30px;font-weight:600;line-height:1;letter-spacing:.02em;
   font-variant-numeric:tabular-nums}
+#ammo small{font-size:15px;opacity:.45;font-weight:400;margin-left:3px}
+#ammo.low{color:#ff8a4a}
+#ammo.last{animation:lastr .5s ease-out}
+@keyframes lastr{0%{color:#ffd06a;transform:scale(1.12)}100%{transform:scale(1)}}
+/* 换弹进度独立显示，不占用弹量数字（todo2 §6.1） */
+#reloadwrap{height:3px;background:rgba(255,255,255,.08);margin-top:5px;
+  border-radius:2px;overflow:hidden;opacity:0;transition:opacity .12s}
+#reloadwrap.on{opacity:1}
+#reloadbar{height:100%;width:0;background:#5fc8ff}
 #ammo.pulse{animation:ap .3s ease-out}
 @keyframes ap{0%{color:#7ef0a8;transform:scale(1.10)}100%{color:var(--ink);transform:scale(1)}}
 #ammobarwrap{height:4px;background:rgba(255,255,255,.08);margin-top:7px;border-radius:2px;overflow:hidden}
@@ -342,6 +358,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
   <div id="gunwrap">
     <div id="ammo">30 / 30</div>
     <div id="ammobarwrap"><div id="ammobar"></div></div>
+    <div id="reloadwrap"><div id="reloadbar"></div></div>
     <div id="dashwrap"><div id="dashfill"></div></div>
     <div id="dashlabel">DASH</div>
   </div>
@@ -362,6 +379,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
     <span><b>按住左键</b> 射击</span>
     <span><b>Shift/空格</b> 冲刺</span>
     <span><b>R</b> 换弹</span>
+    <span><b>右键</b> 稳枪</span>
     <span><b>Esc</b> 暂停</span>
     <span>碰到就拿：<b style="color:#3ad07a">医疗</b> / <b style="color:#5fe0ff">空投</b></span>
   </div>
@@ -392,6 +410,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 <script src="js/tune.js"></script>
 <script src="js/core.js"></script>
 <script src="js/render.js"></script>
+<script src="js/weapon.js"></script>
 <script src="js/combat.js"></script>
 <script src="js/game.js"></script>
 </body>

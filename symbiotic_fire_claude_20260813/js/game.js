@@ -15,6 +15,7 @@ function arcPath(a0, a1, r0, r1) {
          ' L ' + p(a1, r1) + ' A ' + r1 + ' ' + r1 + ' 0 ' + big + ' 0 ' + p(a0, r1) + ' Z';
 }
 const TV = new THREE.Vector3(), TV2 = new THREE.Vector3();
+const _muzzleW = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
 /* ============================================================================
@@ -70,7 +71,7 @@ function configureEnemy(e, tpl, pos, opts) {
   e.spawnGrace = opts.grace || 0;
   e.pos.copy(pos); e.knock.set(0, 0, 0); e.vel.set(0, 0, 0);
   /* 池化对象必须清干净上一位住客的状态 */
-  e.knockCtx = null;
+  e.knockCtx = null; e.hitReact = 0; e.grp.rotation.x = 0;
   e.summonCd = tpl.summon ? tpl.summon.cooldown : 0;
   e.slamAt = null; e.chargeDir = { x: 0, z: 1 };
 
@@ -155,6 +156,7 @@ function spawnPosition(forceFront) {
 const Director = {
   timer: 0, target: 0, interval: 0,
   update(dt) {
+    if (DebugPanel.rangeMode) return;              // 枪感实验场：暂停刷怪
     if (G.bossAlive && G.bossAlive.king) return;   // 尸王阶段停常规刷怪，避免不可读
     const t = G.time, S = TUNE.SPAWN;
     const k = Math.min(1, t / TUNE.RUN_SECONDS);
@@ -349,6 +351,16 @@ function updateEnemies(dt) {
     const fz = e.state === 'charge' ? e.chargeDir.z : nz;
     e.grp.position.copy(e.pos);
     e.grp.rotation.y = Math.atan2(fx, fz);
+
+    /* 受击反应：压扁 + 后仰，很短，不影响判定，只让命中"看得出来" */
+    if (e.hitReact > 0) {
+      e.hitReact -= dt;
+      const k = Math.max(0, e.hitReact) / 0.16;
+      const sq = 1 + k * 0.14;
+      e.grp.scale.set(e.height * sq, e.height * (1 - k * 0.10), e.height * sq);
+      e.grp.rotation.x = -k * 0.22;
+      if (e.hitReact <= 0) { e.grp.scale.setScalar(e.height); e.grp.rotation.x = 0; }
+    }
 
     /* 前摇的可读性：预警期抖动 + 抬高 */
     if (e.state === 'windup' || e.state === 'spit' || e.state === 'slam' || e.state === 'melee') {
@@ -913,9 +925,17 @@ function openModChoice() {
   });
 }
 
+function emitBuildChanged() {
+  WEAPON.on('buildChanged', {
+    twin: lvl('twin') > 0, magLevel: lvl('mag'),
+    heavy: G.derived.weaponHeavy, mutations: G.mutations.slice()
+  });
+}
+
 function takeMod(id) {
   G.mods[id] = (G.mods[id] || 0) + 1;
   recompute();
+  emitBuildChanged();
   const gun = G.player.gun;
   gun.ammo = Math.min(gun.ammo, G.derived.magazine);
   if (id === 'mag') gun.ammo = G.derived.magazine;
@@ -952,6 +972,7 @@ function takeMutation(id) {
 
   /* §13.3 ① 枪械立即出现对应变化 ② 一句话提示 */
   R.setGunOrgan(id, true);
+  emitBuildChanged();
   G.ui.hideCards();
   G.ui.mutationSlots();
   G.ui.toast('你：' + m.you, m.css);
@@ -989,7 +1010,13 @@ function makePlayer() {
     hp: TUNE.PLAYER.maxHp, maxHp: TUNE.PLAYER.maxHp,
     level: 1, xp: 0, xpNext: TUNE.PACING.bootstrapXp,
     iframe: 0, dashIFrame: 0, dashCd: 0, dashT: 0, dashDir: new THREE.Vector3(),
-    gun: { ammo: TUNE.GUN.magazine, reloadT: 0, fireT: 0, bloom: 0, recoil: 0, held: false, holdT: 0, idleT: 0 },
+    gun: {
+      ammo: TUNE.GUN.magazine, reloadT: 0, reloadTotal: 0, fireT: 0, bloom: 0,
+      held: false, holdT: 0, idleT: 0, emptyT: 0, dryT: 0, magFilled: true
+    },
+    /* 相机后坐独立于枪模后坐：方向确定、幅度很小，绝不随机平移（todo2 §4） */
+    camRecoil: { pitch: 0, yaw: 0, vp: 0, vy: 0 },
+    shotIndex: 0,
     bobT: 0
   };
 }
@@ -1005,14 +1032,24 @@ addEventListener('keydown', e => {
   if (e.code === 'Space') e.preventDefault();
 });
 addEventListener('keyup', e => { KEY[e.code] = false; });
-addEventListener('mousedown', e => { if (e.button === 0) G.player.gun.held = true; });
-addEventListener('mouseup', e => { if (e.button === 0) G.player.gun.held = false; });
+addEventListener('mousedown', e => {
+  if (e.button === 0) G.player.gun.held = true;
+  if (e.button === 2) WEAPON.adsWant = true;      // 轻量稳枪，不是硬核 ADS
+});
+addEventListener('mouseup', e => {
+  if (e.button === 0) G.player.gun.held = false;
+  if (e.button === 2) WEAPON.adsWant = false;
+});
+addEventListener('contextmenu', e => e.preventDefault());
 addEventListener('mousemove', e => {
   if (document.pointerLockElement !== R.renderer.domElement) return;
   const p = G.player;
-  p.yaw -= e.movementX * TUNE.PLAYER.mouseSens;
-  p.pitch -= e.movementY * TUNE.PLAYER.mouseSens;
+  const dx = e.movementX * TUNE.PLAYER.mouseSens;
+  const dy = e.movementY * TUNE.PLAYER.mouseSens;
+  p.yaw -= dx;
+  p.pitch -= dy;
   p.pitch = clamp(p.pitch, -1.5, 1.5);
+  G.mouseDX += dx; G.mouseDY += dy;    // 累积到本帧，供枪械惯性摆动使用
 });
 
 function tryReload() {
@@ -1020,9 +1057,13 @@ function tryReload() {
   if (G.derived.infiniteMag) return;          // 过载供弹期间不允许进入换弹状态
   if (g.reloadT > 0 || g.ammo >= G.derived.magazine) return;
   g.reloadT = G.derived.reloadTime;
+  g.reloadTotal = G.derived.reloadTime;
+  g.magFilled = false;                        // 弹量要等 magIn 事件才恢复
   /* §18 换弹期间保留一半超频进度 */
   G.overclock *= MUT.overclock.player.reloadKeep;
-  Audio2.reload(0);
+  /* 分阶段动作与声音由表现层按 total 的比例驱动，
+     所以快速装填升级会同比例加速整套流程，不会动作与计时错位 */
+  WEAPON.on('reloadStart', { total: g.reloadTotal });
   G.bus.emit('reload', {});
 }
 
@@ -1071,10 +1112,10 @@ function updatePlayer(dt) {
   }
   R.collide(p.pos, p.radius);
 
-  /* 换弹 */
+  /* 换弹推进：弹量在 magIn 恢复，但要到 reloadEnd 才允许射击 */
   if (g.reloadT > 0) {
     g.reloadT -= dt;
-    if (g.reloadT <= 0) { g.ammo = d.magazine; Audio2.reload(1); }
+    if (g.reloadT <= 0) { g.reloadT = 0; WEAPON.on('reloadEnd'); }
   }
 
   /* 超频 §18 */
@@ -1087,17 +1128,29 @@ function updatePlayer(dt) {
       g.idleT += dt;
       if (g.idleT > oc.holdGrace && g.reloadT <= 0) G.overclock = Math.max(0, G.overclock - oc.decayRate * dt);
     }
-    if (R.gunVeinMat) R.gunVeinMat.emissiveIntensity = 0.3 + G.overclock * 1.4;
+    /* 血管发光已由 weapon.js 的 update 统一驱动 */
   }
 
-  /* 射击 §11.3 打空自动换弹，无备弹消耗 */
+  /* 射击 §11.3 —— 弹匣打空后自动换弹，但先留一个可感知的空仓瞬间（todo2 §6.2） */
   g.fireT -= dt;
-  if (g.held && g.reloadT <= 0 && G.phase === 'play') {
-    if (g.ammo <= 0) tryReload();
-    else if (g.fireT <= 0) { fire(); g.fireT = effectiveFireInterval(); }
+  g.dryT -= dt;
+  if (g.reloadT <= 0 && G.phase === 'play') {
+    if (!d.infiniteMag && g.ammo <= 0) {
+      g.emptyT += dt;
+      if (g.held && g.dryT <= 0) { WEAPON.on('empty'); g.dryT = 0.28; }
+      if (g.emptyT >= TUNE.WEAPON_FX.emptyBeat) tryReload();
+    } else if (g.held && g.fireT <= 0) {
+      g.emptyT = 0;
+      fire(); g.fireT = effectiveFireInterval();
+    }
   }
+
+  /* 相机后坐：方向确定的 pitch/yaw，回位用临界阻尼，不越过 */
+  const cr = p.camRecoil, WF = TUNE.WEAPON_FX;
+  cr.vp += (-cr.pitch * 190 - cr.vp * 26) * dt;
+  cr.vy += (-cr.yaw * 190 - cr.vy * 26) * dt;
+  cr.pitch += cr.vp * dt; cr.yaw += cr.vy * dt;
   g.bloom = Math.max(0, g.bloom - TUNE.GUN.bloomDecay * dt);
-  g.recoil = smooth(g.recoil, 0, TUNE.GUN.recoilRecover, dt);
 
   /* 神经回授配额 §23 */
   G.feedbackTimer -= dt;
@@ -1109,36 +1162,49 @@ function updatePlayer(dt) {
   const bob = Math.sin(p.bobT * 2) * 0.022 * Math.min(1, speed / 6);
   R.camera.position.set(p.pos.x, TUNE.PLAYER.height + bob, p.pos.z);
   R.camera.rotation.set(0, 0, 0);
-  R.camera.rotateY(p.yaw);
-  R.camera.rotateX(p.pitch + g.recoil * TUNE.FX.recoilCamera + G.shakePitch);
+  R.camera.rotateY(p.yaw + p.camRecoil.yaw);
+  R.camera.rotateX(p.pitch + p.camRecoil.pitch + G.shakePitch);
   R.camera.rotateZ(G.shakeRoll);
   R.camera.position.x += G.shakeX; R.camera.position.z += G.shakeZ;
 
-  const fov = TUNE.PLAYER.fovBase + (p.dashT > 0 ? TUNE.PLAYER.fovSprintAdd : 0);
+  const fov = TUNE.PLAYER.fovBase + (p.dashT > 0 ? TUNE.PLAYER.fovSprintAdd : 0)
+    + WEAPON.pose.ads * TUNE.WEAPON_FX.adsFov;
   R.camera.fov = smooth(R.camera.fov, fov, 9, dt);
   R.camera.updateProjectionMatrix();
 
   /* 武器摆动 */
   R.lamp.position.set(p.pos.x, TUNE.PLAYER.height + 0.4, p.pos.z);
 
-  const gun = R.gun;
-  gun.position.x = lerp(gun.position.x, 0.24 - p.vel.x * 0.004, 1 - Math.exp(-10 * dt));
-  gun.position.y = lerp(gun.position.y, -0.21 + bob * 0.6, 1 - Math.exp(-10 * dt));
-  gun.position.z = -0.66 + g.recoil * 0.10;
-  gun.rotation.x = g.recoil * TUNE.FX.recoilGunKick;
-  gun.rotation.z = lerp(gun.rotation.z, -p.vel.x * 0.006, 1 - Math.exp(-8 * dt));
-  R.muzzleFlash.material.opacity = Math.max(0, R.muzzleFlash.material.opacity - dt * 22);
-  R.muzzleFlash.scale.setScalar(0.10 + R.muzzleFlash.material.opacity * 0.10);
+  /* 枪械表现层：只喂状态，动作全部由 weapon.js 自己解算 */
+  WEAPON.update(dt, {
+    vel: p.vel,
+    sprinting: p.dashT > 0,
+    yawDelta: G.mouseDX, pitchDelta: G.mouseDY,
+    overclock: G.overclock,
+    conductCharge: hasMut('conduct') ? G.conductCounter / MUT.conduct.player.hits : 0,
+    stableLevel: lvl('stable'),
+    ammo: g.ammo, magazine: d.magazine, infiniteMag: d.infiniteMag,
+    onMagIn: () => { g.ammo = d.magazine; g.magFilled = true; }
+  });
+  G.mouseDX = 0; G.mouseDY = 0;
 
   Audio2.setListener(R.camera.position, R.camera.getWorldDirection(TV), UP);
 }
 
+/* 相机 yaw 的固定序列：可学习，不是随机噪声（todo2 §4） */
+const YAW_PATTERN = [0.55, -0.35, 0.85, -0.7, 0.4, -0.9];
+
 function fire() {
-  const p = G.player, g = p.gun, d = G.derived;
+  const p = G.player, g = p.gun, d = G.derived, W = TUNE.WEAPON_FX;
   if (!d.infiniteMag) g.ammo--;
   G.stats.shots++;
+  p.shotIndex++;
   g.bloom = Math.min(1, g.bloom + TUNE.GUN.bloomPerShot);
-  g.recoil = Math.min(1.2, g.recoil + d.recoil);
+
+  /* 相机后坐：很小、方向确定 */
+  const heavy = d.weaponHeavy;
+  p.camRecoil.vp += W.cameraRecoilScale * heavy * (1 + WEAPON.climb * 5) * 60;
+  p.camRecoil.vy += W.cameraYawScale * heavy * YAW_PATTERN[p.shotIndex % YAW_PATTERN.length] * 60;
 
   const spread = DebugPanel.noSpread ? 0
     : (d.spreadBase + d.spreadBloom * g.bloom) * Math.PI / 180;
@@ -1158,9 +1224,21 @@ function fire() {
     spawnBullet(muzzleWorld, dir, d.damage, ctx, {});
   }
 
-  R.muzzleFlash.material.opacity = 0.85;
-  Audio2.shot(1 + G.overclock * 0.35);
-  /* 开火不震屏 —— 后坐全部表现在枪模型上 */
+  /* 曳光从真实枪口出发，但弹道仍从准星方向收敛 —— 避免"瞄哪打不到哪" */
+  WEAPON.muzzleWorldPos(_muzzleW);
+  const tracerColor = hasMut('giant') ? 0xffe08a : 0xffd9a0;
+  WEAPON.addTracer(_muzzleW, baseDir, tracerColor, W.tracerLength * (hasMut('giant') ? 1.25 : 1));
+  if (d.pellets > 1) WEAPON.addTracer(_muzzleW, baseDir, tracerColor, W.tracerLength * 0.8);
+
+  const isLast = !d.infiniteMag && g.ammo <= 0;
+  WEAPON.on('shot', {
+    isLastRound: isLast, pellets: d.pellets, overclock: G.overclock,
+    heavy: heavy, boltSpeed: 1 + G.overclock * 0.45
+  });
+  Audio2.shot(1 + G.overclock * 0.35, heavy);
+  if (isLast) Audio2.lastRound();
+
+  /* 开火不震屏 —— 力量全部由枪模、机械部件、枪口光和声音承担 */
   G.bus.emit('fire', {});
 }
 
@@ -1178,6 +1256,8 @@ const UI = {
     this.dmgDirs = $('dmgdirs'); this.threatEl = $('threats');
     this.vig = $('vignette');
     this.buffEl = $('buffbar');
+    this.reloadWrap = $('reloadwrap'); this.reloadBar = $('reloadbar');
+    this.crossEl = $('cross'); this._lastAmmo = -1;
     this.medMark = $('medmark'); this.dropMark = $('dropmark');
     this._arcs = Array.prototype.slice.call(document.querySelectorAll('#threatarcs path'));
     this.hitMarkEl = $('hitmark');
@@ -1213,17 +1293,33 @@ const UI = {
     this.clock.textContent = fmtTime(TUNE.RUN_SECONDS - G.time);
     if (G.time > TUNE.RUN_SECONDS - 30) this.clock.classList.add('urgent');
 
-    const g = p.gun;
-    if (g.reloadT > 0) {
-      this.ammo.textContent = '换弹';
-      this.ammoBar.style.width = ((1 - g.reloadT / G.derived.reloadTime) * 100) + '%';
-      this.ammoBar.style.background = '#5fc8ff';
+    /* 弹药：明确表达"当前弹匣 / 无限备弹"，换弹期间保留数字（todo2 §6.1） */
+    const g = p.gun, cap = G.derived.magazine;
+    const inf = G.derived.infiniteMag;
+    const frac = inf ? 1 : g.ammo / cap;
+    if (inf) {
+      this.ammo.innerHTML = '&infin;<small>过载供弹</small>';
+      this.ammo.className = '';
     } else {
-      this.ammo.textContent = g.ammo + ' / ' + G.derived.magazine;
-      this.ammoBar.style.width = (g.ammo / G.derived.magazine * 100) + '%';
-      this.ammoBar.style.background = g.ammo / G.derived.magazine < 0.25 ? '#ff6a4a' : '#d8e4ee';
+      this.ammo.innerHTML = g.ammo + '<small>/ &infin;</small>';
+      this.ammo.className = frac < 0.25 ? 'low' : '';
+      if (g.ammo === 0 && this._lastAmmo !== 0) { this.ammo.classList.add('last'); }
     }
+    this._lastAmmo = g.ammo;
+    this.ammoBar.style.width = (frac * 100) + '%';
+    this.ammoBar.style.background = inf ? '#7ef0a8' : (frac < 0.25 ? '#ff6a4a' : '#d8e4ee');
+
+    /* 换弹进度用独立的条 */
+    if (g.reloadT > 0) {
+      this.reloadWrap.classList.add('on');
+      this.reloadBar.style.width = ((1 - g.reloadT / Math.max(0.001, g.reloadTotal)) * 100) + '%';
+    } else this.reloadWrap.classList.remove('on');
+
     this.dash.style.width = (p.dashCd > 0 ? (1 - p.dashCd / G.derived.dashCooldown) * 100 : 100) + '%';
+
+    /* 动态准星：间距反映当前 bloom，但不能大到遮挡尸潮 */
+    const sp = 4 + g.bloom * 13 + WEAPON.climb * 26 - WEAPON.pose.ads * 2.5;
+    this.crossEl.style.setProperty('--sp', clamp(sp, 2.5, 22).toFixed(1) + 'px');
 
     /* 受伤方向 §31 */
     this._dirs.forEach(d => {
@@ -1664,7 +1760,7 @@ function handleDebugKey(code) {
 
 const DebugPanel = {
   el: null, god: false, showEvents: false, frames: 0, fpsT: 0, fps: 0,
-  showWeak: false, noSpread: false, showDmg: false, _weakGizmos: null,
+  showWeak: false, noSpread: false, showDmg: false, rangeMode: false, _weakGizmos: null,
   init() {
     this.el = $('debug');
     if (BOOT.debug) this.el.classList.add('on');
@@ -1675,7 +1771,10 @@ const DebugPanel = {
       ['医疗物', 'med'], ['充满空投', 'drop'],
       ['过载供弹', 'b_ammo'], ['肾上腺素', 'b_adren'], ['相位护盾', 'b_shield'],
       ['正后方刷怪', 'behind'],
-      ['弱点球', 'weak'], ['无散布枪', 'nospread'], ['全部伤害数字', 'dmg'], ['靶场', 'range']
+      ['弱点球', 'weak'], ['无散布枪', 'nospread'], ['全部伤害数字', 'dmg'], ['靶场', 'range'],
+      ['满弹', 'fullmag'], ['清空弹匣', 'emptymag'], ['立即换弹', 'doreload'],
+      ['无限供弹', 'infammo'], ['相机后坐×0', 'camrec0'], ['相机后坐×1', 'camrec1'],
+      ['枪感实验场', 'gunrange'], ['慢动作', 'slowmo']
     ].map(([t, a]) => '<button data-a="' + a + '">' + t + '</button>').join('');
     $('dbgbtns').onclick = e => {
       const a = e.target.dataset.a; if (!a) return;
@@ -1688,6 +1787,43 @@ const DebugPanel = {
       else if (a === 'med') { G.medCooldown = 0; G.medPending = true; this.log('下一只非召唤物死亡将掉落医疗'); }
       else if (a === 'drop') { G.supplyCharge = 1; G.lastDropAt = -999; G.dropQueued = true; this.log('空投已排队'); }
       else if (a[0] === 'b' && a[1] === '_') { applyBuff(a.slice(2)); }
+      else if (a === 'doreload') { G.player.gun.ammo = 0; G.player.gun.emptyT = 99; }
+      else if (a === 'infammo') {
+        if (G.buff && G.buff.id === 'ammo') { G.buff = null; recompute(); this.log('无限供弹 off'); }
+        else { applyBuff('ammo'); G.buff.t = 9999; this.log('无限供弹 ON'); }
+      }
+      else if (a === 'slowmo') {
+        BOOT.timescale = BOOT.timescale === 1 ? 0.15 : 1;
+        this.log('时间倍率 ' + BOOT.timescale + ' —— 可逐帧看枪机/枪口/曳光/抛壳是否同帧');
+      }
+      else if (a === 'gunrange') {
+        /* 枪感实验场：暂停刷怪，只留墙和静止靶（普通 / 弱点 / 护甲各一） */
+        this.rangeMode = !this.rangeMode;
+        G.enemies.live.forEach(x => { if (!x._dead && !x.dead) G.enemies.release(x); });
+        G.enemies.compact();
+        if (this.rangeMode) {
+          const p = G.player;
+          const targets = [
+            { tpl: ENEMIES.grunt, off: -0.28, tag: '普通' },
+            { tpl: ENEMIES.grunt, off: 0, tag: '弱点' },
+            { tpl: G.variantTpl.ossify, off: 0.28, tag: '护甲' }
+          ];
+          targets.forEach(t => {
+            const ang = p.yaw + Math.PI + t.off;
+            const d = 13;
+            const e = configureEnemy(G.enemies.get(), t.tpl,
+              new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), { grace: 9999 });
+            e.speed = 0; e.atk = 9999; e.maxHp = e.hp = 1e9;
+            e.tpl = Object.assign({}, e.tpl, { ranged: null, charge: null });
+          });
+          G.player.gun.ammo = G.derived.magazine;
+          this.log('实验场 ON：普通 / 弱点 / 护甲 三个静止靶，刷怪已暂停');
+        } else this.log('实验场 OFF');
+      }
+      else if (a === 'fullmag') { G.player.gun.ammo = G.derived.magazine; G.player.gun.reloadT = 0; WEAPON.on('reloadEnd'); }
+      else if (a === 'emptymag') { G.player.gun.ammo = 0; }
+      else if (a === 'camrec0') { TUNE.WEAPON_FX.cameraRecoilScale = 0; TUNE.WEAPON_FX.cameraYawScale = 0; this.log('相机后坐已关闭（枪模仍然有力）'); }
+      else if (a === 'camrec1') { TUNE.WEAPON_FX.cameraRecoilScale = 0.0075; TUNE.WEAPON_FX.cameraYawScale = 0.0022; this.log('相机后坐已恢复'); }
       else if (a === 'weak') { this.showWeak = !this.showWeak; this.log('弱点球 ' + (this.showWeak ? 'ON' : 'off')); }
       else if (a === 'nospread') { this.noSpread = !this.noSpread; this.log('无散布枪 ' + (this.noSpread ? 'ON' : 'off')); }
       else if (a === 'dmg') { this.showDmg = !this.showDmg; this.log('全部伤害数字 ' + (this.showDmg ? 'ON' : 'off')); }
@@ -1815,6 +1951,12 @@ const DebugPanel = {
       ' 距上次 <b>' + (G.time - G.lastDropAt).toFixed(0) + 's</b>' +
       ' 次数 <b>' + (G.dropCount || 0) + '</b>' + (G.dropQueued ? ' <b style="color:#5fe0ff">排队中</b>' : '') +
       ' Buff <b>' + (G.buff ? G.buff.id + ' ' + G.buff.t.toFixed(1) + 's' : '-') + '</b>' +
+      '<br>枪械 kick <b>' + WEAPON.kickZ.x.toFixed(3) + '</b>' +
+      ' climb <b>' + WEAPON.climb.toFixed(3) + '</b>' +
+      ' bolt <b>' + (WEAPON.boltLocked ? 'LOCK' : WEAPON.boltSpring.x.toFixed(3)) + '</b>' +
+      ' reload <b>' + (WEAPON.reload.active ? 'P' + WEAPON.reload.phase : '-') + '</b>' +
+      ' ads <b>' + WEAPON.pose.ads.toFixed(2) + '</b>' +
+      '<br>曳光 <b>' + WEAPON.stats.tracers + '</b> 弹壳 <b>' + WEAPON.stats.shells + '</b>' +
       '<br>弱点命中 <b style="color:#ffd24a">' + (G.stats.weakHits || 0) + '</b>' +
       ' 弱点击杀 <b style="color:#ff9a4a">' + (G.stats.weakKills || 0) + '</b>' +
       ' 命中 <b>' + G.stats.hits + '</b>' +
@@ -1838,7 +1980,7 @@ Object.defineProperty(G.hazards, 'count', { get() { return this.length; } });
 function boot() {
   RNG.init(BOOT.seed);
   R.init($('gl'));
-  R.buildGun();
+  WEAPON.build(R.gunScene, R.geo);
   UI.init();
 
   G.player = makePlayer();
@@ -1857,8 +1999,10 @@ function boot() {
   G.dropCount = 0; G.lastDropAt = 0; G.supplyCharge = 0; G.dropQueued = false;
   G.medNeed = 0; G.medCooldown = 0; G.medPending = false; G.medical = null;
   G.buff = null; G.meleeWhiffs = 0; G.hurtCount = 0;
+  G.mouseDX = 0; G.mouseDY = 0;
 
   recompute();
+  emitBuildChanged();
   installPlayerMutations();
   installHordeMutations();
   UI.mutationSlots();

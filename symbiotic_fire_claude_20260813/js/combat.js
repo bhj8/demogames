@@ -61,12 +61,15 @@ function recompute() {
   if (lvl('twin')) d.damage *= 0.72;
   d.executeBonus = lvl('execute') ? 0.40 : 0;
   d.knockback = g.knockback;
+  /* 枪械"重量"：大口径与巨化让单发冲击、枪口爆音与抛壳都变重（todo2 §11） */
+  d.weaponHeavy = 1 + 0.12 * lvl('caliber');
 
   /* 巨化 §21：玩家侧是纯被动 */
   d.bulletScale = 1;
   if (hasMut('giant')) {
     const p = MUT.giant.player;
     d.damage *= p.dmgMult; d.knockback *= p.knockMult; d.bulletScale = p.sizeMult;
+    d.weaponHeavy += 0.25;
   }
 
   /* 骨化 §19：贯穿 */
@@ -171,8 +174,11 @@ function damageEnemy(e, amount, ctx, opts) {
   if (e.plates > 0 && opts.fromFront && !opts.weakpoint) {
     e.plates--;
     e.plateMeshes[e.plates].visible = false;
-    R.spark(opts.point || e.pos, null, MUT.ossify.color);
-    Audio2.hit(e.pos, false);
+    /* 护甲命中必须一眼一耳都能和"正常造成伤害"区分开（todo2 §9） */
+    R.spark(opts.point || e.pos, null, 0xdfe6f5);
+    R.puff(opts.point || e.pos, 0.1, 0.7, 0xffffff, 0.14);
+    Audio2.armorHit();
+    G.ui.hitMark('armor');
     if (e.hurtFlash !== undefined) e.hurtFlash = 0.1;
     return 0;
   }
@@ -182,6 +188,8 @@ function damageEnemy(e, amount, ctx, opts) {
 
   e.hp -= amount;
   e.hurtFlash = 0.12;
+  /* 受击姿态：明显冲击时有极短的形变与后仰（todo2 §9） */
+  e.hitReact = Math.min(0.16, 0.06 + amount / Math.max(1, e.maxHp) * 0.5);
   G.stats.dmgDealt += amount;
 
   G.bus.emit('damage', { enemy: e, amount: amount, ctx: ctx, opts: opts });
@@ -692,7 +700,7 @@ function resolveBulletHit(b, e, point, weak) {
   } else {
     R.spark(point, b.dir, b.split ? MUT.fission.color : 0xffd08a);
     Audio2.hit(point, false);
-    if (dealt > 0) G.ui.hitMark('normal');
+    if (dealt > 0) G.ui.hitMark(killed ? 'kill' : 'normal');
     if (DebugPanel.showDmg && dealt > 0) G.ui.dmgNumber(point, Math.round(dealt), false, true);
   }
 

@@ -184,6 +184,62 @@ const TUNE = {
     shieldMax: 15                 // 或 15 秒，先到先结束
   },
 
+  /* --- 枪械表现（todo2.md）---
+     所有手感参数集中在这里，weapon.js 里不允许出现魔法数字。
+     需要强调的一条：震感来自多层反馈在同一时刻对齐，
+     而不是画面随机乱晃 —— 相机与枪模的后坐倒数必须独立。 */
+  WEAPON_FX: {
+    rigScale: 0.72,
+
+    /* 姿态基准位（腰射 / 稳枪） */
+    hipX: 0.24, hipY: -0.21, hipZ: -0.66,
+    adsX: 0.005, adsY: -0.115, adsZ: -0.50,
+    adsSwayScale: 0.35,
+    adsFov: -9,                    // 视野轻微收窄
+    poseBlend: 12,
+
+    /* 每枪冲击（弹簧）与持续累积，两条通道分开可调 */
+    kickStiffness: 260, kickDamping: 15,
+    shotKickZ: 1.5, shotKickPitch: 2.6, shotKickRoll: 1.1,
+    climbPerShot: 0.010, climbMax: 0.075, climbDecay: 0.14,
+    viewmodelRecoilScale: 0.055,   // 枪模后坐：可以很大
+    cameraRecoilScale: 0.0075,     // 相机后坐：必须很小，且方向确定
+    cameraYawScale: 0.0022,
+
+    /* 枪机 */
+    boltStiffness: 900, boltDamping: 26,
+    boltKick: 4.2, boltTravel: 0.075,
+
+    /* 步态 / 呼吸 / 鼠标惯性摆动 */
+    bobRate: 1.9, bobAmpX: 0.016, bobAmpY: 0.012,
+    breathAmp: 0.0035,
+    swayGain: 0.55, swayK: 0.10, swayD: 0.28, swayMax: 0.055,
+    swayYaw: 0.55, swayRoll: 0.42,
+    strafeLean: 0.45, forwardLag: 0.35,
+
+    /* 冲刺与换弹姿态 */
+    sprintX: 0.05, sprintY: -0.07, sprintPitch: 0.22, sprintYaw: -0.30, sprintRoll: 0.18,
+    reloadDrop: -0.10, reloadPitch: 0.30,
+    dashKick: 1.2, dryKick: 0.6,
+
+    /* 枪口 */
+    flashScale: 0.115, flashOuterOpacity: 0.85, flashCoreOpacity: 1.0, flashDecay: 26,
+    muzzleLightPeak: 2.4, muzzleLightRange: 3.2, worldFlashPeak: 2.2,
+
+    /* 曳光 */
+    tracerCap: 64, tracerLife: 0.055, tracerLength: 9,
+
+    /* 抛壳与弹匣 */
+    shellCap: 72, shellLife: 3.2, shellScale: 1.0,
+    shellVelX: 3.4, shellVelY: 2.2,
+    magLife: 6.0,
+
+    /* 分阶段换弹的时间点（占总时长的比例）——
+       用比例才能保证快速装填升级同比例加速整套动作与事件点 */
+    reloadPhases: { magOut: 0.13, magFall: 0.30, magIn: 0.58, bolt: 0.82 },
+    emptyBeat: 0.12               // 自动换弹前的空仓瞬间，让最后一发有结束感
+  },
+
   /* --- 后期表现上限 §31 ---
      震屏纪律：位置抖动（相机平移）是晕动症的主因，几乎压到零；
      方向上只留很小的 roll。枪模型自己的后坐可以做大，那不晕。 */
@@ -193,8 +249,7 @@ const TUNE = {
     shakePos: 0.03,               // 相机位移系数（原 0.16）
     shakePitch: 0.006,            // 俯仰抖动，最晕，压到最低
     shakeRoll: 0.010,
-    recoilCamera: 0.012,          // 后坐传给相机的比例（原 0.06）
-    recoilGunKick: 0.22,          // 后坐传给枪模型的比例（原 0.12，可以大）
+    /* 后坐已迁到 WEAPON_FX 的 cameraRecoilScale / viewmodelRecoilScale（todo2 §4 要求两者独立） */
     blastSoundMergeWindow: 0.06,
     maxConcurrentBlastFx: 24
   }
