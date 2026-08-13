@@ -54,6 +54,49 @@ canvas#gl{display:block;position:fixed;inset:0}
   border-left:9px solid transparent;border-right:9px solid transparent;
   border-bottom:13px solid #ff8a4a;transform-origin:50% 168px;margin-top:-168px}
 
+/* 威胁弧（聚合后的方向压力，不是几十个箭头） */
+#threatarcs{position:fixed;left:50%;top:50%;width:400px;height:400px;
+  transform:translate(-50%,-50%);pointer-events:none;z-index:6;overflow:visible}
+#threatarcs path{opacity:0;transition:opacity .1s linear}
+
+/* 屏外目标方向标（医疗 / 空投） */
+.objmark{position:fixed;left:50%;top:50%;width:0;height:0;opacity:0;z-index:6;
+  pointer-events:none;transform-origin:50% 205px;margin-top:-205px;
+  transition:opacity .15s}
+.objmark::before{content:'';position:absolute;left:-10px;top:-6px;
+  border-left:10px solid transparent;border-right:10px solid transparent;
+  border-bottom:15px solid currentColor}
+.objmark span{position:absolute;left:-22px;top:-26px;width:44px;text-align:center;
+  font-size:10px;letter-spacing:.06em;font-variant-numeric:tabular-nums;
+  text-shadow:0 0 6px rgba(0,0,0,.95)}
+#medmark{color:#3ad07a}
+#dropmark{color:#5fe0ff}
+
+/* 相位护盾生效期间的常驻边缘蓝光 */
+#shieldvig{position:fixed;inset:0;pointer-events:none;z-index:5;opacity:0;
+  transition:opacity .25s;
+  background:radial-gradient(ellipse at center,transparent 52%,rgba(79,168,255,.42) 100%);
+  box-shadow:inset 0 0 120px rgba(79,168,255,.35)}
+
+/* 相位护盾受击：必须是蓝色，不能误用红色 hurtflash */
+#shieldflash{position:fixed;inset:0;pointer-events:none;z-index:5;opacity:0;
+  background:radial-gradient(ellipse at center,transparent 45%,rgba(79,168,255,.55) 100%)}
+#shieldflash.on{animation:hf .38s ease-out}
+
+/* 拾取飘字 */
+#floattext{position:fixed;left:50%;top:calc(50% + 60px);transform:translateX(-50%);
+  font-size:26px;font-weight:700;opacity:0;pointer-events:none;z-index:7;
+  text-shadow:0 2px 12px rgba(0,0,0,.9)}
+#floattext.on{animation:ft 1.1s ease-out}
+@keyframes ft{0%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;transform:translate(-50%,-46px)}}
+
+/* 强化条 */
+#buffbar{position:absolute;left:50%;bottom:92px;transform:translateX(-50%);
+  padding:7px 16px;border:1px solid;border-radius:3px;font-size:13px;
+  letter-spacing:.1em;font-variant-numeric:tabular-nums;
+  background:rgba(8,12,18,.8);opacity:0;transition:opacity .2s}
+#buffbar.on{opacity:1}
+
 /* ------------------------------------------------------------------ HUD */
 #hud{position:fixed;inset:0;pointer-events:none;z-index:7}
 
@@ -234,6 +277,12 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 <div id="healflash"></div>
 <div id="dmgdirs"></div>
 <div id="threats"></div>
+<div id="shieldvig"></div>
+<div id="shieldflash"></div>
+<div id="floattext"></div>
+<svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div class="objmark" id="medmark"><span></span></div>
+<div class="objmark" id="dropmark"><span></span></div>
 
 <div id="hud">
   <div id="top">
@@ -251,6 +300,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 
   <div id="toast"></div>
   <div id="hint"></div>
+  <div id="buffbar"></div>
 
   <div id="hpwrap">
     <div id="hpbar"><div id="hpfill"></div></div>
@@ -281,6 +331,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
     <span><b>Shift/空格</b> 冲刺</span>
     <span><b>R</b> 换弹</span>
     <span><b>Esc</b> 暂停</span>
+    <span>碰到就拿：<b style="color:#3ad07a">医疗</b> / <b style="color:#5fe0ff">空投</b></span>
   </div>
   <button id="start" style="margin-top:20px">进 入 现 场</button>
   <div id="seedlabel">种子</div>

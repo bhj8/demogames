@@ -21,6 +21,11 @@ const G = {
   derived: null,
   conductCounter: 0,
   xpRate: 0, xpFrame: 0, pacingMult: 1,
+  /* todo.md：医疗 / 空投 / 强化 */
+  medNeed: 0, medCooldown: 0, medPending: false, medical: null,
+  supplyCharge: 0, lastDropAt: -999, dropQueued: false, airdrop: null,
+  buff: null,                        // {id, t, dur, shield}
+  hurtCount: 0,                      // 受伤次数，用来观测近战前摇改动的影响
   pierceRamp: 0,
   overclock: 0,
   feedbackBudget: 4, feedbackTimer: 0,
@@ -77,6 +82,19 @@ function recompute() {
   /* 生存与节奏 */
   d.moveSpeed = TUNE.PLAYER.moveSpeed * (1 + 0.12 * lvl('stim'));
   d.dashCooldown = TUNE.PLAYER.dashCooldown * Math.pow(0.80, lvl('dashcd'));
+
+  /* 空投强化（临时，结束后 recompute 会完整还原） */
+  d.infiniteMag = false;
+  if (G.buff) {
+    const A = TUNE.AIRDROP;
+    if (G.buff.id === 'ammo') {
+      d.fireInterval /= (1 + A.ammoFireRate);
+      d.infiniteMag = true;                  // 弹匣不减少，也不允许进入换弹
+    } else if (G.buff.id === 'adren') {
+      d.moveSpeed *= (1 + A.adrenSpeed);
+      d.dashCooldown *= (1 - A.adrenDashCd);
+    }
+  }
   d.traumaHeal = lvl('trauma');
   d.magnetRadius = TUNE.XP.magnetRadius * (1 + 0.50 * lvl('magnet'));
 
@@ -174,6 +192,16 @@ function killEnemy(e, ctx, opts) {
   if (e.dead) return;
   e.dead = true;
   G.stats.kills++;
+
+  /* 空投进度：精英与 Boss 明显加速，普通怪只有很小的贡献 */
+  const A = TUNE.AIRDROP;
+  G.supplyCharge += e.boss ? A.chargeBoss : ((e.tpl && e.tpl.elite) ? A.chargeElite : A.chargeKill);
+
+  /* 医疗掉落：命中标记时，由这一只非召唤物敌人掉出 */
+  if (G.medPending && !e.minion && !G.medical) {
+    G.medPending = false;
+    G.spawnMedical(e.pos);
+  }
 
   /* 创伤修复 §23 */
   if (G.derived.traumaHeal && G.stats.kills % 30 === 0) {
@@ -624,9 +652,22 @@ function hurtPlayer(amount, fromPos, kind) {
   if (G.over || p.hp <= 0) return;
   if (p.iframe > 0 || p.dashIFrame > 0) return;
 
-  p.hp -= amount;
   p.iframe = TUNE.PLAYER.hurtIFrame;
   G.stats.dmgTaken += amount;
+  G.hurtCount++;
+
+  /* 相位护盾先吃伤害，再进入生命结算。反馈必须是蓝色，不能误用红色 hurtflash */
+  if (G.buff && G.buff.id === 'shield' && G.buff.shield > 0) {
+    const absorbed = Math.min(G.buff.shield, amount);
+    G.buff.shield -= absorbed;
+    amount -= absorbed;
+    G.ui.shieldHit(G.buff.shield <= 0);
+    Audio2.shieldHit(G.buff.shield <= 0);
+    if (G.buff.shield <= 0) G.buff.t = 0;       // 吸满即结束
+    if (amount <= 0.001) return;                // 完全挡下，不进入受伤流程
+  }
+
+  p.hp -= amount;
   Audio2.hurt(kind);
   G.shake(0.16, null);
 

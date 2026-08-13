@@ -85,12 +85,13 @@ const R = {
     this.sun.position.set(24, 46, 14);
     this.scene.add(this.sun);
     /* 跟随玩家的补光：近处敌人必须能看清轮廓，这是威胁判读的第一层 */
-    this.lamp = new T.PointLight(0xffe0be, 0.85, 28, 1.7);
+    this.lamp = new T.PointLight(0xffe0be, 0.7, 26, 2.0);
     this.scene.add(this.lamp);
 
     this._buildGeo();
     this._buildArena();
     this._buildFxPools();
+    this.buildPickups();
 
     addEventListener('resize', () => this.resize());
   },
@@ -443,6 +444,69 @@ const R = {
     this.acidMesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
     this.acidMesh.count = 0; this.acidMesh.frustumCulled = false;
     this.scene.add(this.acidMesh);
+  },
+
+  /* ------------------------------------------------- 拾取物（医疗 / 空投） */
+  buildPickups() {
+    const g = this.geo;
+    /* 医疗凝胶：绿色，明确区别于青绿色经验球 */
+    this.medMat = new T.MeshLambertMaterial({ color: 0x2fe07a, emissive: 0x1c8c4a, emissiveIntensity: 0.9 });
+    this.medMesh = new T.Group();
+    const core = new T.Mesh(g.oct, this.medMat); core.scale.setScalar(0.8); core.position.y = 0.85;
+    this.medMesh.add(core); this.medCore = core;
+    const cross1 = new T.Mesh(g.box, new T.MeshBasicMaterial({ color: 0xeafff2 }));
+    cross1.scale.set(0.42, 0.13, 0.13); cross1.position.y = 0.85; this.medMesh.add(cross1);
+    const cross2 = new T.Mesh(g.box, cross1.material);
+    cross2.scale.set(0.13, 0.42, 0.13); cross2.position.y = 0.85; this.medMesh.add(cross2);
+    this.medMesh.add(this._beacon(0x2fe07a));
+    this.medMesh.visible = false;
+    this.scene.add(this.medMesh);
+
+    /* 空投舱 */
+    this.podMesh = new T.Group();
+    const pod = new T.Mesh(g.box, new T.MeshLambertMaterial({ color: 0x3d4a58 }));
+    pod.scale.set(1.5, 1.1, 1.5); pod.position.y = 0.55; this.podMesh.add(pod);
+    const stripe = new T.Mesh(g.box, new T.MeshBasicMaterial({ color: 0x5fe0ff }));
+    stripe.scale.set(1.56, 0.16, 1.56); stripe.position.y = 0.86; this.podMesh.add(stripe);
+    this.podMesh.add(this._beacon(0x5fe0ff));
+    this.podMesh.visible = false;
+    this.scene.add(this.podMesh);
+
+    /* 三个模块：颜色与图形都必须一眼可分 §todo 三选一 */
+    this.moduleMeshes = [];
+    const defs = [
+      { id: 'ammo', color: 0xffb020, geo: g.box, scale: [0.5, 0.62, 0.5] },
+      { id: 'adren', color: 0xff4d7a, geo: g.cone, scale: [0.62, 0.9, 0.62] },
+      { id: 'shield', color: 0x4fa8ff, geo: g.oct, scale: [0.72, 0.9, 0.72] }
+    ];
+    defs.forEach(d => {
+      const grp = new T.Group();
+      const m = new T.Mesh(d.geo, new T.MeshLambertMaterial({
+        color: d.color, emissive: d.color, emissiveIntensity: 0.75
+      }));
+      m.scale.set(d.scale[0], d.scale[1], d.scale[2]); m.position.y = 0.75;
+      grp.add(m);
+      grp.add(this._beacon(d.color, 0.55));
+      grp.visible = false;
+      grp.userData = { id: d.id, spin: m };
+      this.scene.add(grp);
+      this.moduleMeshes.push(grp);
+    });
+
+    /* 相位护盾不做世界空间球壳：第一人称下镜头在球里面，
+       加色混合会把整个画面洗白。改用屏幕边缘蓝光（index.html 的 #shieldvig）。
+       这里保留一个空壳对象，避免其它代码判空。 */
+    this.shieldMesh = { visible: false, position: { set: function () { } }, material: { opacity: 0 } };
+  },
+
+  /* 落点光柱：屏幕外也能靠它定位 */
+  _beacon(color, radius) {
+    const m = new T.Mesh(this.geo.cyl, new T.MeshBasicMaterial({
+      color: color, transparent: true, opacity: 0.20, depthWrite: false, blending: T.AdditiveBlending
+    }));
+    const r = radius || 0.75;
+    m.scale.set(r, 14, r); m.position.y = 7;
+    return m;
   },
 
   /* --- 特效发射接口 --- */

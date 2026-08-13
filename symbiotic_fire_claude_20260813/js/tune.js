@@ -125,6 +125,65 @@ const TUNE = {
     conductionHits: 6
   },
 
+  /* --- 背后威胁三阶段提示（todo.md P0）---
+     四面包围保留，公平性交给提示系统，而不是靠“少刷背后”掩盖。 */
+  THREAT: {
+    sectors: 8,                   // 玩家周围分 8 个方向扇区
+    maxShown: 3,                  // 同时最多显示 3 个扇区
+    warnRange: 12,                // 一般威胁距离
+    warnTtc: 2.5,                 // 或预计 2.5 秒内接触
+    dangerRange: 6,               // 升级为红色的距离
+    dangerTtc: 1.2,
+    meleeWindup: 0.5,             // 普通近战攻击前摇，不再接触即扣血
+    sectorMaxScore: 6             // 弧宽/亮度饱和所需的分数
+  },
+
+  /* --- 自适应医疗掉落（todo.md P0）---
+     不用固定击杀数也不用纯随机 —— 那会造成顺风局满地医疗、逆风局迟迟不掉。 */
+  MEDICAL: {
+    triggerHpFrac: 0.70,          // 生命 ≤ 70% 才开始积累需求
+    healFrac: 0.20,               // 恢复最大生命的 20%
+    lifetime: 30,
+    cooldown: 35,
+    needThreshold: 20,
+    decayAbove: 0.5,              // HP > 70% 时每秒衰减
+    gainBand70: 0.45,             // 50% < HP ≤ 70%
+    gainBand50: 1.0,              // 35% < HP ≤ 50%
+    gainBand35: 2.0,              // HP ≤ 35%
+    band50: 0.50,
+    band35: 0.35,
+    pickupRadius: 1.7,            // 主动接触，不自动吸附
+    offscreenHpFrac: 0.50         // 残血时才显示屏外方向标
+  },
+
+  /* --- 半动态战术空投（todo.md P1）---
+     不是一局三次的播片；目标一局 7“9 次，反复产生“要不要偏离安全路线”的决策。 */
+  AIRDROP: {
+    firstAt: 55,                  // 首次固定，用于教学
+    baseInterval: 75,             // 自然充满所需
+    minInterval: 45,              // 再快也不得更短
+    maxInterval: 90,              // 到点无视进度强制排队
+    lastCallBy: 650,              // 10:50 前仍未触发则强制投放
+    stopAfter: 690,               // 11:30 后不再新投
+    telegraph: 5,                 // 坠落预告
+    lifetime: 35,                 // 落地后可拾取时长
+    buffDuration: 14,             // 拾取后强化时长
+    minDist: 18, maxDist: 24,
+    bossGrace: 10,                // Boss 登场演出后至少等多久
+    moduleSpread: 2.4,            // 三个模块围着舱体的半径
+    pickupRadius: 1.5,
+    /* 击杀加速（占满进度的比例）—— 强玩家略早拿到，但弱玩家不会永远拿不到 */
+    chargeKill: 0.001,
+    chargeElite: 0.06,
+    chargeBoss: 0.18,
+    /* 三个首发模块 */
+    ammoFireRate: 0.20,           // 过载供弹：射速 +20%，弹匣不减
+    adrenSpeed: 0.35,             // 肾上腺素：移速 +35%
+    adrenDashCd: 0.50,            // 冲刺冷却 -50%
+    shieldAbsorb: 60,             // 相位护盾：吸收 60 点
+    shieldMax: 15                 // 或 15 秒，先到先结束
+  },
+
   /* --- 后期表现上限 §31 ---
      震屏纪律：位置抖动（相机平移）是晕动症的主因，几乎压到零；
      方向上只留很小的 roll。枪模型自己的后坐可以做大，那不晕。 */

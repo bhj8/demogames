@@ -14,6 +14,10 @@
 <div id="hpfill"></div><div id="hpnum"></div>
 <div id="ammo"></div><div id="ammobar"></div><div id="dashfill"></div>
 <div id="cards"></div>
+<div id="shieldvig"></div><div id="shieldflash"></div><div id="floattext"></div><div id="buffbar"></div>
+<svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div class="objmark" id="medmark"><span></span></div>
+<div class="objmark" id="dropmark"><span></span></div>
 <div id="menu"></div><div id="pause"></div><div id="results"></div>
 <button id="start"></button><div id="seedlabel"></div><button id="resume"></button>
 <div id="debug"><div id="dbgstats"></div><div id="dbgbtns"></div>
@@ -141,6 +145,146 @@ addEventListener('load', () => {
         ' target@end=' + Director.target);
     });
     if (err) { report(['DENSITY_ERR:' + err]); return; }
+
+    /* ---- todo.md 三个新系统的闭环审计 ----
+       注意：这几段必须保证玩家不死。一旦死亡 G.over 会冻结主循环，
+       后面所有审计都会静默空跑（第一版就是这么挂的）。 */
+
+    /* 医疗：把血压在 30% 且免疫伤害，验证 need 累积 → 击杀掉落 → 拾取回血 */
+    err = guard(() => {
+      DebugPanel.god = false;
+      G.medCooldown = 0; G.medNeed = 0; G.medical = null; G.medPending = false;
+      let waited = 0;
+      while (!G.medPending && waited < 1200) {
+        G.player.iframe = 999;                       // 免疫，但保留低血量状态
+        G.player.hp = G.player.maxHp * 0.30;
+        step(1); waited++;
+      }
+      const needAt = G.medNeed;
+      let victim = null;
+      G.enemies.live.forEach(e => { if (!e._dead && !e.dead && !e.minion && !e.boss && !victim) victim = e; });
+      if (!victim) { victim = configureEnemy(G.enemies.get(), ENEMIES.grunt, new THREE.Vector3(3, 0, 3), {}); step(1); }
+      const hpBefore = G.player.hp;
+      killEnemy(victim, makeAttack('primary'));
+      const dropped = !!G.medical;        // 必须在 step 之前检查：可能当场就被捡走
+      let reached = false;
+      if (G.medical) { G.player.pos.set(G.medical.x, 0, G.medical.z); step(3); reached = !G.medical; }
+      else reached = true;                // 掉在脚下当场拾取
+      const healed = G.player.hp - hpBefore;
+      /* 满血时不应再产生医疗需求 */
+      G.player.hp = G.player.maxHp; G.medNeed = 5;
+      for (let q = 0; q < 120; q++) { G.player.iframe = 999; step(1); }
+      out.push('medical: waited=' + (waited / 60).toFixed(1) + 's need=' + needAt.toFixed(0) +
+        ' dropped=' + dropped + ' healed=' + healed.toFixed(0) +
+        ' picked=' + reached + ' decayAtFull=' + (G.medNeed < 5));
+      G.player.iframe = 0;
+    });
+    if (err) { report(['MED_ERR:' + err]); return; }
+
+    /* 空投：排队 → 预告 → 落地 → 三模块 → 拾取 → Buff 生效与完整还原 */
+    err = guard(() => {
+      DebugPanel.god = true;
+      G.buff = null; clearAirdrop(); recompute();
+      G.supplyCharge = 1; G.lastDropAt = -999; G.dropQueued = true; G.bossSpawnAt = -999;
+      let w = 0;
+      while (!G.airdrop && w < 300) { step(1); w++; }
+      const telegraphed = !!(G.airdrop && G.airdrop.state === 'falling');
+      let w2 = 0;
+      while (G.airdrop && G.airdrop.state === 'falling' && w2 < 900) { step(1); w2++; }
+      const mods = (G.airdrop && G.airdrop.modules) ? G.airdrop.modules.length : 0;
+      const fireBefore = G.derived.fireInterval;
+      if (G.airdrop && G.airdrop.modules) {
+        const m = G.airdrop.modules[0];
+        G.player.pos.set(m.x, 0, m.z); step(3);
+      }
+      const buffOn = G.buff ? G.buff.id : 'none';
+      const fireDuring = G.derived.fireInterval;
+      const ammoBefore = G.player.gun.ammo;
+      G.player.gun.held = true; step(90); G.player.gun.held = false;
+      const drain = ammoBefore - G.player.gun.ammo;
+      let w3 = 0;
+      while (G.buff && w3 < 2000) { step(1); w3++; }
+      out.push('airdrop: wait=' + w + 'f telegraph=' + telegraphed + ' modules=' + mods +
+        ' buff=' + buffOn + ' rate ' + fireBefore.toFixed(4) + '->' + fireDuring.toFixed(4) +
+        ' ammoDrain=' + drain + ' restored=' + (Math.abs(G.derived.fireInterval - fireBefore) < 1e-9));
+    });
+    if (err) { report(['DROP_ERR:' + err]); return; }
+
+    /* 护盾：伤害必须先扣护盾且不掉血；打穿后溢出才进生命 */
+    err = guard(() => {
+      G.buff = null; recompute();
+      applyBuff('shield');
+      G.player.hp = G.player.maxHp;
+      G.player.iframe = 0; G.player.dashIFrame = 0;
+      const hp0 = G.player.hp, sh0 = G.buff.shield;
+      hurtPlayer(20, new THREE.Vector3(1, 0, 1), 'melee');
+      const absorbOnly = (G.player.hp === hp0) && (Math.abs(G.buff.shield - (sh0 - 20)) < 0.01);
+      G.player.iframe = 0; G.buff.shield = 5;
+      hurtPlayer(25, new THREE.Vector3(1, 0, 1), 'melee');
+      const overflow = Math.round(hp0 - G.player.hp);
+      const ended = (!G.buff || G.buff.t <= 0);
+      out.push('shield: absorbOnly=' + absorbOnly + ' overflow=' + overflow + '/20 endedOnBreak=' + ended);
+      G.buff = null; recompute(); G.player.hp = G.player.maxHp;
+    });
+    if (err) { report(['SHIELD_ERR:' + err]); return; }
+
+    /* 近战前摇：验证"接触不再直接扣血"与"前摇结束前离开就落空" */
+    err = guard(() => {
+      DebugPanel.god = false;
+      G.enemies.live.forEach(e => { if (!e._dead && !e.dead) G.enemies.release(e); });
+      G.enemies.compact();
+      G.player.maxHp = 1e6; G.player.hp = 1e6;      // 不调 recompute，避免被改回去
+      G.player.pos.set(0, 0, 0); G.player.iframe = 0;
+      const e = configureEnemy(G.enemies.get(), ENEMIES.grunt, new THREE.Vector3(1.1, 0, 0), {});
+      e.spawnGrace = 0; e.atkT = 0;
+      const dmg0 = G.stats.dmgTaken;
+      let sawWindup = false, dmgDuringWindup = 0;
+      for (let i = 0; i < 45; i++) {
+        step(1);
+        if (e.state === 'melee') {
+          sawWindup = true;
+          dmgDuringWindup = Math.max(dmgDuringWindup, G.stats.dmgTaken - dmg0);
+        }
+      }
+      const landed = G.stats.dmgTaken - dmg0;
+      /* 再来一次，这回前摇途中跑掉 */
+      const whiff0 = G.meleeWhiffs;
+      e.state = 'walk'; e.atkT = 0; G.player.iframe = 0;
+      let guardN = 0;
+      while (e.state !== 'melee' && guardN++ < 60) step(1);
+      G.player.pos.set(25, 0, 25);                  // 前摇中逃走
+      step(45);
+      out.push('melee: windup=' + sawWindup + ' dmgDuringWindup=' + dmgDuringWindup.toFixed(0) +
+        ' landed=' + landed.toFixed(0) + ' whiffOnEscape=' + (G.meleeWhiffs - whiff0));
+      DebugPanel.god = true;
+      recompute(); G.player.hp = G.player.maxHp; G.player.pos.set(0, 0, 0);
+    });
+    if (err) { report(['MELEE_ERR:' + err]); return; }
+
+    /* 威胁扇区：正后方放一群怪，验证聚合成弧而不是几十个箭头，且进入视野后隐藏 */
+    err = guard(() => {
+      DebugPanel.god = true;
+      G.enemies.live.forEach(e => { if (!e._dead && !e.dead) G.enemies.release(e); });
+      G.enemies.compact();
+      G.player.pos.set(0, 0, 0); G.player.yaw = 0;
+      for (let n = 0; n < 12; n++) {
+        const a = G.player.yaw + (n - 6) * 0.13;          // yaw 方向 = 正后方
+        const d = 6 + (n % 3) * 2;
+        configureEnemy(G.enemies.get(), ENEMIES.grunt,
+          new THREE.Vector3(Math.sin(a) * d, 0, Math.cos(a) * d), { grace: 9 });
+      }
+      step(4);
+      const arcs = UI._arcs.map(el => +el.getAttribute('opacity') || 0);
+      const litBehind = arcs.filter(v => v > 0.01).length;
+      const arrowsBehind = UI._threats.filter(el => +el.style.opacity > 0.01).length;
+      /* 转身面对它们，一般威胁应当隐藏 */
+      G.player.yaw += Math.PI;
+      step(4);
+      const litFacing = UI._arcs.map(el => +el.getAttribute('opacity') || 0).filter(v => v > 0.01).length;
+      out.push('threat: arcsBehind=' + litBehind + '/' + UI._arcs.length +
+        ' arrows=' + arrowsBehind + ' arcsWhenFacing=' + litFacing);
+    });
+    if (err) { report(['THREAT_ERR:' + err]); return; }
 
     /* 强制拿满 4 个共同变异，并把变种放进池子 */
     err = guard(() => {

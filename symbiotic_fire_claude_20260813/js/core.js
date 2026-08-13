@@ -346,6 +346,54 @@ const Audio2 = {
     o.connect(g); o.start(t); o.stop(t + 0.3);
   },
 
+  shieldHit(broken) {
+    if (!this.ready) return;
+    const t = this.t, dest = this.comp;
+    const o = this.ctx.createOscillator();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(broken ? 260 : 880, t);
+    o.frequency.exponentialRampToValueAtTime(broken ? 90 : 480, t + 0.18);
+    const g = this._env(dest, t, 0.003, 0.18, 0.22);
+    o.connect(g); o.start(t); o.stop(t + 0.22);
+  },
+
+  pickup(kind) {
+    if (!this.ready) return;
+    const t = this.t, dest = this.comp;
+    const freqs = kind === 'med' ? [523, 784, 1047] : [392, 587, 880];
+    freqs.forEach((fr, i) => {
+      const o = this.ctx.createOscillator();
+      o.type = 'sine'; o.frequency.value = fr;
+      const g = this._env(dest, t + i * 0.05, 0.005, 0.22, 0.2);
+      o.connect(g); o.start(t + i * 0.05); o.stop(t + i * 0.05 + 0.3);
+    });
+  },
+
+  /* 近战前摇：必须有空间方向，且只在前摇开始时响一次，禁止持续蜂鸣 */
+  meleeWindup(pos) {
+    if (!this.ready || this._voices > 24) return;
+    const t = this.t, dest = this._panner(pos);
+    const o = this.ctx.createOscillator();
+    o.type = 'square';
+    o.frequency.setValueAtTime(430, t);
+    o.frequency.exponentialRampToValueAtTime(150, t + 0.3);
+    const g = this._env(dest, t, 0.008, 0.3, 0.17);
+    o.connect(g); o.start(t); o.stop(t + 0.34);
+  },
+
+  /* 威胁升级：某个扇区从黄升红时响一次 */
+  incoming(pos) {
+    if (!this.ready) return;
+    const t = this.t, dest = this._panner(pos);
+    const o = this.ctx.createOscillator();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(190, t); o.frequency.linearRampToValueAtTime(310, t + 0.32);
+    const g = this._env(dest, t, 0.02, 0.32, 0.13);
+    o.connect(g); o.start(t); o.stop(t + 0.38);
+  },
+
+  airdropIncoming() { this._chord([330, 440, 550], 0.7, 'sine', 0.14); },
+
   reload(stage) {
     if (!this.ready) return;
     const t = this.t, dest = this.comp;

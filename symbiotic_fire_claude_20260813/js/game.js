@@ -5,6 +5,15 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
+
+/* SVG 环形扇区路径：威胁弧要能变宽变亮，用弧比用三角形干净 */
+function arcPath(a0, a1, r0, r1) {
+  const cx = 200, cy = 200;
+  const p = (a, r) => (cx + Math.sin(a) * r).toFixed(1) + ' ' + (cy - Math.cos(a) * r).toFixed(1);
+  const big = (a1 - a0) > Math.PI ? 1 : 0;
+  return 'M ' + p(a0, r0) + ' A ' + r0 + ' ' + r0 + ' 0 ' + big + ' 1 ' + p(a1, r0) +
+         ' L ' + p(a1, r1) + ' A ' + r1 + ' ' + r1 + ' 0 ' + big + ' 0 ' + p(a0, r1) + ' Z';
+}
 const TV = new THREE.Vector3(), TV2 = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -264,10 +273,21 @@ function updateEnemies(dt) {
       }
     }
 
-    /* 近战接触 */
-    if (!e.tpl.ranged && dist < e.radius + p.radius + 0.35 && e.atkT <= 0 && e.state !== 'windup') {
-      hurtPlayer(e.dmg, e.pos, 'melee');
-      e.atkT = e.atk;
+    /* 近战三阶段：接触不再直接扣血，必须先走一段前摇（todo.md 阶段二） */
+    if (!e.tpl.ranged && !e.boss && e.state !== 'windup' && e.state !== 'charge') {
+      const reach = e.radius + p.radius + 0.55;   // 必须大于 stopDist，否则永远够不到
+      if (e.state === 'melee') {
+        speed = 0;                                   // 前摇期间停住，动作可读
+        if (e.stateT <= 0) {
+          /* 前摇结束重新检查距离：玩家已经离开就落空 */
+          if (dist < reach + 0.35) hurtPlayer(e.dmg, e.pos, 'melee');
+          else G.meleeWhiffs++;
+          e.state = 'walk'; e.atkT = e.atk;
+        }
+      } else if (dist < reach && e.atkT <= 0 && e.spawnGrace <= 0) {
+        e.state = 'melee'; e.stateT = TUNE.THREAT.meleeWindup;
+        Audio2.meleeWindup(e.pos);
+      }
     }
 
     /* 分离力：不然一坨怪会挤成一个点，可读性崩掉 */
@@ -285,6 +305,15 @@ function updateEnemies(dt) {
         sx += (ox / d) * push; sz += (oz / d) * push;
       }
     }
+    /* 敌人不能走进摄像机里 —— 一堵脸怼在屏幕上会彻底挡住视野。
+       到达接触距离就停止靠近，但保留分离力，仍然会互相挤开。 */
+    const stopDist = e.radius + p.radius + 0.25;
+    if (dist < stopDist && e.state !== 'charge') {
+      moveX = 0; moveZ = 0;
+      const push = (stopDist - dist) * 6;
+      moveX -= nx * push; moveZ -= nz * push;   // 已经嵌进去了就轻轻推出来
+    }
+
     const sepK = e.state === 'charge' ? 0.4 : 2.6;
     moveX += sx * sepK; moveZ += sz * sepK;
     const ml = Math.hypot(moveX, moveZ);
@@ -321,7 +350,7 @@ function updateEnemies(dt) {
     e.grp.rotation.y = Math.atan2(fx, fz);
 
     /* 前摇的可读性：预警期抖动 + 抬高 */
-    if (e.state === 'windup' || e.state === 'spit' || e.state === 'slam') {
+    if (e.state === 'windup' || e.state === 'spit' || e.state === 'slam' || e.state === 'melee') {
       e.grp.position.x += RNG.fx.range(-0.06, 0.06);
       e.grp.position.z += RNG.fx.range(-0.06, 0.06);
       e.bodyMat.emissive.setHex(0xff6a3c);
@@ -462,8 +491,8 @@ function updateBoss(e, dt, dist, nx, nz) {
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2;
         const pos = TV2.set(e.pos.x + Math.cos(a) * 3.2, 0, e.pos.z + Math.sin(a) * 3.2).clone();
-        /* §26 Boss 生成物不再携带随机变异 */
-        configureEnemy(G.enemies.get(), ENEMIES.grunt, pos, { grace: 0.6 });
+        /* §26 Boss 生成物不再携带随机变异；标记 minion 以免被当成医疗掉落来源 */
+        configureEnemy(G.enemies.get(), ENEMIES.grunt, pos, { grace: 0.6, minion: true, xpMult: 0.4 });
       }
       R.ring(e.pos, 1, 5, e.tpl.accent, 0.5);
     }
@@ -636,6 +665,197 @@ function gainXp(v) {
 }
 
 /* ============================================================================
+   补给：自适应医疗掉落 + 半动态战术空投（todo.md P0 / P1）
+   两个系统职责不同：医疗是逆风兜底，空投是高频短时爽点 + 逼玩家改变路线。
+   ========================================================================== */
+
+/* ---- 医疗掉落 ---- */
+G.spawnMedical = function (atPos) {
+  const M = TUNE.MEDICAL;
+  const pos = atPos.clone();
+  R.collide(pos, 0.6);              // 掉在尸体位置，但不能卡进柱子里拿不到
+  G.medical = { x: pos.x, z: pos.z, t: 0, life: M.lifetime };
+  G.medNeed = 0;
+  G.medCooldown = M.cooldown;
+  R.medMesh.position.set(pos.x, 0, pos.z);
+  R.medMesh.visible = true;
+  Audio2.pickup('med');
+  G.stats.medDropped = (G.stats.medDropped || 0) + 1;
+};
+
+function updateMedical(dt) {
+  const M = TUNE.MEDICAL, p = G.player;
+  const frac = p.hp / p.maxHp;
+  if (G.medCooldown > 0) G.medCooldown -= dt;
+
+  /* 隐藏的 medicalNeed：顺风衰减，逆风越急涨得越快。
+     不用固定击杀数也不用纯随机 —— 那会造成反向反馈。 */
+  if (frac > M.triggerHpFrac) G.medNeed = Math.max(0, G.medNeed - M.decayAbove * dt);
+  else if (frac > M.band50) G.medNeed += M.gainBand70 * dt;
+  else if (frac > M.band35) G.medNeed += M.gainBand50 * dt;
+  else G.medNeed += M.gainBand35 * dt;
+
+  if (!G.medPending && !G.medical && G.medCooldown <= 0 && G.medNeed >= M.needThreshold) {
+    G.medPending = true;            // 下一只非召唤物敌人死亡时掉落
+  }
+
+  const m = G.medical;
+  if (!m) return;
+  m.t += dt;
+  if (m.t >= m.life) { G.medical = null; R.medMesh.visible = false; return; }
+  if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < M.pickupRadius) {
+    const before = p.hp;
+    p.hp = Math.min(p.maxHp, p.hp + p.maxHp * M.healFrac);
+    G.ui.flashHeal();
+    G.ui.floatText('+' + Math.round(p.hp - before), '#3ad07a');
+    Audio2.pickup('med');
+    G.medical = null; R.medMesh.visible = false;
+    G.stats.medPicked = (G.stats.medPicked || 0) + 1;
+    return;
+  }
+  const rem = m.life - m.t;
+  R.medCore.rotation.y += dt * 2.2;
+  R.medMesh.visible = rem > 5 ? true : (Math.sin(m.t * 18) > -0.3);
+}
+
+/* ---- 战术空投 ---- */
+function airdropReady() {
+  const A = TUNE.AIRDROP;
+  if (G.phase !== 'play') return false;                              // 不与三选一抢注意力
+  if (G.airdrop) return false;                                       // 场上只允许一个
+  if (G.buff) return false;                                          // 强化生效期间不落下一个
+  if (G.time - (G.bossSpawnAt || -999) < A.bossGrace) return false;  // Boss 登场演出让位
+  return true;
+}
+
+function updateAirdrop(dt) {
+  const A = TUNE.AIRDROP, p = G.player;
+
+  if (G.time < A.stopAfter && !G.dropQueued) {
+    if (G.time >= A.firstAt && G.dropCount === 0) {
+      G.dropQueued = true;                                  // 首次固定，用于教学
+    } else if (G.dropCount > 0) {
+      G.supplyCharge += dt / A.baseInterval;
+      const since = G.time - G.lastDropAt;
+      if (since >= A.maxInterval) G.dropQueued = true;       // 保底：无视进度
+      else if (G.supplyCharge >= 1 && since >= A.minInterval) G.dropQueued = true;
+    }
+  }
+
+  if (G.dropQueued && airdropReady()) {
+    G.dropQueued = false;
+    G.supplyCharge = 0;
+    G.lastDropAt = G.time;
+    G.dropCount++;
+    const pos = airdropPosition();
+    G.airdrop = { x: pos.x, z: pos.z, state: 'falling', t: 0,
+                  telegraph: A.telegraph, life: A.lifetime, modules: null };
+    R.podMesh.position.set(pos.x, 26, pos.z);
+    R.podMesh.visible = true;
+    Audio2.airdropIncoming();
+    G.ui.toast('补给舱正在坠落', '#5fe0ff');
+  }
+
+  const d = G.airdrop;
+  if (!d) return;
+  d.t += dt;
+
+  if (d.state === 'falling') {
+    const k = Math.min(1, d.t / d.telegraph);
+    R.podMesh.position.y = lerp(26, 0, k * k);
+    if (d.t >= d.telegraph) {
+      d.state = 'open'; d.t = 0;
+      R.podMesh.position.y = 0;
+      R.ring(TV.set(d.x, 0, d.z), 0.5, 5, 0x5fe0ff, 0.6);
+      G.shake(0.18, TV.set(d.x, 0, d.z));
+      Audio2.blast(TV.set(d.x, 0, d.z), false);
+      d.modules = ['ammo', 'adren', 'shield'].map((id, n) => {
+        const a = (n / 3) * Math.PI * 2 - Math.PI / 2;
+        const mx = d.x + Math.cos(a) * A.moduleSpread;
+        const mz = d.z + Math.sin(a) * A.moduleSpread;
+        const g = R.moduleMeshes[n];
+        g.position.set(mx, 0, mz); g.visible = true;
+        return { id: id, x: mx, z: mz, mesh: g };
+      });
+    }
+    return;
+  }
+
+  if (d.t >= d.life) { clearAirdrop(); return; }
+  const rem = d.life - d.t;
+  for (let n = 0; n < d.modules.length; n++) {
+    const m = d.modules[n];
+    m.mesh.userData.spin.rotation.y += dt * 1.8;
+    m.mesh.visible = rem > 5 ? true : (Math.sin(d.t * 16) > -0.3);
+    if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < A.pickupRadius) {
+      applyBuff(m.id);              // 碰到一个即完成选择，其余两个立即消失
+      clearAirdrop();
+      return;
+    }
+  }
+  R.podMesh.visible = rem > 5 ? true : (Math.sin(d.t * 16) > -0.3);
+}
+
+function airdropPosition() {
+  const A = TUNE.AIRDROP, p = G.player;
+  for (let i = 0; i < 30; i++) {
+    const a = RNG.event.range(0, Math.PI * 2);
+    const dist = RNG.event.range(A.minDist, A.maxDist);
+    const x = p.pos.x + Math.sin(a) * dist, z = p.pos.z + Math.cos(a) * dist;
+    if (Math.abs(x) > R.arenaHalf - 3 || Math.abs(z) > R.arenaHalf - 3) continue;
+    let bad = false;
+    for (let o = 0; o < R.obstacles.length; o++) {
+      const ob = R.obstacles[o];
+      if (Math.hypot(x - ob.x, z - ob.z) < ob.r + A.moduleSpread + 1) { bad = true; break; }
+    }
+    if (bad) continue;
+    return TV.set(x, 0, z).clone();
+  }
+  return TV.set(clamp(p.pos.x + 20, -20, 20), 0, clamp(p.pos.z, -20, 20)).clone();
+}
+
+function clearAirdrop() {
+  G.airdrop = null;
+  R.podMesh.visible = false;
+  for (let n = 0; n < R.moduleMeshes.length; n++) R.moduleMeshes[n].visible = false;
+}
+
+/* ---- 三种强化 ---- */
+const BUFF_NAME = { ammo: '过载供弹', adren: '肾上腺素', shield: '相位护盾' };
+const BUFF_CSS = { ammo: '#ffb020', adren: '#ff4d7a', shield: '#4fa8ff' };
+
+function applyBuff(id) {
+  const A = TUNE.AIRDROP;
+  const dur = (id === 'shield') ? A.shieldMax : A.buffDuration;
+  G.buff = { id: id, t: dur, dur: dur, shield: id === 'shield' ? A.shieldAbsorb : 0 };
+  if (id === 'ammo') {
+    G.player.gun.reloadT = 0;                 // 正在换弹则立即结束并补满
+    G.player.gun.ammo = G.derived.magazine;
+  }
+  if (id === 'adren') G.player.dashCd = 0;    // 拾取时立即恢复一次冲刺
+  if (id === 'shield') G.ui.shieldVig(1);
+  recompute();
+  Audio2.pickup('buff');
+  G.ui.toast(BUFF_NAME[id], BUFF_CSS[id]);
+  G.stats.buffsTaken = (G.stats.buffsTaken || 0) + 1;
+}
+
+function updateBuff(dt) {
+  const b = G.buff;
+  if (!b) return;
+  b.t -= dt;
+  if (b.id === 'shield') {
+    /* 屏幕边缘蓝光，强度随剩余护盾衰减；绝不复用红色 hurtflash */
+    G.ui.shieldVig(b.shield / TUNE.AIRDROP.shieldAbsorb);
+  }
+  if (b.t <= 0) {
+    G.buff = null;
+    G.ui.shieldVig(0);
+    recompute();                              // 强化结束后完整恢复原始参数
+  }
+}
+
+/* ============================================================================
    三选一 §13 / §24
    ========================================================================== */
 function modAvailable(m) {
@@ -796,6 +1016,7 @@ addEventListener('mousemove', e => {
 
 function tryReload() {
   const g = G.player.gun;
+  if (G.derived.infiniteMag) return;          // 过载供弹期间不允许进入换弹状态
   if (g.reloadT > 0 || g.ammo >= G.derived.magazine) return;
   g.reloadT = G.derived.reloadTime;
   /* §18 换弹期间保留一半超频进度 */
@@ -913,7 +1134,7 @@ function updatePlayer(dt) {
 
 function fire() {
   const p = G.player, g = p.gun, d = G.derived;
-  g.ammo--;
+  if (!d.infiniteMag) g.ammo--;
   G.stats.shots++;
   g.bloom = Math.min(1, g.bloom + TUNE.GUN.bloomPerShot);
   g.recoil = Math.min(1.2, g.recoil + d.recoil);
@@ -954,6 +1175,9 @@ const UI = {
     this.bossWrap = $('bosswrap'); this.bossFill = $('bossfill'); this.bossName = $('bossname');
     this.dmgDirs = $('dmgdirs'); this.threatEl = $('threats');
     this.vig = $('vignette');
+    this.buffEl = $('buffbar');
+    this.medMark = $('medmark'); this.dropMark = $('dropmark');
+    this._arcs = Array.prototype.slice.call(document.querySelectorAll('#threatarcs path'));
     this._toastT = 0; this._hintT = 0; this._dirs = [];
     this._threats = [];
     for (let i = 0; i < 6; i++) {
@@ -998,8 +1222,10 @@ const UI = {
       else d.el.style.opacity = 0;
     });
 
-    /* 屏幕边缘威胁方向 §31 —— 只标注"背后逼近的高威胁"，不做全场雷达 */
+    /* 屏幕边缘威胁方向 §31 + todo.md 阶段一扇区聚合 */
     this._updateThreats();
+    this._updateMarkers();
+    this._updateBuff();
 
     if (this._toastT > 0) { this._toastT -= dt; if (this._toastT <= 0) this.toastEl.classList.remove('on'); }
     if (this._hintT > 0) { this._hintT -= dt; if (this._hintT <= 0) this.hintEl.classList.remove('on'); }
@@ -1011,29 +1237,142 @@ const UI = {
   },
 
   _threatBuf: [],
+  /* 威胁聚合（todo.md 阶段一）
+     把玩家周围分成 8 个扇区，每个扇区累计 threatScore，
+     而不是给每只怪画一个箭头 —— 后方几十只怪不能变成几十个箭头。 */
   _updateThreats() {
-    const p = G.player;
-    const cand = enemiesInRadius(p.pos.x, p.pos.z, 16, this._threatBuf);
-    const marks = [];
-    for (let i = 0; i < cand.length && marks.length < 8; i++) {
+    const p = G.player, T2 = TUNE.THREAT;
+    const N = T2.sectors;
+    const score = this._sectorScore || (this._sectorScore = new Float32Array(N));
+    const danger = this._sectorDanger || (this._sectorDanger = new Uint8Array(N));
+    score.fill(0); danger.fill(0);
+
+    /* 水平半视场角：进入镜头视野的一般威胁不再提示 */
+    const vFov = R.camera.fov * Math.PI / 180;
+    const hHalf = Math.atan(Math.tan(vFov / 2) * R.camera.aspect) * 0.92;
+
+    const cand = enemiesInRadius(p.pos.x, p.pos.z, T2.warnRange + 6, this._threatBuf);
+    const special = [];
+    for (let i = 0; i < cand.length; i++) {
       const e = cand[i];
-      const isThreat = e.boss || e.tpl.elite || e.state === 'charge' || e.state === 'windup' ||
-        (e.variant === 'giant') || (e.variant === 'overclock');
-      if (!isThreat) continue;
-      const world = Math.atan2(e.pos.x - p.pos.x, e.pos.z - p.pos.z);
+      if (e.dead) continue;
+      const dx = e.pos.x - p.pos.x, dz = e.pos.z - p.pos.z;
+      const dist = Math.hypot(dx, dz);
+      const world = Math.atan2(dx, dz);
       let rel = world - (p.yaw + Math.PI);
       while (rel > Math.PI) rel -= Math.PI * 2;
       while (rel < -Math.PI) rel += Math.PI * 2;
-      if (Math.abs(rel) < 0.55) continue;                   // 视野内不用标
-      marks.push({ rel: rel, color: e.variant ? MUT[e.variant].css : (e.boss ? '#ff5f7a' : '#ff8a4a') });
+
+      /* 接近速度 → 预计接触时间 */
+      const closing = Math.max(0.1, e.speed);
+      const ttc = Math.max(0, dist - (e.radius + p.radius)) / closing;
+
+      /* 特殊敌人（Boss / 精英 / 正在释放特殊攻击）保留独立高危标记 */
+      const isSpecial = e.boss || e.tpl.elite || e.state === 'charge' || e.state === 'windup';
+      if (isSpecial && special.length < 4) {
+        special.push({ rel: rel, css: e.boss ? '#ff5f7a' : '#ff8a4a' });
+        continue;
+      }
+
+      if (dist > T2.warnRange && ttc > T2.warnTtc) continue;
+      const inView = Math.abs(rel) < hHalf;
+      const hot = dist <= T2.dangerRange || ttc <= T2.dangerTtc || e.state === 'melee';
+      /* 进入视野的一般威胁隐藏；但已抬手的仍然提示 */
+      if (inView && !(e.state === 'melee')) continue;
+
+      const k = Math.floor(((rel + Math.PI) / (Math.PI * 2)) * N + 0.5) % N;
+      const prox = 1 - Math.min(1, dist / T2.warnRange);
+      score[k] += 0.55 + prox * 1.1 + (hot ? 1.0 : 0);
+      if (hot) danger[k] = 1;
     }
-    this._threats.forEach((el, i) => {
-      if (i < marks.length) {
-        el.style.opacity = 0.85;
-        el.style.transform = 'translate(-50%,-50%) rotate(' + (marks[i].rel * 180 / Math.PI) + 'deg)';
-        el.style.borderBottomColor = marks[i].color;
+
+    /* 只显示威胁最高的几个扇区 */
+    const order = [];
+    for (let k = 0; k < N; k++) if (score[k] > 0.01) order.push(k);
+    order.sort((a, b) => score[b] - score[a]);
+    const shown = order.slice(0, T2.maxShown);
+
+    /* 升级为红时响一声，禁止持续蜂鸣 */
+    this._wasDanger = this._wasDanger || new Uint8Array(N);
+    for (let k = 0; k < N; k++) {
+      if (danger[k] && !this._wasDanger[k] && shown.indexOf(k) >= 0) {
+        const a = (k / N) * Math.PI * 2 - Math.PI + (p.yaw + Math.PI);
+        Audio2.incoming(TV.set(p.pos.x + Math.sin(a) * 4, 1, p.pos.z + Math.cos(a) * 4));
+      }
+      this._wasDanger[k] = danger[k];
+    }
+
+    /* 画弧：分数越高弧越宽越亮，而不是多画几个箭头 */
+    const sectorArc = (Math.PI * 2) / N;
+    for (let n = 0; n < this._arcs.length; n++) {
+      const el = this._arcs[n];
+      if (n >= shown.length) { el.setAttribute('opacity', 0); continue; }
+      const k = shown[n];
+      const sc = Math.min(T2.sectorMaxScore, score[k]) / T2.sectorMaxScore;
+      const mid = (k / N) * Math.PI * 2 - Math.PI;
+      const half = sectorArc * (0.42 + sc * 0.34);
+      el.setAttribute('d', arcPath(mid - half, mid + half, 150, 150 + 10 + sc * 16));
+      el.setAttribute('fill', danger[k] ? '#ff4d5e' : '#ffc14d');
+      el.setAttribute('opacity', (danger[k] ? 0.55 : 0.34) + sc * 0.3);
+    }
+
+    /* 特殊敌人的独立标记保留 */
+    this._threats.forEach((el, n) => {
+      if (n < special.length) {
+        el.style.opacity = 0.9;
+        el.style.transform = 'translate(-50%,-50%) rotate(' + (special[n].rel * 180 / Math.PI) + 'deg)';
+        el.style.borderBottomColor = special[n].css;
       } else el.style.opacity = 0;
     });
+  },
+
+  /* 屏外目标方向标（医疗 / 空投） */
+  _updateMarkers() {
+    const p = G.player;
+    const vFov = R.camera.fov * Math.PI / 180;
+    const hHalf = Math.atan(Math.tan(vFov / 2) * R.camera.aspect) * 0.95;
+    const put = (el, obj, show) => {
+      if (!obj || !show) { el.style.opacity = 0; return; }
+      const dx = obj.x - p.pos.x, dz = obj.z - p.pos.z;
+      let rel = Math.atan2(dx, dz) - (p.yaw + Math.PI);
+      while (rel > Math.PI) rel -= Math.PI * 2;
+      while (rel < -Math.PI) rel += Math.PI * 2;
+      if (Math.abs(rel) < hHalf) { el.style.opacity = 0; return; }   // 进入视野后只留世界光柱
+      el.style.opacity = 1;
+      el.style.transform = 'translate(-50%,-50%) rotate(' + (rel * 180 / Math.PI) + 'deg)';
+      el.firstChild.textContent = Math.round(Math.hypot(dx, dz)) + 'm';
+      el.firstChild.style.transform = 'rotate(' + (-rel * 180 / Math.PI) + 'deg)';
+    };
+    put(this.medMark, G.medical, G.player.hp / G.player.maxHp < TUNE.MEDICAL.offscreenHpFrac);
+    put(this.dropMark, G.airdrop, !!G.airdrop);
+  },
+
+  /* 强化 HUD */
+  _updateBuff() {
+    const b = G.buff;
+    if (!b) { this.buffEl.classList.remove('on'); return; }
+    this.buffEl.classList.add('on');
+    this.buffEl.style.borderColor = BUFF_CSS[b.id];
+    this.buffEl.style.color = BUFF_CSS[b.id];
+    const extra = b.id === 'shield' ? ' · ' + Math.ceil(b.shield) : '';
+    this.buffEl.textContent = BUFF_NAME[b.id] + extra + '  ' + b.t.toFixed(1) + 's';
+  },
+
+  shieldVig(frac) {
+    this.shieldEl = this.shieldEl || $('shieldvig');
+    this.shieldEl.style.opacity = frac > 0 ? (0.28 + frac * 0.34).toFixed(2) : 0;
+  },
+
+  shieldHit(broken) {
+    const el = $('shieldflash');
+    el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
+    if (broken) this.toast('护盾已穿', '#4fa8ff');
+  },
+
+  floatText(text, color) {
+    const el = $('floattext');
+    el.textContent = text; el.style.color = color;
+    el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
   },
 
   damageFrom(ang, color) {
@@ -1180,6 +1519,7 @@ function updateTimeline(dt) {
     } else if (ev.kind === 'boss') {
       const e = configureEnemy(G.enemies.get(), ENEMIES[ev.enemy], spawnPosition(true), { grace: 2.0 });
       G.bossAlive = e;
+      G.bossSpawnAt = G.time;                 // 空投要给 Boss 登场演出让位
       UI.bossName.textContent = ENEMIES[ev.enemy].name;
       UI.bossName.style.color = '#ff8a94';
       UI.bossFill.style.background = 'linear-gradient(90deg,#ff5f7a,#ffb0be)';
@@ -1198,9 +1538,16 @@ function updateTimeline(dt) {
    ========================================================================== */
 G.dmgScale = function () { return 1 + (G.time / 60) * TUNE.SPAWN.dmgScalePerMin; };
 
+function cleanupWorldPickups() {
+  clearAirdrop();
+  R.medMesh.visible = false;
+  G.ui.shieldVig(0);
+}
+
 G.lose = function () {
   if (G.over) return;
   G.over = true; G.phase = 'over';
+  cleanupWorldPickups();
   Audio2.defeat();
   document.exitPointerLock();
   showResults(false);
@@ -1208,6 +1555,7 @@ G.lose = function () {
 G.win = function () {
   if (G.over) return;
   G.over = true; G.won = true; G.phase = 'over';
+  cleanupWorldPickups();
   Audio2.victory();
   document.exitPointerLock();
   showResults(true);
@@ -1233,6 +1581,10 @@ function showResults(won) {
   const unseen = MUTATIONS.filter(m => !G.mutationSet[m.id]).map(m => m.name).join(' / ');
 
   /* 本局触发链：只列实际发生过的，不做伤害瀑布 §32 */
+  const supply = [];
+  if (G.stats.medPicked) supply.push('医疗 ×' + G.stats.medPicked);
+  if (G.stats.buffsTaken) supply.push('空投强化 ×' + G.stats.buffsTaken);
+
   const chain = [];
   if (G.stats.splits) chain.push('分裂 ×' + G.stats.splits);
   if (G.stats.blasts) chain.push('爆裂 ×' + G.stats.blasts);
@@ -1246,6 +1598,8 @@ function showResults(won) {
     '<div class="rsec">本局共同变异</div><div class="rmuts">' + (muts || '<i>无</i>') + '</div>' +
     (unseen ? '<div class="runseen">本局未出现：' + unseen + '</div>' : '') +
     '<div class="rsec">触发链</div><div class="rchain">' + (chain.join(' · ') || '<i>未成型</i>') + '</div>' +
+    '<div class="rsec">补给</div><div class="rchain" style="color:#7ef0a8">' +
+      (supply.join(' · ') || '<i>本局没用上</i>') + '</div>' +
     '<div class="rsec">普通改装</div><div class="rmods">' + (mods || '<i>无</i>') + '</div>' +
     '<div class="rseed">种子 ' + RNG.master + ' · 相同种子可复现本局抽卡与生成序列</div>' +
     '<div class="rbtns"><button onclick="location.reload()">再来一局</button>' +
@@ -1277,7 +1631,10 @@ const DebugPanel = {
     $('dbgbtns').innerHTML = [
       ['无敌 G', 'god'], ['升级 L', 'level'], ['变异 M', 'mut'], ['清怪 K', 'clear'],
       ['→3:00', 'j180'], ['→6:00', 'j360'], ['→9:00', 'j540'], ['→12:00', 'j719'],
-      ['事件流', 'events'], ['重置种子', 'reseed']
+      ['事件流', 'events'], ['重置种子', 'reseed'],
+      ['医疗物', 'med'], ['充满空投', 'drop'],
+      ['过载供弹', 'b_ammo'], ['肾上腺素', 'b_adren'], ['相位护盾', 'b_shield'],
+      ['正后方刷怪', 'behind']
     ].map(([t, a]) => '<button data-a="' + a + '">' + t + '</button>').join('');
     $('dbgbtns').onclick = e => {
       const a = e.target.dataset.a; if (!a) return;
@@ -1287,6 +1644,18 @@ const DebugPanel = {
       else if (a === 'clear') G.enemies.live.forEach(x => { if (!x._dead && !x.boss) killEnemy(x, makeAttack('debug')); });
       else if (a === 'events') this.showEvents = !this.showEvents;
       else if (a === 'reseed') { RNG.resetAll(); this.log('种子通道已重置'); }
+      else if (a === 'med') { G.medCooldown = 0; G.medPending = true; this.log('下一只非召唤物死亡将掉落医疗'); }
+      else if (a === 'drop') { G.supplyCharge = 1; G.lastDropAt = -999; G.dropQueued = true; this.log('空投已排队'); }
+      else if (a[0] === 'b' && a[1] === '_') { applyBuff(a.slice(2)); }
+      else if (a === 'behind') {
+        /* 正后方生成一只普通怪，验证完整提示链：接近预警 → 攻击预警 → 命中反馈 */
+        const p = G.player;
+        const ang = p.yaw;                      // yaw+PI 是正前方，所以 yaw 就是正后方
+        const d = TUNE.THREAT.warnRange - 1;
+        configureEnemy(G.enemies.get(), ENEMIES.grunt,
+          new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), {});
+        this.log('正后方 ' + d + 'm 生成普通丧尸');
+      }
       else if (a[0] === 'j') this.jump(parseInt(a.slice(1), 10));
     };
     $('dbgvariant').innerHTML = MUTATIONS.map(m =>
@@ -1353,6 +1722,17 @@ const DebugPanel = {
       ' &nbsp; xp/s <b>' + (G.xpRate || 0).toFixed(1) + '</b>' +
       '<br>目标在场 <b>' + (Director.target || 0) + '</b> &nbsp; 刷怪间隔 <b>' + (Director.interval || 0).toFixed(2) + 's</b> &nbsp; 触发/帧 <b>' + G.procThisFrame + '</b> &nbsp; 深度上限 <b>' + G.derived.maxDepth + '</b>' +
       ' &nbsp; 经验球 <b>' + G.xp.length + '</b>' +
+      '<br>医疗need <b>' + G.medNeed.toFixed(1) + '/' + TUNE.MEDICAL.needThreshold + '</b>' +
+      ' 冷却 <b>' + Math.max(0, G.medCooldown).toFixed(0) + 's</b>' +
+      ' 场上 <b>' + (G.medical ? 'Y' : '-') + '</b>' + (G.medPending ? ' <b style="color:#3ad07a">待掉落</b>' : '') +
+      '<br>空投 <b>' + Math.round(G.supplyCharge * 100) + '%</b>' +
+      ' 距上次 <b>' + (G.time - G.lastDropAt).toFixed(0) + 's</b>' +
+      ' 次数 <b>' + (G.dropCount || 0) + '</b>' + (G.dropQueued ? ' <b style="color:#5fe0ff">排队中</b>' : '') +
+      ' Buff <b>' + (G.buff ? G.buff.id + ' ' + G.buff.t.toFixed(1) + 's' : '-') + '</b>' +
+      '<br>受伤 <b>' + G.hurtCount + '</b> 次  近战落空 <b>' + G.meleeWhiffs + '</b> 次' +
+      ' &nbsp; 威胁扇区 <b>' + (UI._sectorScore ? Array.prototype.slice.call(UI._sectorScore)
+        .map((v, i) => ({ v: v, i: i })).sort((a, b) => b.v - a.v).slice(0, 3)
+        .filter(x => x.v > 0.01).map(x => x.i + ':' + x.v.toFixed(1)).join(' ') || '-' : '-') + '</b>' +
       '<br>变种占比 <b>' + Math.round(Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation) * 100) + '%</b>' +
       ' &nbsp; 超频 <b>' + Math.round(G.overclock * 100) + '%</b>' +
       ' &nbsp; 电导 <b>' + G.conductCounter + '/6</b>' +
@@ -1383,7 +1763,10 @@ function boot() {
   /* EMA 预置成目标节奏，避免开局冷启动时需求算得离谱 */
   G.xpRate = TUNE.PACING.bootstrapXp / TUNE.PACING.firstLevelAt;
   G.xpFrame = 0; G.pacingMult = 1;
-  G.bossAlive = null; G.surge = false;
+  G.bossAlive = null; G.surge = false; G.bossSpawnAt = -999;
+  G.dropCount = 0; G.lastDropAt = 0; G.supplyCharge = 0; G.dropQueued = false;
+  G.medNeed = 0; G.medCooldown = 0; G.medPending = false; G.medical = null;
+  G.buff = null; G.meleeWhiffs = 0; G.hurtCount = 0;
 
   recompute();
   installPlayerMutations();
@@ -1449,6 +1832,9 @@ function frame(now) {
       updateHazards(dt);
       updateXp(dt);
       trackXpRate(dt);
+      updateMedical(dt);
+      updateAirdrop(dt);
+      updateBuff(dt);
       runTutorialQueue(dt);
       updateShake(dt);
       if (DebugPanel.god) G.player.hp = G.player.maxHp;
