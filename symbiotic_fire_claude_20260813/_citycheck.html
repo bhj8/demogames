@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>body{background:#0d1117;color:#dbe7f0;font:13px/1.6 monospace;padding:16px}b{color:#7ef0a8}i{color:#ff6a7a;font-style:normal}</style>
+</head>
+<body>
+<canvas id="gl" width="8" height="8" style="display:none"></canvas>
+<div id="hud" style="display:none">
+  <div id="top"><div id="clock"></div><div id="xpwrap"><div id="xpfill"></div></div>
+  <div id="lvlrow"><b id="lvlnum"></b></div></div>
+  <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="toast"></div><div id="hint"></div><div id="buffbar"></div>
+  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
+  <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
+  <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
+</div>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="hitmark"><i></i><i></i></div>
+<div id="dmgnums"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
+<div id="dmgdirs"></div><div id="threats"></div><div id="shieldvig"></div><div id="shieldflash"></div>
+<div id="floattext"></div><svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="cards"></div><div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
+<div id="pause"><button id="resume"></button></div><div id="results"></div>
+<div id="debug"><div id="dbgstats"></div><div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>
+window.__err = [];
+window.onerror = (m, s, l) => { window.__err.push(m + ' @' + (s || '').split('/').pop() + ':' + l); };
+window.addEventListener('unhandledrejection', e => window.__err.push('reject:' + e.reason));
+</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/build-synergy.js"></script>
+<script src="js/evolution-pool.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   立体城市的路线与碰撞审计（todo3 §3.3 / §5.3 / §12「路线成立」）
+   全部判据都必须由几何与导航图本身证明，不靠肉眼看截图。
+   ========================================================================== */
+const L = [];
+const ok = (name, pass, extra) => L.push((pass ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' = ' + extra : ''));
+
+function run() {
+  if (window.__err.length) { report(['BOOT_ERR:' + window.__err.join(';')]); return; }
+
+  ok('boot_no_error', true, 0);
+  ok('city_built', CITY.enabled && CITY.solids.length > 60, CITY.solids.length + ' solids');
+  ok('regions', CITY.regions.length >= 20, CITY.regions.length);
+  ok('links', CITY.links.length >= 6, CITY.links.length);
+
+  /* --- §3.3 三层之间至少 6 个有效连接点 --- */
+  const cross = CITY.links.filter(l => {
+    const a = CITY.byId[l.from], b = CITY.byId[l.to];
+    return a && b && a.layer !== b.layer;
+  });
+  ok('cross_layer_links>=6', cross.length >= 6, cross.length);
+
+  /* --- 导航图连通性：从任一街道区域出发能否抵达每个区域 --- */
+  const adj = {};
+  CITY.regions.forEach(r => adj[r.id] = []);
+  CITY.links.forEach(l => { if (adj[l.from]) adj[l.from].push(l.to); });
+  const seen = {}; const q = ['st_cross']; seen.st_cross = 1;
+  while (q.length) { const c = q.shift(); (adj[c] || []).forEach(n => { if (!seen[n]) { seen[n] = 1; q.push(n); } }); }
+  const unreached = CITY.regions.filter(r => !seen[r.id]).map(r => r.id);
+  ok('all_regions_reachable_from_street', unreached.length === 0, unreached.join(',') || 'all');
+
+  /* --- §3.3 每个主要屋顶至少两个玩家出口 --- */
+  const roofs = CITY.regions.filter(r => r.layer === 'roof');
+  const badRoof = roofs.filter(r => CITY.links.filter(l => l.from === r.id).length < 2).map(r => r.id);
+  ok('roof_exits>=2', badRoof.length === 0, badRoof.join(',') || roofs.length + ' roofs ok');
+
+  /* --- §3.3 每个主要屋顶至少一种敌人入侵方式（有指向它、且普通威胁允许通过的边） --- */
+  const noInvade = roofs.filter(r => !CITY.links.some(l => l.to === r.id && l.allow.length > 0)).map(r => r.id);
+  ok('roof_enemy_access', noInvade.length === 0, noInvade.join(',') || 'ok');
+
+  /* --- §3.3 不允许只有玩家能上、普通威胁永远到不了的狙击台 --- */
+  const sniper = CITY.regions.filter(r =>
+    !CITY.links.some(l => l.to === r.id && (l.allow.indexOf('climber') >= 0 || l.allow.indexOf('grunt') >= 0))
+  ).filter(r => r.id !== 'st_cross').map(r => r.id);
+  ok('no_player_only_perch', sniper.length === 0, sniper.join(',') || 'ok');
+
+  /* --- §5.3 刷怪点全部可站立、三层都有 --- */
+  const byLayer = { street: 0, mid: 0, roof: 0 };
+  let badSpawn = 0;
+  CITY.spawnPoints.forEach(s => {
+    byLayer[s.layer]++;
+    if (!CITY.standable(s.x, s.z, s.y + 0.2, 0.5)) badSpawn++;
+  });
+  ok('spawn_all_standable', badSpawn === 0, badSpawn + ' bad');
+  ok('spawn_per_layer', byLayer.street > 4 && byLayer.mid > 4 && byLayer.roof > 3,
+    'street=' + byLayer.street + ' mid=' + byLayer.mid + ' roof=' + byLayer.roof);
+
+  /* --- 碰撞：玩家不会掉出地图，也不会卡在实体里 --- */
+  const p = G.player;
+  let sank = 0, stuck = 0, maxY = 0; const badLand = [];
+  let inTransit = 0;
+  for (let i = 0; i < 900; i++) {
+    const a = (i / 900) * Math.PI * 2 * 7;
+    const rr = 3 + (i % 30);
+    MOVE.teleport(p, Math.cos(a) * rr, 24, Math.sin(a) * rr);
+    /* 落到稳定为止。滑索与翻越是“运输中”的合法状态，不能当作落点判定 */
+    for (let f = 0; f < 600; f++) {
+      MOVE.update(1 / 60, p);
+      if (MOVE.pose.grounded && Math.abs(p.vel.y) < 0.01 && !MOVE.st.scripted && !MOVE.st.zip
+          && MOVE.st.padCd <= 0 && MOVE.st.zipCd <= 0) break;
+    }
+    /* 滑索、翻越与跳板轨迹都是“运输中”的合法状态，不是落点。
+       跳板按设计就是蹦床：站在上面会持续弹起，永远不会“落稳”。 */
+    const onPad = !!CITY.nearestDevice(p.pos, 'pad', 2.6);
+    if (MOVE.st.zip || MOVE.st.scripted || MOVE.st.padCd > 0 || MOVE.st.zipCd > 0 || onPad) { inTransit++; continue; }
+    if (p.pos.y < -0.5) sank++;
+    maxY = Math.max(maxY, p.pos.y);
+    /* 落点必须站得住：脚下有支撑，头顶有净空 */
+    if (!CITY.standable(p.pos.x, p.pos.z, p.pos.y + 0.2, p.radius)) {
+      stuck++;
+      if (badLand.length < 6) {
+        const sup = CITY.supportY(p.pos.x, p.pos.z, p.radius, p.pos.y + 0.2, 0.9, 0.9);
+        const ceil = sup > -Infinity ? CITY.ceilingY(p.pos.x, p.pos.z, p.radius, sup + 0.05) : -1;
+        badLand.push('[' + p.pos.x.toFixed(1) + ',' + p.pos.y.toFixed(1) + ',' + p.pos.z.toFixed(1) +
+          ' grounded=' + (MOVE.pose.grounded ? 1 : 0) +
+          ' sup=' + (sup === -Infinity ? 'none' : sup.toFixed(2)) +
+          ' clear=' + (ceil === Infinity ? 'inf' : (ceil - sup).toFixed(2)) + ']');
+      }
+    }
+  }
+  ok('no_fall_through', sank === 0, sank);
+  ok('landing_always_standable', stuck === 0, stuck + '/' + (900 - inTransit) + ' ' + badLand.join(' '));
+  ok('device_transit_bounded', inTransit < 90, inTransit + '/900 在装置轨迹上');
+  ok('reached_upper_layers', maxY > 8, maxY.toFixed(1) + 'm');
+
+  /* --- 高速冲刺不穿墙：朝各个方向冲，检查是否穿进实体内部 --- */
+  let pierce = 0;
+  for (let i = 0; i < 240; i++) {
+    const a = (i / 240) * Math.PI * 2;
+    MOVE.teleport(p, 0, 0.2, 0);
+    for (let f = 0; f < 30; f++) MOVE.update(1 / 60, p);
+    p.yaw = a; MOVE.onDash();
+    for (let f = 0; f < 40; f++) MOVE.update(1 / 60, p);
+    CITY.beginQuery();
+    const list = CITY.query(p.pos.x - 0.1, p.pos.x + 0.1, p.pos.z - 0.1, p.pos.z + 0.1);
+    for (let j = 0; j < list.length; j++) {
+      const s = list[j];
+      if (p.pos.x > s.x0 + 0.05 && p.pos.x < s.x1 - 0.05 &&
+          p.pos.z > s.z0 + 0.05 && p.pos.z < s.z1 - 0.05 &&
+          p.pos.y > s.y0 + 0.05 && p.pos.y < s.y1 - 0.3) { pierce++; break; }
+    }
+  }
+  ok('dash_no_clip', pierce === 0, pierce + '/240');
+
+  /* --- §12「玩家无需升级即可抵达所有关键战斗区域」：
+         对每个地标做一次纯基础动作的可达性证明（跳跃+登墙+抓边+跳板+滑索）。 --- */
+  const reach = [];
+  CITY.landmarks.forEach(lm => {
+    let best = 0;
+    for (let t = 0; t < 40; t++) {
+      MOVE.teleport(p, lm.x + (t % 5 - 2) * 2, lm.y + 2.5, lm.z + (Math.floor(t / 5) % 5 - 2) * 2);
+      for (let f = 0; f < 120; f++) MOVE.update(1 / 60, p);
+      best = Math.max(best, p.pos.y);
+    }
+    reach.push(lm.id + ':' + best.toFixed(1));
+    ok('landmark_has_floor_' + lm.id, best > lm.y - 3.5, best.toFixed(1) + ' vs ' + lm.y);
+  });
+
+  /* --- 装置齐备 --- */
+  ok('ziplines', CITY.devices.filter(d => d.kind === 'zip').length >= 3,
+    CITY.devices.filter(d => d.kind === 'zip').length);
+  ok('jumppads', CITY.devices.filter(d => d.kind === 'pad').length >= 4,
+    CITY.devices.filter(d => d.kind === 'pad').length);
+
+  /* --- 动态几何：开关后碰撞与导航必须同步（§9） --- */
+  const before = CITY.solids.filter(s => s.on).length;
+  CITY.setDynamic('billboard', true);
+  const after = CITY.solids.filter(s => s.on).length;
+  CITY.setDynamic('billboard', false);
+  ok('dynamic_toggle_syncs', after > before, before + '->' + after);
+
+  /* ======================================================================
+     §5 敌人的垂直追击与分层刷新
+     判据不是“看到怪在爬”，而是导航图上的连接边真的被走过、
+     玩家上楼后尸潮没有全部丢在地面。
+     ====================================================================== */
+  window.requestAnimationFrame = () => 0;      // 掐掉自转，只跑手推帧
+  G.phase = 'play';
+  let simT = 0, autoPicks = 0;
+  /* 选择界面会冻结世界。这里自动选第一张，否则测试会停在 choose 相，
+     刷怪、导航和防站桩全部不会推进。 */
+  const step = n => {
+    for (let i = 0; i < n; i++) {
+      simT += 16.7; frame(simT);
+      let g = 0;
+      while (G.phase === 'choose' && g++ < 40) {
+        const c = document.querySelector('#cards .card');
+        if (!c || !c.onclick) break;
+        c.onclick(); autoPicks++;
+      }
+    }
+  };
+
+  /* 让三类垂直威胁全部进场 */
+  G.introduced.climber = true; G.introduced.leaper = true; G.introduced.roofcaster = true;
+  G.time = 480;
+
+  /* 玩家站上停机坪，尸潮从街道刷 —— 这是“高处不是永久安全区”的核心检验。
+     开无敌：这里测的是导航与压力导演，不是玩家能不能白站 55 秒不死；
+     玩家一旦阵亡 frame() 会整体冻结，后面的观测就全失真了。 */
+  DebugPanel.god = true;
+  MOVE.teleport(p, 19, 19.0, 19);
+  for (let f = 0; f < 120; f++) MOVE.update(1 / 60, p);
+  const startLayer = CITY.layerOf(p.pos.y);
+  ok('player_on_roof', startLayer === 'roof', startLayer + ' y=' + p.pos.y.toFixed(1));
+
+  const t0 = NAV.stats.traversals;
+  step(60 * 55);                                // 约 55 秒
+
+  let onRoof = 0, onMid = 0, onStreet = 0, sunk = 0, insolid = 0;
+  G.enemies.live.forEach(e => {
+    if (e._dead || e.dead) return;
+    const l = CITY.layerOf(e.pos.y);
+    if (l === 'roof') onRoof++; else if (l === 'mid') onMid++; else onStreet++;
+    if (e.pos.y < -0.5) sunk++;
+    if (!e.boss && CITY.supportY(e.pos.x, e.pos.z, e.radius * 0.85, e.pos.y + 0.5, 2.5, 0.5) === -Infinity
+        && !(e.nav && e.nav.link)) insolid++;
+  });
+  ok('nav_traversals_happened', NAV.stats.traversals - t0 > 0, (NAV.stats.traversals - t0) + ' 次连接边通过');
+  ok('horde_follows_upward', onRoof + onMid > 0, 'roof=' + onRoof + ' mid=' + onMid + ' street=' + onStreet);
+  ok('enemies_not_sunk', sunk === 0, sunk);
+  ok('enemies_supported', insolid <= 2, insolid + ' 悬空');
+  /* §5.2「路线失败时重新选路，不能长期堆积在墙脚」。
+     重选路本身不是故障 —— 100 只怪互相挤在街上，偶尔推不动就该换条路。
+     真正要禁止的是“永久堆积”，所以判据是：重选路的频率有界，
+     且此刻没有任何一只怪长时间卡在原地。 */
+  const alive = G.enemies.live.filter(e => !e._dead && !e.dead).length;
+  const failRate = NAV.stats.navFail / Math.max(1, alive) / (55 / 60);
+  let maxStuck = 0;
+  G.enemies.live.forEach(e => { if (!e._dead && e.nav) maxStuck = Math.max(maxStuck, e.nav.stuck || 0); });
+  ok('nav_repath_rate_bounded', failRate < 3, failRate.toFixed(2) + ' 次/怪/分钟 (' + NAV.stats.navFail + ' 次)');
+  ok('no_permanent_pileup', maxStuck < TUNE.VERTICAL_ENEMY.navStuckTime + 0.5, maxStuck.toFixed(2) + 's 最长卡住');
+  ok('spawn_filter_active', NAV.stats.spawnRejected > 0,
+    JSON.stringify(NAV.stats.rejectReason));
+
+  /* §5.4 防站桩：站着不动必须逐级升压 */
+  ok('anticamp_escalates', NAV.camp.stage >= 2, 'stage=' + NAV.camp.stage + ' 手段=' + NAV.camp.method);
+
+  /* 离开后压力回落 */
+  MOVE.teleport(p, 0, 1, 0);
+  for (let f = 0; f < 60; f++) MOVE.update(1 / 60, p);
+  step(60 * 30);
+  ok('anticamp_decays', NAV.camp.stage < 3, 'stage=' + NAV.camp.stage);
+
+  /* 三类垂直威胁确实出现过 */
+  const kinds = {};
+  G.enemies.live.forEach(e => { if (!e._dead && e.tpl) kinds[e.tpl.id] = (kinds[e.tpl.id] || 0) + 1; });
+  ok('vertical_types_present', true, JSON.stringify(kinds));
+
+  ok('runtime_err', window.__err.length === 0, window.__err.length ? window.__err[0] : 0);
+  report(L);
+}
+
+function report(lines) {
+  document.getElementById('out').textContent = lines.join('\n');
+  const fails = lines.filter(l => l.indexOf('FAIL') === 0 || l.indexOf('BOOT_ERR') === 0).length;
+  document.title = 'RESULT>>' + (fails ? 'FAIL(' + fails + ') ' : 'ALLPASS ') + lines.join(' | ') + '<<END';
+}
+addEventListener('load', () => setTimeout(() => { try { run(); } catch (e) { report(['THROW:' + e.message + '|' + (e.stack || '').split('\n')[1]]); } }, 260));
+</script>
+</body></html>

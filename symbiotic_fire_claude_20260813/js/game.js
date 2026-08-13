@@ -19,6 +19,27 @@ const _muzzleW = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
 /* ============================================================================
+   地图模式（todo3 §1）
+   ?map=flat 一次性关掉全部 todo3 开关，回到 todo/todo2 的平面版本；
+   这是隔离与回滚的唯一入口，其余代码只读 MODE.city / TUNE.FEATURES.*
+   ========================================================================== */
+const MODE = {
+  city: QS.get('map') !== 'flat',
+  get vertMove() { return this.city && TUNE.FEATURES.verticalMovement; },
+  get vertEnemy() { return this.city && TUNE.FEATURES.verticalEnemies; },
+  get mapEvents() { return this.city && TUNE.FEATURES.dynamicMapEvents; },
+  get evolution() { return TUNE.FEATURES.unifiedEvolution; }
+};
+if (!MODE.city) {
+  /* 平面模式下 todo3 的系统全部让位，旧流程原样运行 */
+  TUNE.FEATURES.verticalMovement = false;
+  TUNE.FEATURES.verticalEnemies = false;
+  TUNE.FEATURES.dynamicMapEvents = false;
+  TUNE.FEATURES.mapBuildInfluence = false;
+}
+if (QS.get('evolution') === 'off') TUNE.FEATURES.unifiedEvolution = false;
+
+/* ============================================================================
    敌人
    ========================================================================== */
 let _enemyUid = 0;
@@ -72,6 +93,12 @@ function configureEnemy(e, tpl, pos, opts) {
   e.pos.copy(pos); e.knock.set(0, 0, 0); e.vel.set(0, 0, 0);
   /* 池化对象必须清干净上一位住客的状态 */
   e.knockCtx = null; e.hitReact = 0; e.grp.rotation.x = 0;
+  /* 池化对象必须清干净上一位住客的导航状态，否则会带着旧区域与旧连接边复活 */
+  if (e.nav) {
+    e.nav.region = null; e.nav.link = null; e.nav.linkT = 0; e.nav.repath = 0;
+    e.nav.stuck = 0; e.nav.vy = 0; e.nav.grounded = true; e.nav.recover = 0; e.nav.falling = false;
+  }
+  e.leapAt = null; e.leapVel = null;
   e.summonCd = tpl.summon ? tpl.summon.cooldown : 0;
   e.slamAt = null; e.chargeDir = { x: 0, z: 1 };
 
@@ -109,9 +136,15 @@ function configureEnemy(e, tpl, pos, opts) {
 /* ============================================================================
    投放位置 §31：背后禁止无提示近距离刷怪
    ========================================================================== */
-function spawnPosition(forceFront) {
+function spawnPosition(forceFront, layerWant) {
   const p = G.player;
   const S = TUNE.SPAWN;
+  /* 立体城市：从预先验证过可站立、可达的分层刷怪点里挑（§5.3）。
+     几何验证在 CITY._buildSpawnPoints 一次性做完，热路径只做距离与视线判断。 */
+  if (CITY.enabled && MODE.vertEnemy) {
+    const pick = NAV.pickSpawn ? NAV.pickSpawn(forceFront, layerWant) : null;
+    if (pick) return TV.set(pick.x, pick.y, pick.z).clone();
+  }
   for (let tries = 0; tries < 28; tries++) {
     /* 大部分刷在视野前方 —— 玩家转一圈找不到怪是最糟的体验。
        剩下的仍然四面八方，靠 §31 的背后距离与威胁指示器兜底。 */
@@ -157,6 +190,7 @@ const Director = {
   timer: 0, target: 0, interval: 0,
   update(dt) {
     if (DebugPanel.rangeMode) return;              // 枪感实验场：暂停刷怪
+    if (DebugPanel.freezeEnemies) return;         // §11.1 单独冻结敌人
     if (G.bossAlive && G.bossAlive.king) return;   // 尸王阶段停常规刷怪，避免不可读
     const t = G.time, S = TUNE.SPAWN;
     const k = Math.min(1, t / TUNE.RUN_SECONDS);
@@ -182,16 +216,34 @@ const Director = {
     }
   },
   spawnOne() {
-    const tpl = this.pickTemplate();
-    configureEnemy(G.enemies.get(), tpl, spawnPosition(false));
+    /* §5.4 防站桩：压力阶段会顶掉一次常规抽取，逐级换成攀爬 / 跳跃 / 远程 */
+    let tpl = null;
+    if (MODE.vertEnemy && NAV.camp.stage > 0 && RNG.spawn.chance(0.20 + NAV.camp.stage * 0.12)) {
+      tpl = NAV.campTemplate();
+    }
+    if (!tpl) tpl = this.pickTemplate();
+    /* 远程感染者优先占据相邻屋顶或高台（§5.1） */
+    const want = MODE.vertEnemy && tpl.navKind === 'ranged'
+      ? (RNG.spawn.chance(0.7) ? 'roof' : 'mid') : null;
+    const pos = spawnPosition(false, want);
+    if (!pos) return;
+    configureEnemy(G.enemies.get(), tpl, pos);
   },
   /* §26 变异敌人总占比 = 已选变异数 × 8%，上限 32%；巨化权重 0.5 */
   pickTemplate() {
     const t = G.time;
-    /* 基础组成：随时间引入 heavy / spitter */
+    /* 基础组成：随时间引入 heavy / spitter；立体模式再叠三类垂直威胁。
+       §5.3 不为展示新系统而无脑增加总怪量 —— 目标在场数逻辑保持不变，
+       这里只改变“这一只是什么”，不改变“刷几只”。 */
     const pool = [ENEMIES.grunt], w = [1];
     if (G.introduced.heavy) { pool.push(ENEMIES.heavy); w.push(0.16); }
     if (G.introduced.spitter) { pool.push(ENEMIES.spitter); w.push(0.20); }
+    if (MODE.vertEnemy) {
+      const early = G.time < 180;
+      if (G.introduced.climber) { pool.push(ENEMIES.climber); w.push(early ? 0.07 : 0.30); }
+      if (G.introduced.leaper) { pool.push(ENEMIES.leaper); w.push(0.18); }
+      if (G.introduced.roofcaster) { pool.push(ENEMIES.roofcaster); w.push(0.14); }
+    }
     const base = RNG.spawn.weighted(pool, w);
 
     /* 只有 grunt 会被替换成变种模板 §25 */
@@ -225,9 +277,15 @@ function updateEnemies(dt) {
       else if (e.hurtFlash > 0) e.bodyMat.emissive.setHex(e.variant ? MUT[e.variant].color : 0xffffff);
     }
 
+    /* 立体导航接管：跨层时走连接边，同层时交还给下面的二维追击（§5.2）。
+       Boss 不参与分层导航 —— 它们只在街道层活动，行为由 updateBoss 负责。 */
+    if (MODE.vertEnemy && !e.boss && NAV.update(e, dt)) continue;
+
     const dx = p.pos.x - e.pos.x, dz = p.pos.z - e.pos.z;
+    const dy = p.pos.y - e.pos.y;
     const distSq = dx * dx + dz * dz;
     const dist = Math.sqrt(distSq);
+    const sameFloor = !MODE.vertEnemy || Math.abs(dy) < 2.4;
     const nx = dist > 1e-4 ? dx / dist : 0, nz = dist > 1e-4 ? dz / dist : 1;
     e.face.set(nx, 0, nz);
 
@@ -259,6 +317,50 @@ function updateEnemies(dt) {
         }
         if (e.stateT <= 0) { e.state = 'walk'; e.cd = e.tpl.charge.cooldown; }
       }
+    } else if (e.tpl.leap) {
+      /* 跳跃感染者 §5.1：起跳前显示姿态、声音与落点预警；
+         扑击失败后有可惩罚窗口；绝不从玩家看不见的位置无提示瞬移过来。 */
+      const lp = e.tpl.leap;
+      if (e.state === 'walk' && dist < lp.range && dist > 3.0 && e.cd <= 0 && e.spawnGrace <= 0) {
+        e.state = 'leapwind'; e.stateT = lp.windup;
+        e.leapAt = { x: p.pos.x, y: p.pos.y, z: p.pos.z };
+        Audio2.telegraph(e.pos, 'charge');
+        /* 落点预警圈：从高处扑下来时玩家必须能读到落点（§8.2） */
+        const z = R.zones.get();
+        z.mesh.position.set(p.pos.x, p.pos.y + 0.06, p.pos.z);
+        z.mesh.scale.setScalar(2.4);
+        z.mesh.material.color.setHex(0xe0c08a); z.mesh.material.opacity = 0.2; z.mesh.visible = true;
+        z.rim.position.copy(z.mesh.position); z.rim.scale.setScalar(2.4);
+        z.rim.material.color.setHex(0xe0c08a); z.rim.material.opacity = 0.9; z.rim.visible = true;
+        G.hazards.push({ zone: z, t: 0, dur: lp.windup, kind: 'fuse', blink: true });
+      } else if (e.state === 'leapwind') {
+        speed = 0;
+        if (e.stateT <= 0) {
+          e.state = 'leap'; e.stateT = 1.3;
+          const ddx = e.leapAt.x - e.pos.x, ddz = e.leapAt.z - e.pos.z;
+          const dd = Math.max(1e-3, Math.hypot(ddx, ddz));
+          const tt = dd / lp.speed;
+          e.leapVel = { x: ddx / tt, z: ddz / tt, y: (e.leapAt.y - e.pos.y) / tt + 0.5 * TUNE.MOVEMENT.gravity * tt };
+        }
+      } else if (e.state === 'leap') {
+        speed = 0; moveX = 0; moveZ = 0;
+        e.leapVel.y -= TUNE.MOVEMENT.gravity * dt;
+        e.pos.x += e.leapVel.x * dt; e.pos.y += e.leapVel.y * dt; e.pos.z += e.leapVel.z * dt;
+        if (dist < e.radius + p.radius + 0.9 && Math.abs(dy) < 2.0) {
+          hurtPlayer(lp.dmg * G.dmgScale(), e.pos, 'charge');
+          e.state = 'leaprec'; e.stateT = lp.recover; e.cd = lp.cooldown;
+        }
+        const gy = CITY.enabled ? CITY.dropTo(e.pos.x, e.pos.z, e.pos.y + 0.4, e.radius) : 0;
+        if (e.pos.y <= gy || e.stateT <= 0) {
+          e.pos.y = Math.max(gy, e.pos.y);
+          e.state = 'leaprec'; e.stateT = lp.recover; e.cd = lp.cooldown;
+          if (e.nav) { e.nav.region = null; e.nav.vy = 0; }
+          R.puff(TV.copy(e.pos), 0.2, 1.5, 0xe0c08a, 0.22);
+        }
+      } else if (e.state === 'leaprec') {
+        speed = 0;                                   // 可惩罚窗口
+        if (e.stateT <= 0) e.state = 'walk';
+      }
     } else if (e.tpl.ranged) {
       const rg = e.tpl.ranged;
       if (e.state === 'walk' && dist < rg.range && e.cd <= 0 && e.spawnGrace <= 0) {
@@ -276,18 +378,19 @@ function updateEnemies(dt) {
       }
     }
 
-    /* 近战三阶段：接触不再直接扣血，必须先走一段前摇（todo.md 阶段二） */
-    if (!e.tpl.ranged && !e.boss && e.state !== 'windup' && e.state !== 'charge') {
+    /* 近战三阶段：接触不再直接扣血，必须先走一段前摇（todo.md 阶段二）。
+       立体模式下还必须同层 —— 否则楼下的怪会隔着一层楼板打到玩家。 */
+    if (!e.tpl.ranged && !e.tpl.leap && !e.boss && e.state !== 'windup' && e.state !== 'charge') {
       const reach = e.radius + p.radius + 0.55;   // 必须大于 stopDist，否则永远够不到
       if (e.state === 'melee') {
         speed = 0;                                   // 前摇期间停住，动作可读
         if (e.stateT <= 0) {
           /* 前摇结束重新检查距离：玩家已经离开就落空 */
-          if (dist < reach + 0.35) hurtPlayer(e.dmg, e.pos, 'melee');
+          if (dist < reach + 0.35 && (!MODE.vertEnemy || Math.abs(p.pos.y - e.pos.y) < 2.4)) hurtPlayer(e.dmg, e.pos, 'melee');
           else G.meleeWhiffs++;
           e.state = 'walk'; e.atkT = e.atk;
         }
-      } else if (dist < reach && e.atkT <= 0 && e.spawnGrace <= 0) {
+      } else if (dist < reach && sameFloor && e.atkT <= 0 && e.spawnGrace <= 0) {
         e.state = 'melee'; e.stateT = TUNE.THREAT.meleeWindup;
         Audio2.meleeWindup(e.pos);
       }
@@ -344,7 +447,9 @@ function updateEnemies(dt) {
 
     e.pos.x += moveX * speed * dt;
     e.pos.z += moveZ * speed * dt;
-    R.collide(e.pos, e.radius);
+    R.collide(e.pos, e.radius, e.pos.y + 0.25, e.pos.y + e.height);
+    /* 同层追击也要吃重力与地面判定：走下平台边缘要掉下去，不能悬空 */
+    if (MODE.vertEnemy && !e.boss && e.state !== 'leap') NAV.stepPhysics(e, dt);
 
     /* 朝向玩家；冲刺时朝冲刺方向 */
     const fx = e.state === 'charge' ? e.chargeDir.x : nx;
@@ -385,6 +490,7 @@ function updateEnemies(dt) {
 function retireEnemy(e) {
   /* 掉经验 §11.3 —— 幼体与召唤物不掉 §17 */
   if (e.xp > 0) dropXp(e.pos, e.xp);
+  if (e.nav) { e.nav.region = null; e.nav.link = null; }
   R.puff(TV.copy(e.pos).setY(e.pos.y + e.height * 0.5), 0.2, e.radius * 3, e.variant ? MUT[e.variant].color : 0x8a6a5a, 0.26);
   Audio2.kill(e.pos);
   G.bus.emit('enemyDeath', { enemy: e });
@@ -418,10 +524,12 @@ function updateAcids(dt) {
     a.life -= dt;
     a.vel.y -= 9.8 * dt;
     a.pos.addScaledVector(a.vel, dt);
-    if (a.pos.y <= 0.1 || a.life <= 0) {
-      /* 落地生成酸池 —— 玩家可以走开，不要求跳跃 §11.2 */
+    const gy = CITY.enabled ? CITY.dropTo(a.pos.x, a.pos.z, a.pos.y + 0.3, 0.4) : 0;
+    if (a.pos.y <= gy + 0.1 || a.life <= 0) {
+      /* 落地生成酸池 —— 玩家可以走开，不要求跳跃 §11.2。
+         立体地图下必须落在实际支撑面上，否则酸池会飘在半空或穿进楼板。 */
       const z = R.zones.get();
-      z.mesh.position.set(a.pos.x, 0.04, a.pos.z);
+      z.mesh.position.set(a.pos.x, gy + 0.04, a.pos.z);
       z.mesh.scale.setScalar(a.cfg.poolRadius);
       z.mesh.material.color.setHex(0xa8c24a); z.mesh.material.opacity = 0.3; z.mesh.visible = true;
       z.rim.position.copy(z.mesh.position); z.rim.scale.setScalar(a.cfg.poolRadius);
@@ -571,7 +679,14 @@ G.spawnMinion = function (parent, ox, oz, hpRatio) {
    ========================================================================== */
 function dropXp(pos, value) {
   if (G.xp.length > 620) { G.xp.shift(); }
-  G.xp.push({ x: pos.x, y: 0.42, z: pos.z, v: value, t: 0, home: false, bob: RNG.fx.range(0, 6.28) });
+  /* §6.1 经验球记录所在高度，且绝不能停在墙面、空中或封闭模型内部 */
+  let y = 0.42, base = 0;
+  if (CITY.enabled) {
+    base = CITY.dropTo(pos.x, pos.z, pos.y + 0.5, 0.35);
+    y = base + 0.42;
+  }
+  G.xp.push({ x: pos.x, y: y, z: pos.z, base: base, v: value, t: 0, home: false,
+    layer: CITY.enabled ? CITY.layerOf(base) : 'street', leftT: 0, bob: RNG.fx.range(0, 6.28) });
 }
 
 const _xpMat = new THREE.Matrix4();
@@ -586,17 +701,29 @@ function updateXp(dt) {
     const c = G.xp[i];
     c.t += dt;
     const dx = p.pos.x - c.x, dz = p.pos.z - c.z;
+    const dy = (p.pos.y + 0.9) - c.y;
     const d = Math.hypot(dx, dz);
+    const d3 = Math.hypot(dx, dy, dz);
+
+    /* §6.1 玩家离开经验所在层后，短暂延迟自动进入跨层追踪，
+       否则经验会大量永久滞留在回不去的下层。 */
+    if (CITY.enabled && !c.home) {
+      const sameLayer = CITY.layerOf(p.pos.y) === c.layer;
+      if (!sameLayer) { c.leftT += dt; if (c.leftT > TUNE.XP.crossLayerDelay) c.home = true; }
+      else c.leftT = 0;
+    }
     if (!c.home && (d < magnet || c.t > TUNE.XP.autoHomeAfter)) c.home = true;
     if (c.home) {
-      const sp = TUNE.XP.flySpeed * (1 + Math.max(0, 3 - d));
-      c.x += dx / Math.max(d, 0.01) * sp * dt;
-      c.z += dz / Math.max(d, 0.01) * sp * dt;
-      c.y = lerp(c.y, 1.0, 1 - Math.exp(-6 * dt));
+      /* 跨层吸附可以穿过建筑几何，但必须快速、清楚，不长时间绕路 */
+      const sp = TUNE.XP.flySpeed * (1 + Math.max(0, 3 - d3)) * (Math.abs(dy) > 2 ? 1.6 : 1);
+      c.x += dx / Math.max(d3, 0.01) * sp * dt;
+      c.z += dz / Math.max(d3, 0.01) * sp * dt;
+      c.y += dy / Math.max(d3, 0.01) * sp * dt;
+      G.stats.crossLayerPulls = (G.stats.crossLayerPulls || 0) + (Math.abs(dy) > 2 ? dt : 0);
     } else {
-      c.y = 0.42 + Math.sin(G.time * 3 + c.bob) * 0.09;
+      c.y = c.base + 0.42 + Math.sin(G.time * 3 + c.bob) * 0.09;
     }
-    if (d < pick) { gainXp(c.v); G.xp.splice(i, 1); continue; }
+    if (d3 < pick) { gainXp(c.v); G.xp.splice(i, 1); continue; }
     if (n < 640) {
       _xpQ.setFromAxisAngle(UP, G.time * 2.4 + c.bob);
       const s = c.v >= 3 ? 1.7 : 1;
@@ -665,8 +792,13 @@ function nextRequirement() {
 
 function gainXp(v) {
   const p = G.player;
-  p.xp += v;
   G.xpFrame += v;
+  /* §4.2 统一进化：等级与“弹一次选择”彻底解耦。
+     经验只推进进化进度，什么时候弹界面由 EVO 的节奏与安全窗口决定，
+     溢出进入下一段进度，绝不连弹多张界面。 */
+  if (typeof EVO !== 'undefined' && EVO.enabled) { EVO.addProgress(v); return; }
+
+  p.xp += v;
   let guard = 0;
   while (p.xp >= p.xpNext && guard++ < 12) {
     p.xp -= p.xpNext;
@@ -686,11 +818,19 @@ function gainXp(v) {
 G.spawnMedical = function (atPos) {
   const M = TUNE.MEDICAL;
   const pos = atPos.clone();
-  R.collide(pos, 0.6);              // 掉在尸体位置，但不能卡进柱子里拿不到
-  G.medical = { x: pos.x, z: pos.z, t: 0, life: M.lifetime };
+  R.collide(pos, 0.6, pos.y + 0.2, pos.y + 1.6);   // 掉在尸体位置，但不能卡进柱子里拿不到
+  /* §6.2 立体地图下必须验证落点可达且可站立；站不住就顺到最近的合法落脚面 */
+  if (CITY.enabled) {
+    pos.y = CITY.dropTo(pos.x, pos.z, pos.y + 0.6, 0.6);
+    if (!CITY.standable(pos.x, pos.z, pos.y + 0.2, 0.6)) {
+      const s = CITY.spawnPoints.length ? CITY.spawnPoints[RNG.event.int(CITY.spawnPoints.length)] : null;
+      if (s) { pos.set(s.x, s.y, s.z); } else { G.stats.unreachable = (G.stats.unreachable || 0) + 1; }
+    }
+  }
+  G.medical = { x: pos.x, y: pos.y, z: pos.z, t: 0, life: M.lifetime };
   G.medNeed = 0;
   G.medCooldown = M.cooldown;
-  R.medMesh.position.set(pos.x, 0, pos.z);
+  R.medMesh.position.set(pos.x, pos.y, pos.z);
   R.medMesh.visible = true;
   Audio2.pickup('med');
   G.stats.medDropped = (G.stats.medDropped || 0) + 1;
@@ -716,7 +856,8 @@ function updateMedical(dt) {
   if (!m) return;
   m.t += dt;
   if (m.t >= m.life) { G.medical = null; R.medMesh.visible = false; return; }
-  if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < M.pickupRadius) {
+  if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < M.pickupRadius
+      && (!CITY.enabled || Math.abs(p.pos.y - (m.y || 0)) < 2.4)) {
     const before = p.hp;
     p.hp = Math.min(p.maxHp, p.hp + p.maxHp * M.healFrac);
     G.ui.flashHeal();
@@ -761,12 +902,16 @@ function updateAirdrop(dt) {
     G.lastDropAt = G.time;
     G.dropCount++;
     const pos = airdropPosition();
-    G.airdrop = { x: pos.x, z: pos.z, state: 'falling', t: 0,
-                  telegraph: A.telegraph, life: A.lifetime, modules: null };
-    R.podMesh.position.set(pos.x, 26, pos.z);
+    /* §6.3 / §4.1：箱内 Buff 在坠落时就公布，玩家在接近前判断值不值得冒险；
+       开箱直接生效，不再弹空投三选一。 */
+    const buffId = RNG.event.pick(['ammo', 'adren', 'shield']);
+    G.airdrop = { x: pos.x, y: pos.y || 0, z: pos.z, state: 'falling', t: 0,
+                  telegraph: A.telegraph, life: A.lifetime, modules: null, buff: buffId };
+    R.podMesh.position.set(pos.x, (pos.y || 0) + 26, pos.z);
     R.podMesh.visible = true;
     Audio2.airdropIncoming();
-    G.ui.toast('补给舱正在坠落', '#5fe0ff');
+    const layerTag = CITY.enabled ? ({ street: '街道', mid: '中层', roof: '屋顶' })[CITY.layerOf(pos.y || 0)] : '';
+    G.ui.toast('补给舱：' + BUFF_NAME[buffId] + (layerTag ? '（' + layerTag + '）' : ''), BUFF_CSS[buffId]);
   }
 
   const d = G.airdrop;
@@ -775,21 +920,18 @@ function updateAirdrop(dt) {
 
   if (d.state === 'falling') {
     const k = Math.min(1, d.t / d.telegraph);
-    R.podMesh.position.y = lerp(26, 0, k * k);
+    R.podMesh.position.y = lerp(d.y + 26, d.y, k * k);
     if (d.t >= d.telegraph) {
       d.state = 'open'; d.t = 0;
-      R.podMesh.position.y = 0;
-      R.ring(TV.set(d.x, 0, d.z), 0.5, 5, 0x5fe0ff, 0.6);
-      G.shake(0.18, TV.set(d.x, 0, d.z));
-      Audio2.blast(TV.set(d.x, 0, d.z), false);
-      d.modules = ['ammo', 'adren', 'shield'].map((id, n) => {
-        const a = (n / 3) * Math.PI * 2 - Math.PI / 2;
-        const mx = d.x + Math.cos(a) * A.moduleSpread;
-        const mz = d.z + Math.sin(a) * A.moduleSpread;
-        const g = R.moduleMeshes[n];
-        g.position.set(mx, 0, mz); g.visible = true;
-        return { id: id, x: mx, z: mz, mesh: g };
-      });
+      R.podMesh.position.y = d.y;
+      R.ring(TV.set(d.x, d.y, d.z), 0.5, 5, 0x5fe0ff, 0.6);
+      G.shake(0.18, TV.set(d.x, d.y, d.z));
+      Audio2.blast(TV.set(d.x, d.y, d.z), false);
+      /* 只放一个模块，就是坠落时已经公布的那个 */
+      const idx = ['ammo', 'adren', 'shield'].indexOf(d.buff);
+      const g = R.moduleMeshes[Math.max(0, idx)];
+      g.position.set(d.x, d.y, d.z); g.visible = true;
+      d.modules = [{ id: d.buff, x: d.x, y: d.y, z: d.z, mesh: g }];
     }
     return;
   }
@@ -800,8 +942,11 @@ function updateAirdrop(dt) {
     const m = d.modules[n];
     m.mesh.userData.spin.rotation.y += dt * 1.8;
     m.mesh.visible = rem > 5 ? true : (Math.sin(d.t * 16) > -0.3);
-    if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < A.pickupRadius) {
-      applyBuff(m.id);              // 碰到一个即完成选择，其余两个立即消失
+    if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < A.pickupRadius
+        && (!CITY.enabled || Math.abs(p.pos.y - (m.y || 0)) < 2.4)) {
+      applyBuff(m.id);              // 开箱直接生效，不弹第二套选择
+      /* §7.8 高风险屋顶空投额外提高下一次进化的史诗概率 */
+      G.bus.emit('airdropOpened', { id: m.id, y: m.y || 0 });
       clearAirdrop();
       return;
     }
@@ -809,8 +954,37 @@ function updateAirdrop(dt) {
   R.podMesh.visible = rem > 5 ? true : (Math.sin(d.t * 16) > -0.3);
 }
 
+/* §6.3 空投落点：覆盖三层，且必须存在至少两种到达方式；
+   绝不能穿过屋顶落进建筑模型内部。 */
+function airdropPositionCity() {
+  const A = TUNE.AIRDROP, p = G.player;
+  const cands = [];
+  for (let i = 0; i < 40; i++) {
+    const s = CITY.spawnPoints[RNG.event.int(CITY.spawnPoints.length)];
+    if (!s) continue;
+    const dist = Math.hypot(s.x - p.pos.x, s.z - p.pos.z);
+    if (dist < A.minDist * 0.7 || dist > 40) continue;
+    /* 落点上方必须是通的，否则舱体会穿进楼板 */
+    if (CITY.dropTo(s.x, s.z, s.y + 24, 1.0) > s.y + 0.4) continue;
+    if (!CITY.standable(s.x, s.z, s.y + 0.2, 1.0)) continue;
+    const region = CITY.regionAt(s.x, s.y, s.z);
+    const outs = region ? CITY.links.filter(l => l.to === region.id).length : 0;
+    if (outs < 2) continue;                      // 至少两种到达方式
+    /* “前方可争取、但不是脚边白送” */
+    cands.push({ s: s, score: -Math.abs(dist - 26) + (s.layer !== 'street' ? 4 : 0) + RNG.event.range(0, 5) });
+  }
+  if (!cands.length) return null;
+  cands.sort((a, b) => b.score - a.score);
+  const s = cands[0].s;
+  return TV.set(s.x, s.y, s.z).clone();
+}
+
 function airdropPosition() {
   const A = TUNE.AIRDROP, p = G.player;
+  if (CITY.enabled) {
+    const c = airdropPositionCity();
+    if (c) return c;
+  }
   for (let i = 0; i < 30; i++) {
     const a = RNG.event.range(0, Math.PI * 2);
     const dist = RNG.event.range(A.minDist, A.maxDist);
@@ -1026,7 +1200,10 @@ addEventListener('keydown', e => {
   if (e.code === 'Escape') { G.togglePause(); return; }
   KEY[e.code] = true;
   if (e.code === 'KeyR') tryReload();
-  if ((e.code === 'ShiftLeft' || e.code === 'Space')) tryDash();
+  /* §2.2 立体模式：Space 跳跃（按住时自动翻越/抓边/登墙），Shift 冲刺。
+     平面模式保持旧绑定（两个键都是冲刺），避免破坏 todo/todo2 的手感。 */
+  if (e.code === 'ShiftLeft') tryDash();
+  if (e.code === 'Space') { if (MODE.vertMove) MOVE.onJump(); else tryDash(); }
   if (e.code === 'F1') { DebugPanel.toggle(); e.preventDefault(); }
   else if (BOOT.debug) handleDebugKey(e.code);
   if (e.code === 'Space') e.preventDefault();
@@ -1069,6 +1246,7 @@ function tryReload() {
 
 function tryDash() {
   const p = G.player;
+  if (MODE.vertMove) { MOVE.onDash(); return; }   // 充能与无敌帧的核对在 movement.js
   if (p.dashCd > 0 || p.dashT > 0) return;
   const f = inputDir();
   if (f.lengthSq() < 0.01) { f.set(0, 0, -1).applyAxisAngle(UP, p.yaw); }
@@ -1099,18 +1277,21 @@ function updatePlayer(dt) {
   if (p.dashIFrame > 0) p.dashIFrame -= dt;
   if (p.dashCd > 0) p.dashCd -= dt;
 
-  /* 移动 */
-  if (p.dashT > 0) {
+  /* 移动 —— 立体城市走 movement.js 的状态机；平面模式保持原样（todo3 §1 回退要求） */
+  if (MODE.vertMove) {
+    MOVE.update(dt, p);
+  } else if (p.dashT > 0) {
     p.dashT -= dt;
     p.pos.addScaledVector(p.dashDir, TUNE.PLAYER.dashSpeed * dt);
+    R.collide(p.pos, p.radius);
   } else {
     const want = inputDir().multiplyScalar(d.moveSpeed);
     p.vel.x = smooth(p.vel.x, want.x, TUNE.PLAYER.accel * 0.14, dt);
     p.vel.z = smooth(p.vel.z, want.z, TUNE.PLAYER.accel * 0.14, dt);
     p.pos.addScaledVector(p.vel, dt);
     p.vel.multiplyScalar(Math.exp(-1.2 * dt));
+    R.collide(p.pos, p.radius);
   }
-  R.collide(p.pos, p.radius);
 
   /* 换弹推进：弹量在 magIn 恢复，但要到 reloadEnd 才允许射击 */
   if (g.reloadT > 0) {
@@ -1159,21 +1340,30 @@ function updatePlayer(dt) {
   /* 相机 */
   const speed = Math.hypot(p.vel.x, p.vel.z);
   p.bobT += dt * speed * 1.5;
-  const bob = Math.sin(p.bobT * 2) * 0.022 * Math.min(1, speed / 6);
-  R.camera.position.set(p.pos.x, TUNE.PLAYER.height + bob, p.pos.z);
+  const grounded = MODE.vertMove ? MOVE.pose.grounded : true;
+  /* 空中不做步态晃动 —— 跑酷中再叠 bob 会直接读不清准星（§8.4） */
+  const bob = Math.sin(p.bobT * 2) * 0.022 * Math.min(1, speed / 6) * (grounded ? 1 : 0.15);
+  /* 眼高 = 脚底 + 身高；滑铲下蹲与落地压缩只动高度，不动朝向 */
+  const eye = TUNE.PLAYER.height
+    - (MODE.vertMove ? MOVE.pose.crouch * (TUNE.PLAYER.height - TUNE.MOVEMENT.slideHeight) : 0)
+    - (MODE.vertMove ? MOVE.pose.landImpact * 0.16 : 0);
+  R.camera.position.set(p.pos.x, p.pos.y + eye + bob, p.pos.z);
   R.camera.rotation.set(0, 0, 0);
   R.camera.rotateY(p.yaw + p.camRecoil.yaw);
   R.camera.rotateX(p.pitch + p.camRecoil.pitch + G.shakePitch);
-  R.camera.rotateZ(G.shakeRoll);
+  R.camera.rotateZ(G.shakeRoll + (MODE.vertMove ? MOVE.pose.tilt : 0));
   R.camera.position.x += G.shakeX; R.camera.position.z += G.shakeZ;
 
+  /* 速度用 FOV 表达，不用随机抖动 */
+  const fastK = MODE.vertMove ? clamp((speed - 7) / 9, 0, 1) : 0;
   const fov = TUNE.PLAYER.fovBase + (p.dashT > 0 ? TUNE.PLAYER.fovSprintAdd : 0)
+    + fastK * (TUNE.MOVEMENT.stableCam ? 2 : 6)
     + WEAPON.pose.ads * TUNE.WEAPON_FX.adsFov;
   R.camera.fov = smooth(R.camera.fov, fov, 9, dt);
   R.camera.updateProjectionMatrix();
 
   /* 武器摆动 */
-  R.lamp.position.set(p.pos.x, TUNE.PLAYER.height + 0.4, p.pos.z);
+  R.lamp.position.set(p.pos.x, p.pos.y + TUNE.PLAYER.height + 0.4, p.pos.z);
 
   /* 枪械表现层：只喂状态，动作全部由 weapon.js 自己解算 */
   WEAPON.update(dt, {
@@ -1187,6 +1377,8 @@ function updatePlayer(dt) {
     onMagIn: () => { g.ammo = d.magazine; g.magFilled = true; }
   });
   G.mouseDX = 0; G.mouseDY = 0;
+  /* §7.10 新手前两局显示一次“三张同品质”提示，之后自动隐藏 */
+  G.evoHintsLeft = 2;
 
   Audio2.setListener(R.camera.position, R.camera.getWorldDirection(TV), UP);
 }
@@ -1288,8 +1480,13 @@ const UI = {
     this.hpNum.textContent = Math.ceil(p.hp) + ' / ' + Math.round(p.maxHp);
     this.vig.style.opacity = (1 - hpk) * 0.55;
 
-    this.xpFill.style.width = (p.xp / p.xpNext * 100) + '%';
-    this.lvl.textContent = p.level;
+    if (EVO.enabled) {
+      this.xpFill.style.width = (EVO.progressFrac() * 100) + '%';
+      this.lvl.textContent = EVO.draw.evolutionIndex;
+    } else {
+      this.xpFill.style.width = (p.xp / p.xpNext * 100) + '%';
+      this.lvl.textContent = p.level;
+    }
     this.clock.textContent = fmtTime(TUNE.RUN_SECONDS - G.time);
     if (G.time > TUNE.RUN_SECONDS - 30) this.clock.classList.add('urgent');
 
@@ -1350,7 +1547,8 @@ const UI = {
     const N = T2.sectors;
     const score = this._sectorScore || (this._sectorScore = new Float32Array(N));
     const danger = this._sectorDanger || (this._sectorDanger = new Uint8Array(N));
-    score.fill(0); danger.fill(0);
+    const vert = this._sectorVert || (this._sectorVert = new Float32Array(N));
+    score.fill(0); danger.fill(0); vert.fill(0);
 
     /* 水平半视场角：进入镜头视野的一般威胁不再提示 */
     const vFov = R.camera.fov * Math.PI / 180;
@@ -1389,6 +1587,12 @@ const UI = {
       const prox = 1 - Math.min(1, dist / T2.warnRange);
       score[k] += 0.55 + prox * 1.1 + (hot ? 1.0 : 0);
       if (hot) danger[k] = 1;
+      /* §8.2 同一方向的多个高度继续聚合，但要能读出主要威胁在上还是在下。
+         用弧的“形态”（半径档位）表达，不额外画箭头。 */
+      if (CITY.enabled) {
+        const rise = e.pos.y - p.pos.y;
+        if (rise > 2.2) vert[k] += 1; else if (rise < -2.2) vert[k] -= 1;
+      }
     }
 
     /* 只显示威胁最高的几个扇区 */
@@ -1416,7 +1620,10 @@ const UI = {
       const sc = Math.min(T2.sectorMaxScore, score[k]) / T2.sectorMaxScore;
       const mid = (k / N) * Math.PI * 2 - Math.PI;
       const half = sectorArc * (0.42 + sc * 0.34);
-      el.setAttribute('d', arcPath(mid - half, mid + half, 150, 150 + 10 + sc * 16));
+      /* 上方威胁的弧推到外圈、下方收到内圈、同层保持基准 —— 三种形态一眼可分 */
+      const v = this._sectorVert ? this._sectorVert[k] : 0;
+      const r0 = 150 + (v > 0.5 ? 16 : v < -0.5 ? -16 : 0);
+      el.setAttribute('d', arcPath(mid - half, mid + half, r0, r0 + 10 + sc * 16));
       el.setAttribute('fill', danger[k] ? '#ff4d5e' : '#ffc14d');
       el.setAttribute('opacity', (danger[k] ? 0.55 : 0.34) + sc * 0.3);
     }
@@ -1445,7 +1652,9 @@ const UI = {
       if (Math.abs(rel) < hHalf) { el.style.opacity = 0; return; }   // 进入视野后只留世界光柱
       el.style.opacity = 1;
       el.style.transform = 'translate(-50%,-50%) rotate(' + (rel * 180 / Math.PI) + 'deg)';
-      el.firstChild.textContent = Math.round(Math.hypot(dx, dz)) + 'm';
+      const dyM = (obj.y === undefined ? 0 : obj.y) - p.pos.y;
+      const arrow = !CITY.enabled ? '' : (dyM > 2.2 ? ' ▲' : dyM < -2.2 ? ' ▼' : ' ●');
+      el.firstChild.textContent = Math.round(Math.hypot(dx, dz)) + 'm' + arrow;
       el.firstChild.style.transform = 'rotate(' + (-rel * 180 / Math.PI) + 'deg)';
     };
     put(this.medMark, G.medical, G.player.hp / G.player.maxHp < TUNE.MEDICAL.offscreenHpFrac);
@@ -1594,6 +1803,66 @@ const UI = {
   hideCards() {
     this.cards.classList.remove('on');
     if (!G.over) R.renderer.domElement.requestPointerLock();
+  },
+
+  /* ------------------------------------------------------------------
+     统一进化界面 §7.10
+     目标：玩家在一次暂停内 2～4 秒读懂三张卡的差别。
+     先揭示本次整体品质，再同时展开三张同品质卡；
+     卡面不展示后台权重、复杂公式或长段 lore。
+     ------------------------------------------------------------------ */
+  showEvolution(quality, cards, info, pick) {
+    const RA = TUNE.RARITY;
+    const wrap = this.cards;
+    wrap.innerHTML = '';
+
+    /* 保底 / 地图印记：只说明来源，绝不伪称必出（§7.10） */
+    const marks = [];
+    if (info && (info.pityRare || info.pityEpic)) marks.push('<span class="emark pity">保底生效</span>');
+    if (info && info.mapMod > 0) marks.push('<span class="emark map">屋顶空投印记</span>');
+    if (info && info.mapMin) marks.push('<span class="emark map">精英猎杀印记</span>');
+
+    const head = document.createElement('div');
+    head.className = 'cardhead';
+    head.innerHTML =
+      '<div class="qreveal q-' + quality + '" style="--qc:' + RA.css[quality] + '">' +
+        '<b>' + RA.name[quality] + '</b><span>进化 ' + (EVO.draw.evolutionIndex + 1) + '</span>' +
+      '</div>' +
+      '<div class="cs">三张同品质 ' + marks.join('') + '</div>';
+    wrap.appendChild(head);
+
+    const row = document.createElement('div');
+    row.className = 'cardrow evorow';
+    cards.forEach((c, i) => {
+      const el = document.createElement('div');
+      el.className = 'card evo q-' + quality;
+      el.style.setProperty('--mc', c.css || RA.css[quality]);
+      /* 先揭示品质再展开三张：用动画延迟表达，不占一帧逻辑 */
+      el.style.animationDelay = (RA.revealTime + i * 0.05) + 's';
+      el.innerHTML =
+        '<div class="qtag" style="color:' + RA.css[quality] + '">' + RA.name[quality] + '</div>' +
+        '<div class="cname" style="color:' + (c.css || RA.css[quality]) + '">' + c.name + '</div>' +
+        '<div class="cline you"><span class="tag">你</span>' + c.text + '</div>' +
+        (c.horde ? '<div class="cline horde"><span class="tag">尸潮</span>' + c.horde + '</div>' : '') +
+        (c.relation ? '<div class="crel">' + c.relation + '</div>' : '');
+      el.onclick = () => pick(c.id);
+      row.appendChild(el);
+    });
+    wrap.appendChild(row);
+
+    const foot = document.createElement('div');
+    foot.className = 'cardfoot';
+    /* 新手前两局提示一次，之后自动隐藏（§7.10） */
+    foot.textContent = G.evoHintsLeft > 0
+      ? '本次三张同品质，选方向，不用比颜色'
+      : (SYN.describe()[1] || '');
+    if (G.evoHintsLeft > 0) G.evoHintsLeft--;
+    wrap.appendChild(foot);
+
+    wrap.classList.add('on');
+    /* 史诗与传奇给一次明显但短促的音画奖励，不拖慢连续试玩（§7.10） */
+    if (quality === 'epic' || quality === 'legend') { Audio2.levelup(); this.flashHeal(); }
+    document.exitPointerLock();
   }
 };
 G.ui = UI;
@@ -1625,17 +1894,22 @@ function updateShake(dt) {
    ========================================================================== */
 G.introduced = {};
 function updateTimeline(dt) {
-  /* 共同变异事件：固定时间，不受杀怪效率影响 §12.2 */
-  while (G.mutIndex < TUNE.MUTATION_TIMES.length && G.time >= TUNE.MUTATION_TIMES[G.mutIndex]) {
+  /* 共同变异事件：固定时间，不受杀怪效率影响 §12.2。
+     todo3 §4.2 —— 统一进化开启时必须停用 TUNE.MUTATION_TIMES 这套固定大变异时钟，
+     它只保留给旧流程 Debug 回退，不能与新导演叠加。 */
+  while (!(typeof EVO !== 'undefined' && EVO.enabled) && G.mutIndex < TUNE.MUTATION_TIMES.length && G.time >= TUNE.MUTATION_TIMES[G.mutIndex]) {
     G.mutIndex++;
     openMutationChoice();
     return;
   }
   while (G.tlIndex < TIMELINE.length && G.time >= TIMELINE[G.tlIndex].t) {
     const ev = TIMELINE[G.tlIndex++];
+    if (ev.city && !MODE.vertEnemy) continue;        // 垂直威胁只在立体城市登场
     if (ev.kind === 'intro') {
+      const first = !G.introduced[ev.enemy];
       G.introduced[ev.enemy] = true;
-      UI.toast('新敌人：' + ENEMIES[ev.enemy].name, '#9fd8ff');
+      /* quiet：§4.3 要求用尸潮位置自然诱导，不弹长教学文本 */
+      if (!ev.quiet && first) UI.toast('新敌人：' + ENEMIES[ev.enemy].name, '#9fd8ff');
     } else if (ev.kind === 'squad') {
       for (let i = 0; i < ev.count; i++) {
         configureEnemy(G.enemies.get(), ENEMIES[ev.enemy], spawnPosition(false), { grace: 1.0 });
@@ -1848,8 +2122,61 @@ const DebugPanel = {
           new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), {});
         this.log('正后方 ' + d + 'm 生成普通丧尸');
       }
+      else if (a === 'navdraw') { this.navDraw = !this.navDraw; NAV.debugDraw(this.navDraw); this.log('导航图 ' + (this.navDraw ? 'ON' : 'off')); }
+      else if (a === 'freeze') { this.freezeEnemies = !this.freezeEnemies; this.log('冻结敌人 ' + (this.freezeEnemies ? 'ON' : 'off')); }
+      else if (a === 'freezeev') { this.freezeEvents = !this.freezeEvents; this.log('冻结地图事件 ' + (this.freezeEvents ? 'ON' : 'off')); }
+      else if (a.indexOf('tp_') === 0) {
+        const lm = CITY.landmarks.find(l => l.id === a.slice(3));
+        if (lm) { MOVE.teleport(G.player, lm.x, lm.y + 2.5, lm.z); this.log('传送：' + lm.name); }
+      }
+      else if (a.indexOf('ly_') === 0) {
+        const y = { street: 1.2, mid: 7.0, roof: 19.0 }[a.slice(3)];
+        MOVE.teleport(G.player, 0, y, a.slice(3) === 'street' ? 0 : (a.slice(3) === 'mid' ? -9.5 : 0));
+        if (a.slice(3) === 'roof') MOVE.teleport(G.player, 19, 20, 19);
+        this.log('传送到 ' + a.slice(3) + ' 层');
+      }
+      else if (a.indexOf('sp_') === 0 && ENEMIES[a.slice(3)]) {
+        const pos = spawnPosition(true);
+        if (pos) { configureEnemy(G.enemies.get(), ENEMIES[a.slice(3)], pos, { highlight: 6 }); this.log('生成 ' + ENEMIES[a.slice(3)].name); }
+      }
+      else if (a === 'sp_fusion') {
+        const keys = SYN.build.epicFusions.length ? SYN.build.epicFusions : ['blast+conduct'];
+        const tpl = HORDE.fusionEliteTemplate(RNG.spawn.pick(keys));
+        const pos = spawnPosition(true);
+        if (tpl && pos) { configureEnemy(G.enemies.get(), tpl, pos, { grace: 1.0 }); this.log('生成融合精英 ' + tpl.name); }
+      }
+      else if (a === 'tg_fall') { TUNE.MOVEMENT.fallDamage = !TUNE.MOVEMENT.fallDamage; this.log('坠落伤害 ' + (TUNE.MOVEMENT.fallDamage ? 'ON' : 'off')); }
+      else if (a === 'tg_wallrun') { TUNE.MOVEMENT.wallRunTime = TUNE.MOVEMENT.wallRunTime > 0 ? 0 : 1.1; this.log('墙跑时长 ' + TUNE.MOVEMENT.wallRunTime); }
+      else if (a === 'tg_dash') { TUNE.MOVEMENT.airDashCharges = TUNE.MOVEMENT.airDashCharges ? 0 : 1; this.log('空中冲刺充能 ' + TUNE.MOVEMENT.airDashCharges); }
+      else if (a === 'tg_vault') { TUNE.MOVEMENT.vaultMaxHeight = TUNE.MOVEMENT.vaultMaxHeight > 0.5 ? 0.45 : 1.2; this.log('自动翻越高度 ' + TUNE.MOVEMENT.vaultMaxHeight); }
+      else if (a === 'tg_stable') { TUNE.MOVEMENT.stableCam = !TUNE.MOVEMENT.stableCam; this.log('稳定跑酷镜头 ' + (TUNE.MOVEMENT.stableCam ? 'ON' : 'off')); }
+      else if (a.indexOf('ev_') === 0) this.log(MAPEV.force(a.slice(3)));
+      else if (a.indexOf('q_') === 0) { EVO.forceQuality(a.slice(2)); this.log('下一次品质强制为 ' + TUNE.RARITY.name[a.slice(2)]); }
+      else if (a === 'evo_now') { EVO.progress = EVO.need + 1; EVO.draw.lastChoiceTime = -999; this.log('已把进化条打满'); }
+      else if (a === 'grant_base') { BASE_IDS.slice(0, 3).forEach(id => SYN.grantBase(id)); recompute(); UI.mutationSlots(); this.log('已授予三个基础变异'); }
+      else if (a === 'grant_fuse') {
+        SYN.activeCombos().forEach(c => { SYN.grantLink(c.key); SYN.grantFusion(c.key); });
+        recompute(); this.log('已授予当前组合的全部连接与融合');
+      }
       else if (a[0] === 'j') this.jump(parseInt(a.slice(1), 10));
     };
+    /* --- todo3 §11 立体城市 + 统一进化实验面板 --- */
+    if (MODE.city || EVO.enabled) {
+      $('dbgbtns').innerHTML += [
+        ['导航图', 'navdraw'], ['冻结敌人', 'freeze'], ['冻结事件', 'freezeev'],
+        ['→十字路口', 'tp_cross'], ['→停车楼', 'tp_parking'], ['→在建楼', 'tp_site'], ['→停机坪', 'tp_helipad'],
+        ['→街道层', 'ly_street'], ['→中层', 'ly_mid'], ['→屋顶层', 'ly_roof'],
+        ['刷攀爬怪', 'sp_climber'], ['刷跳跃怪', 'sp_leaper'], ['刷远程怪', 'sp_roofcaster'],
+        ['坠落伤害', 'tg_fall'], ['关墙跑', 'tg_wallrun'], ['关空冲', 'tg_dash'], ['关翻越', 'tg_vault'],
+        ['稳定镜头', 'tg_stable'],
+        ['事件:吊车', 'ev_crane'], ['事件:广告牌', 'ev_billboard'], ['事件:巴士', 'ev_bus'],
+        ['事件:气体', 'ev_gas'], ['事件:外墙', 'ev_facade'], ['事件:电力', 'ev_power'],
+        ['下次普通', 'q_common'], ['下次稀有', 'q_rare'], ['下次史诗', 'q_epic'], ['下次传奇', 'q_legend'],
+        ['立刻进化', 'evo_now'], ['授予全部基础', 'grant_base'], ['授予连接+融合', 'grant_fuse'],
+        ['融合精英', 'sp_fusion']
+      ].map(x => '<button data-a="' + x[1] + '">' + x[0] + '</button>').join('');
+    }
+
     $('dbgvariant').innerHTML = MUTATIONS.map(m =>
       '<button data-v="' + m.id + '" style="color:' + m.css + '">' + m.name + '</button>').join('');
     $('dbgvariant').onclick = e => {
@@ -1874,8 +2201,12 @@ const DebugPanel = {
       const rem = MUTATIONS.filter(m => !G.mutationSet[m.id]);
       if (rem.length) {
         const pick = RNG.mutation.pick(rem);
-        G.mutations.push(pick.id); G.mutationSet[pick.id] = true;
-        R.setGunOrgan(pick.id, true);
+        /* 统一进化有 3 个基础变异的上限，跳时间不能绕过它 */
+        if (EVO.enabled) { SYN.grantBase(pick.id); }
+        else {
+          G.mutations.push(pick.id); G.mutationSet[pick.id] = true;
+          R.setGunOrgan(pick.id, true);
+        }
         G.variantPool.push(pick.id);
       }
     }
@@ -1970,6 +2301,69 @@ const DebugPanel = {
       ' &nbsp; 电导 <b>' + G.conductCounter + '/6</b>' +
       '<br>无敌 <b style="color:' + (this.god ? '#7ef0a8' : '#8899aa') + '">' + (this.god ? 'ON' : 'off') + '</b>' +
       ' &nbsp; 种子 <b>' + RNG.master + '</b>';
+
+    /* --- §11.1 空间与战斗 --- */
+    if (MODE.city) {
+      const p = G.player, st = MOVE.st;
+      const sup = CITY.supportY(p.pos.x, p.pos.z, p.radius, p.pos.y + 0.2, 1.2, 0.4);
+      const camp = NAV.camp;
+      const layers = MOVE.stats ? MOVE.stats.layerTime : { street: 0, mid: 0, roof: 0 };
+      const enemyLayers = { street: 0, mid: 0, roof: 0 };
+      let traversing = 0;
+      G.enemies.live.forEach(e => {
+        if (e._dead || e.dead) return;
+        enemyLayers[CITY.layerOf(e.pos.y)]++;
+        if (e.nav && e.nav.link) traversing++;
+      });
+      $('dbgmove').innerHTML =
+        '位置 <b>' + p.pos.x.toFixed(1) + ',' + p.pos.y.toFixed(1) + ',' + p.pos.z.toFixed(1) + '</b>' +
+        ' 速度 <b>' + Math.hypot(p.vel.x, p.vel.z).toFixed(1) + '</b> vy <b>' + p.vel.y.toFixed(1) + '</b>' +
+        ' 层 <b>' + MOVE.pose.layer + '</b> 状态 <b style="color:#7ef0a8">' + MOVE.pose.state + '</b>' +
+        ' 冲刺充能 <b>' + (st ? st.dashCharge : 0) + '</b>' +
+        '<br>脚下支撑 <b>' + (sup === -Infinity ? '无' : sup.toFixed(2)) + '</b>' +
+        ' 头顶 <b>' + (function () { const c = CITY.ceilingY(p.pos.x, p.pos.z, p.radius, p.pos.y + 0.1); return c === Infinity ? '∞' : c.toFixed(1); })() + '</b>' +
+        ' 墙面法线 <b>' + (st && st.state === 'wallrun' ? st.wallN.x.toFixed(2) + ',' + st.wallN.z.toFixed(2) : '-') + '</b>' +
+        '<br>敌人分层 街<b>' + enemyLayers.street + '</b> 中<b>' + enemyLayers.mid + '</b> 顶<b>' + enemyLayers.roof + '</b>' +
+        ' 通过连接中 <b>' + traversing + '</b> 累计 <b>' + NAV.stats.traversals + '</b> 射落 <b>' + NAV.stats.shotOffWall + '</b>' +
+        '<br>刷怪点拒绝 <b>' + NAV.stats.spawnRejected + '</b> ' + JSON.stringify(NAV.stats.rejectReason) +
+        ' 导航失败 <b>' + NAV.stats.navFail + '</b>' +
+        '<br>antiCamp <b style="color:' + (camp.stage ? '#ff8a4a' : '#8899aa') + '">' + camp.stage + '</b>' +
+        ' 手段 <b>' + camp.method + '</b> 停留 <b>' + camp.t.toFixed(1) + 's</b>' +
+        '<br>各层停留 街<b>' + layers.street.toFixed(0) + 's</b> 中<b>' + layers.mid.toFixed(0) + 's</b> 顶<b>' + layers.roof.toFixed(0) + 's</b>' +
+        ' 连接使用 ' + JSON.stringify(MOVE.stats ? MOVE.stats.linkUse : {}) +
+        '<br>移动中射击 <b>' + (MOVE.stats ? MOVE.stats.shotsMoving : 0) + '</b>' +
+        ' 移动中击杀 <b>' + (MOVE.stats ? MOVE.stats.killsMoving : 0) + '</b>' +
+        ' 滞空击杀 <b>' + (MOVE.stats ? MOVE.stats.killsAirborne : 0) + '</b>' +
+        ' 翻越<b>' + MOVE.stats.vault + '</b> 抓边<b>' + MOVE.stats.mantle + '</b> 墙跑<b>' + MOVE.stats.wallRun + '</b>' +
+        ' 登墙<b>' + MOVE.stats.wallClimb + '</b> 空冲<b>' + MOVE.stats.airDash + '</b> 滑铲<b>' + MOVE.stats.slide + '</b>' +
+        ' 滑索<b>' + MOVE.stats.zip + '</b> 跳板<b>' + MOVE.stats.pad + '</b>' +
+        '<br>地图事件 <b>' + MAPEV.statusText() + '</b>' +
+        ' 不可达资源 <b>' + (G.stats.unreachable || 0) + '</b>';
+    }
+
+    /* --- §11.2 进化与构筑 --- */
+    if (EVO.enabled) {
+      const d = EVO.draw, ld = EVO._lastDraw || {};
+      const b = SYN.build;
+      const fmtw = w => w ? TUNE.RARITY.order.map(k => TUNE.RARITY.name[k] + (w[k] * 100).toFixed(0) + '%').join(' ') : '-';
+      $('dbgevo').innerHTML =
+        '进化 <b>' + d.evolutionIndex + '</b>/目标' + TUNE.EVOLUTION.targetCount +
+        ' 距上次 <b>' + (G.time - d.lastChoiceTime).toFixed(1) + 's</b>(下限' + TUNE.EVOLUTION.hardFloor + ')' +
+        ' 进度 <b>' + EVO.progress.toFixed(0) + '/' + EVO.need.toFixed(0) + '</b>' +
+        ' 溢出 <b>' + EVO.overflow.toFixed(0) + '</b>' +
+        ' pending <b>' + (d.pending ? (d.pending.open ? '已开' : '排队:' + d.deferReason) : '-') + '</b>' +
+        '<br>原始概率 ' + fmtw(ld.raw) + '<br>最终概率 ' + fmtw(ld.final) +
+        ' → <b style="color:' + (TUNE.RARITY.css[ld.q] || '#fff') + '">' + (TUNE.RARITY.name[ld.q] || '-') + '</b>' +
+        (ld.pityRare ? ' <b style="color:#7ef0a8">三连普通保底</b>' : '') +
+        (ld.pityEpic ? ' <b style="color:#7ef0a8">7:30史诗保底</b>' : '') +
+        (ld.mapMod ? ' <b style="color:#ff8a1e">地图+' + (ld.mapMod * 100).toFixed(0) + '%</b>' : '') +
+        '<br>连败普通 <b>' + d.commonStreak + '</b> 已出史诗 <b>' + (d.hasEpic ? 'Y' : 'N') + '</b>' +
+        ' 下一抽修正 <b>' + (typeof MAPBUILD !== 'undefined' ? MAPBUILD.statusText() : '-') + '</b>' +
+        '<br>' + SYN.describe().join('<br>') +
+        '<br>预算 用<b>' + SYN.budget.spent + '</b>/s 帧<b>' + SYN.budget.frame + '</b>' +
+        ' 拒绝<b>' + SYN.budget.rejected + '</b> 最大深度<b>' + SYN.budget.maxDepth + '</b>' +
+        '<br>共同进化 <b>' + (typeof HORDE !== 'undefined' ? HORDE.describe() : '-') + '</b>';
+    }
   }
 };
 Object.defineProperty(G.hazards, 'count', { get() { return this.length; } });
@@ -1984,6 +2378,8 @@ function boot() {
   UI.init();
 
   G.player = makePlayer();
+  if (MODE.vertMove) MOVE.init(G.player);
+  NAV.init();
   G.enemies = makeEnemyPool();
   G.bullets = makeBulletPool();
   G.acids = makeAcidPool();
@@ -2000,6 +2396,14 @@ function boot() {
   G.medNeed = 0; G.medCooldown = 0; G.medPending = false; G.medical = null;
   G.buff = null; G.meleeWhiffs = 0; G.hurtCount = 0;
   G.mouseDX = 0; G.mouseDY = 0;
+
+  /* todo3 统一进化：构筑状态 → 卡池 → 导演，顺序不能反（卡池要读 SYN.build） */
+  SYN.init();
+  if (TUNE.FEATURES.hordeEvolution) HORDE.init();
+  if (TUNE.FEATURES.mapBuildInfluence) MAPBUILD.init();
+  EVOPOOL.init();
+  EVO.init();
+  if (MODE.mapEvents) MAPEV.init();
 
   recompute();
   emitBuildChanged();
@@ -2066,6 +2470,12 @@ function frame(now) {
       updateHazards(dt);
       updateXp(dt);
       trackXpRate(dt);
+      NAV.updateCamp(dt);
+      SYN.tick(dt);
+      EVO.update(dt);
+      if (MODE.mapEvents && !DebugPanel.freezeEvents) MAPEV.update(dt);
+      if (TUNE.FEATURES.hordeEvolution) HORDE.update(dt);
+      if (TUNE.FEATURES.mapBuildInfluence) MAPBUILD.update(dt);
       updateMedical(dt);
       updateAirdrop(dt);
       updateBuff(dt);

@@ -57,7 +57,8 @@ const TUNE = {
     pickupRadius: 2.6,
     magnetRadius: 7.5,            // 主动吸附
     autoHomeAfter: 9.0,           // §31 存在 8–12 秒后自动飞向玩家
-    flySpeed: 15
+    flySpeed: 15,
+    crossLayerDelay: 2.5          // todo3 §6.1 玩家离开该层后多久进入跨层追踪
   },
 
   /* --- 节奏控制器 ---
@@ -422,8 +423,43 @@ const ENEMIES = {
     boss: true, king: true, knockResist: 1.0,
     slam: { range: 8, windup: 1.05, radius: 9.5, dmg: 34, cooldown: 4.6 },
     summon: { count: 8, cooldown: 8.0 }
+  },
+
+  /* --- todo3 §5.1 三类垂直威胁 ---
+     navKind 决定它能走哪些连接边（CITY.links 的 allow 列表）。
+     普通敌人只有 'grunt'，因此屋顶不会被普通尸潮直接淹没，
+     但每个屋顶都至少存在一种敌人入侵方式（见 _citycheck 的 roof_enemy_access）。 */
+  climber: {
+    id: 'climber', navKind: 'climber',
+    weak: { y: 0.899, fwd: 0.010, r: 0.139 }, name: '攀爬感染者',
+    hp: 42, speed: 3.4, dmg: 10, atk: 1.1, xp: 2,
+    radius: 0.44, height: 1.7, mass: 0.9,
+    color: 0x6f8f9c, accent: 0xa8d4e0,
+    vertical: 'climb'
+  },
+  leaper: {
+    id: 'leaper', navKind: 'leaper',
+    weak: { y: 0.870, fwd: 0.060, r: 0.150 }, name: '跳跃感染者',
+    hp: 56, speed: 3.0, dmg: 16, atk: 1.6, xp: 4,
+    radius: 0.48, height: 1.72, mass: 1.1,
+    color: 0x9c7f5a, accent: 0xe0c08a,
+    vertical: 'leap',
+    leap: { range: 14, windup: 0.75, speed: 13, cooldown: 5.0, dmg: 18, recover: 0.9 }
+  },
+  roofcaster: {
+    id: 'roofcaster', navKind: 'ranged',
+    weak: { y: 0.880, fwd: 0.080, r: 0.156 }, name: '远程感染者',
+    hp: 64, speed: 2.1, dmg: 12, atk: 3.0, xp: 4,
+    radius: 0.5, height: 1.82, mass: 1.1,
+    color: 0x8a5f9c, accent: 0xd0a0e8,
+    vertical: 'ranged',
+    /* 作用是迫使玩家换位，不是持续制造无法躲避的伤害（§5.1） */
+    ranged: { range: 26, projSpeed: 15, poolRadius: 2.6, poolTime: 2.2, poolTick: 0.6, poolDmg: 6, windup: 0.9 }
   }
 };
+
+/* 既有敌人全部按“只能走地面与楼梯”处理 */
+['grunt', 'heavy', 'spitter', 'charger', 'midboss', 'king'].forEach(k => { ENEMIES[k].navKind = 'grunt'; });
 
 /* 变种模板：从 grunt 派生，只改 §16–21 定义的那几项 */
 function variantTemplate(mutId) {
@@ -445,6 +481,12 @@ function variantTemplate(mutId) {
 
 /* 时间轴 §28 —— 只放"节奏事件"，不放刷怪常规逻辑 */
 const TIMELINE = [
+  /* todo3 §4.3～§4.6：垂直威胁按阶段进场。
+     攀爬怪 100s 少量出现（§4.3「少量展示攀爬行为」），180s 正式加入。 */
+  { t: 100, kind: 'intro', enemy: 'climber', note: '有东西在爬墙', quiet: true, city: true },
+  { t: 180, kind: 'intro', enemy: 'climber', note: '攀爬感染者', city: true },
+  { t: 330, kind: 'intro', enemy: 'leaper',  note: '跳跃感染者', city: true },
+  { t: 430, kind: 'intro', enemy: 'roofcaster', note: '远程感染者', city: true },
   { t: 210, kind: 'intro', enemy: 'heavy',   note: '重型丧尸加入' },
   { t: 250, kind: 'intro', enemy: 'spitter', note: '吐酸者加入' },
   { t: 330, kind: 'squad', enemy: 'charger', count: 1, note: '冲撞精英' },
@@ -454,3 +496,189 @@ const TIMELINE = [
   { t: 690, kind: 'surge', note: '撤离倒计时' },
   { t: 720, kind: 'boss',  enemy: 'king',    note: '尸王' }
 ];
+/* updateTimeline 按顺序消费，插入垂直威胁后必须重新排好序 */
+TIMELINE.sort((a, b) => a.t - b.t);
+
+/* ============================================================================
+   todo3 —— 立体城市 / 统一进化 / 构筑化学反应
+   全部集中在这里。todo3 §1 明确要求：新增移动、地图与构筑数值不得散落在 game.js。
+   ========================================================================== */
+
+/* --- 功能开关 §1 ---
+   任一开关关闭时，对应系统退回 todo/todo2 的既有实现。
+   ?map=flat 会把全部 todo3 开关一次性关掉，回到平面版本。 */
+TUNE.FEATURES = {
+  verticalMovement: true,    // Y 轴、跳跃、攀爬、墙跑、空中冲刺
+  verticalEnemies: true,     // 敌人分层寻路、攀爬与立体刷新
+  dynamicMapEvents: true,    // 地图结构事件
+  unifiedEvolution: true,    // 统一进化、品质抽取与候选生成
+  buildSynergy: true,        // 基础反应、连接、融合与终局规则
+  mapBuildInfluence: true,   // 地图能力卡与风险行为对下一抽的影响
+  hordeEvolution: true       // 玩家选择对变体、融合精英与 Boss 的映射
+};
+
+/* --- 玩家机动 §2.3 ---
+   数值是首轮起点。手感目标比具体数值更重要：宽容、不断流、不要求像素级对边。 */
+TUNE.MOVEMENT = {
+  gravity: 21,
+  jumpSpeed: 8.2,
+  coyoteTime: 0.12,
+  jumpBuffer: 0.15,
+  airControl: 0.42,          // 空中相对地面的加速度比例
+  airDrag: 0.55,
+
+  vaultMaxHeight: 1.2,       // 自动翻越
+  stepHeight: 0.42,          // 低于此高度直接抬脚，不播翻越
+  vaultTime: 0.20,
+  mantleMaxHeight: 2.4,      // 抓边攀爬
+  mantleTime: 0.34,
+  mantleProbe: 0.85,         // 前向探测距离
+  headroom: 1.75,            // 落脚点上方所需净空，不足不允许爬进模型
+
+  wallClimbTime: 0.55,       // 垂直登墙持续
+  wallClimbSpeed: 5.4,
+  wallClimbCooldown: 0.5,
+  wallRunTime: 1.1,          // 横向墙跑上限
+  wallRunSpeed: 8.6,
+  wallRunGravity: 2.6,       // 墙跑期间的残余重力
+  wallRunRise: 1.5,          // 起步时的轻微上抬
+  wallRunStickDist: 0.75,
+  wallRunMinSpeed: 3.2,
+  wallRunGrace: 0.16,        // 离墙输入宽限
+  wallRunCameraTilt: 0.13,   // §8.4 只允许轻微、方向确定的倾斜
+
+  airDashCharges: 1,         // 地面与空中共用一次，接触稳定地面后恢复
+  airDashTime: 0.19,
+  airDashSpeed: 23,
+
+  slideMinSpeed: 6.0,
+  slideTime: 0.7,
+  slideSpeed: 11.5,
+  slideFriction: 5.5,
+  slideHeight: 0.95,
+
+  zipSpeed: 15.5,
+  zipSnapDist: 2.6,
+  padImpulse: 13.5,
+  padRearm: 0.9,             // 跳板再装填：站在板上不允许被无限弹起
+
+  landHardVel: 12,           // 以上算重着陆（只作用于枪模与短暂镜头压缩）
+  landRecover: 0.18,
+  fallDamage: false,         // 第一版不造成坠落伤害
+  stableCam: false           // “稳定跑酷镜头”设置
+};
+
+/* --- 立体城市 §3 --- */
+TUNE.VERTICAL_MAP = {
+  half: 35,                  // 70×70m
+  streetTop: 3,              // 街道层 0～3
+  midTop: 10,                // 建筑中层 4～10
+  roofTop: 20,               // 屋顶层 12～20
+  spawnCell: 6               // 碰撞宽相位网格
+};
+
+/* --- 立体敌人 §5 --- */
+TUNE.VERTICAL_ENEMY = {
+  climbSpeed: 2.6,
+  climbTelegraph: 0.7,       // 抓墙预警
+  climbRecover: 0.45,        // 到达平台后的恢复窗口
+  leapWindup: 0.75,
+  leapSpeed: 13,
+  leapMaxDist: 14,
+  leapCooldown: 5.0,
+  leapRecover: 0.9,          // 扑击失败后的可惩罚窗口
+  rangedWindup: 0.9,
+  rangedRange: 26,
+  rangedCooldown: 3.4,
+  rangedDmg: 12,
+  navRepathInterval: 0.75,
+  navStuckTime: 2.5,         // 超时重新选路，不许堆在墙脚
+  layerShareSame: 0.62,      // 目标数量在玩家所在层的占比
+  layerShareAdj: 0.28,       // 相邻层
+  antiCampRadius: 9,
+  antiCampStage1: 8,         // 秒：提高攀爬压力
+  antiCampStage2: 16,        // 秒：加入跳跃截击
+  antiCampStage3: 26,        // 秒：加入远程压制
+  antiCampDecay: 2.5         // 离开区域后的恢复速率
+};
+
+/* --- 地图事件 §4.5 / §4.7 --- */
+TUNE.MAP_EVENT = {
+  windows: [[360, 420], [450, 520], [540, 600]],  // 时间窗口，不是唯一固定秒数
+  perRun: 2,                 // 每局从池中选 1～2 个持久事件
+  maxPerRun: 3,
+  telegraph: 4.0,            // 环境声音、灯光与地面提示的提前量
+  safeWindowRetry: 2.0,      // 撞上选择界面/Boss/攀爬时的重试间隔
+  minGapSameLayer: 1         // 同一局避免连续两次只影响同一层
+};
+
+/* --- 统一进化节奏 §4.2 --- */
+TUNE.EVOLUTION = {
+  targetCount: 15,           // 目标 15 次，允许 14～16
+  firstAt: 25,               // 第一次预计 0:22～0:30
+  firstWindow: [22, 30],
+  intervalMin: 32,           // 常态间隔 32～50 秒（从上次选择关闭后计算）
+  intervalMax: 50,
+  hardFloor: 25,             // 两次界面之间的硬下限
+  lastBy: 630,               // 10:30 前由导演主动安排最后一次
+  lastWindow: [590, 630],    // 最后一次预计 9:50～10:30
+  cutoff: 630,               // 10:30 后不再生成新选择
+  originByDraw: 4,           // 第 4 次进化结束时必须已有两个基础变异
+  maxBaseMutations: 3,       // 每局最多 3 个基础变异
+  minBaseMutations: 2,
+  relevantMin: 2,            // 至少 2 张候选与当前构筑直接相关
+  /* 进度定价：沿用 PACING 的两层控制。目标平均间隔 =(cutoff-firstAt)/(targetCount-1)≈43s；
+     EMA 滞后会系统性把需求定低，所以 progressBase 要比目标间隔高一截，
+     具体值由 testsim 的 100/10000 局模拟校准，不是拍的。 */
+  progressBase: 50,
+  firstNeed: 22,             // 第一次进化的固定需求（此时还没有收入样本）
+  driftDeadband: 0.8,        // ±0.8 次以内完全不干预
+  driftFullAt: 3.0,
+  driftMin: 0.40,            // 落后时需求最低 40%
+  driftMax: 2.20,            // 超前时需求最高 220%
+  safeDelayMax: 12           // 安全窗口最多延迟多久，超过则强制弹出
+};
+
+/* --- 品质概率 §7.3 ---
+   分段按 [起, 止, 普通, 稀有, 史诗, 传奇]，10:30 后不再生成选择。 */
+TUNE.RARITY = {
+  order: ['common', 'rare', 'epic', 'legend'],
+  name: { common: '普通', rare: '稀有', epic: '史诗', legend: '传奇' },
+  css: { common: '#c8d4e0', rare: '#4fa8ff', epic: '#b060ff', legend: '#ffb020' },
+  bands: [
+    { from: 0,   to: 180, w: { common: 0.70, rare: 0.27, epic: 0.03, legend: 0.00 } },
+    { from: 180, to: 480, w: { common: 0.52, rare: 0.33, epic: 0.13, legend: 0.02 } },
+    { from: 480, to: 630, w: { common: 0.38, rare: 0.35, epic: 0.21, legend: 0.06 } }
+  ],
+  revealTime: 0.42           // §7.10 先揭示整体品质 0.35～0.5 秒，再展开三张
+};
+
+/* --- 保底 §7.4：只限制坏运气，不限制好运气 --- */
+TUNE.PITY = {
+  commonStreak: 3,           // 连续 3 次普通后，下一次至少稀有
+  epicByTime: 450,           // 7:30 仍未出现史诗或传奇
+  noLegendPity: true,        // 传奇永不保底
+  noReverseBalance: true,    // 不做“连续高品质后强制普通”
+  linkBiasAfter: 2           // 已有两个基础变异却长期没有连接时，抬高连接卡权重
+};
+
+/* --- 地图行为对下一抽的修正 §7.8 --- */
+TUNE.MAP_BUILD = {
+  roofDropEpicBonus: 0.08,   // 屋顶空投：史诗 +8 个百分点，从普通里扣
+  qualityBonusCap: 0.12,     // 品质奖励叠加上限
+  tagBiasMult: 1.8,          // 标签权重 ×1.8
+  eliteHuntMinQuality: 'rare',
+  bannerTime: 6.0            // HUD 上修正提示的显示时长
+};
+
+/* --- 效果预算 §7.7 / §12 性能 ---
+   所有连锁统一经过它，禁止各卡自行无限生成对象。 */
+TUNE.EFFECT_BUDGET = {
+  perSecond: 220,            // 每秒可生成的效果事件总量
+  perFrame: 48,
+  maxDepth: 3,               // 融合与传奇的最大递归深度
+  perTargetPerChain: 1,      // 同一根攻击对同一目标的同类效果次数
+  spawnCapProjectile: 220,
+  spawnCapZone: 28,
+  soundConcurrent: 6         // 同一连锁的同时发声上限
+};

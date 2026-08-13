@@ -117,6 +117,15 @@ const R = {
 
   /* ---------------------------------------------------------------- 竞技场 */
   _buildArena() {
+    /* todo3：立体城市由 citymap.js 构建。旧平面竞技场原样保留，
+       ?map=flat 时仍然是它在跑 —— 这是回滚路径，不允许被删掉。 */
+    if (typeof MODE !== 'undefined' && MODE.city) {
+      this.obstacles = [];
+      this.arenaHalf = TUNE.VERTICAL_MAP.half;
+      this.scene.fog = new T.Fog(0x121722, 55, 165);
+      CITY.build(this.scene);
+      return;
+    }
     const H = this.arenaHalf;
     const floorMat = new T.MeshLambertMaterial({ color: 0x232a34 });
     const floor = new T.Mesh(new T.PlaneGeometry(H * 2, H * 2), floorMat);
@@ -175,8 +184,17 @@ const R = {
     }
   },
 
-  /* 竞技场碰撞：把点推出墙和柱子 */
-  collide(p, radius) {
+  /* 竞技场碰撞：把点推出墙和柱子。
+     立体城市下转交 citymap.js 做圆柱 vs AABB 的水平推出（垂直由调用方处理）。 */
+  collide(p, radius, yBot, yTop) {
+    if (CITY.enabled) {
+      const H2 = CITY.half - 1.2 - radius;
+      p.x = clamp(p.x, -H2, H2); p.z = clamp(p.z, -H2, H2);
+      const b = yBot === undefined ? p.y + 0.12 : yBot;
+      const t = yTop === undefined ? p.y + 1.7 : yTop;
+      CITY.depenetrate(p, radius, b, t, null);
+      return;
+    }
     const H = this.arenaHalf - 1.0 - radius;
     p.x = clamp(p.x, -H, H); p.z = clamp(p.z, -H, H);
     for (let i = 0; i < this.obstacles.length; i++) {
