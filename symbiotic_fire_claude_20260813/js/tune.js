@@ -66,23 +66,24 @@ const TUNE = {
 
   /* --- 刷怪 §29 --- */
   SPAWN: {
-    baseRate: 1.6,                // 每秒
-    rateCoef: 8.0,
-    rateExp: 1.4,
     aliveCap: 150,                // §35 性能目标
-    minDist: 11,
-    maxDist: 21,
+    minDist: 15,                  // 硬性：绝不在玩家 15m 内刷怪
+    maxDist: 24,
     rearConeDeg: 100,             // §31 背后禁区
-    rearMinDist: 17,              // 背后至少 17m ≈ 5.4 秒预警，仍比正面远
+    rearMinDist: 19,              // 背后更远，留出预警时间
     frontBias: 0.65,              // 65% 刷在视野前方，保证"一直有怪打"
     hpScalePerMin: 0.26,
     dmgScalePerMin: 0.075,
-    /* 保底在场数 —— 硬性要求：任何时刻都必须有怪可打。
-       低于门槛就临时加速刷新，而不是一次性把人塞满（那会让怪凭空出现在视野里）。 */
-    floorBase: 20,
-    floorCoef: 108,
-    floorExp: 0.85,
-    floorTopUpRate: 30            // 低于保底时每秒额外补的只数
+
+    /* 刷怪规则：只有一个目标在场数。
+       比目标缺得越多，刷得越快；即使不缺，最慢也 3 秒来一只。
+       这样开局压力不会拉满，被清场后又能迅速补上。 */
+    targetBase: 10,
+    targetCoef: 80,
+    targetExp: 0.9,
+    maxInterval: 3.0,             // 不缺人时的最慢间隔
+    minInterval: 0.05,            // 缺口很大时的最快间隔
+    deficitGain: 1.2              // 缺 1 只，刷怪频率提高多少
   },
 
   /* --- 变种投放 §26 --- */

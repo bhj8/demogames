@@ -140,14 +140,21 @@ class Pool {
     if (o._dead) return;
     o._dead = true;
     if (this.resetFn) this.resetFn(o);
-    this.free.push(o);
+    /* 关键：这里【不能】立刻放回 free。
+       对象此刻仍留在 live 里（要等 compact 才移除），若在这个空档被 get()
+       取走，就会第二次进入 live —— 同一个实体出现两份：
+         · count 被虚高 → 刷怪逻辑以为场上够了，就不刷了
+         · 该实体每帧被更新两次 → 移动速度翻倍
+       触发路径：裂变尸生幼体 / Boss 召唤 / 分裂弹，都在遍历过程中 get()。
+       所以回收推迟到 compact() 里做。 */
   }
-  /* 每帧末尾压实 live 数组，避免 splice 抖动 */
+  /* 每帧末尾压实 live 数组，顺便把死掉的对象真正还给 free */
   compact() {
     let w = 0;
     for (let i = 0; i < this.live.length; i++) {
       const o = this.live[i];
       if (!o._dead) this.live[w++] = o;
+      else this.free.push(o);
     }
     this.live.length = w;
   }

@@ -130,29 +130,42 @@ function spawnPosition(forceFront) {
     if (blocked) continue;
     return TV.set(x, 0, z).clone();
   }
-  return TV.set(p.pos.x + 22, 0, p.pos.z).clone();
+  /* 28 次都失败时的兜底：仍然保证不小于最小距离，并夹回场内 */
+  const fa = RNG.spawn.range(0, Math.PI * 2);
+  const fd = S.minDist + 3;
+  const lim = R.arenaHalf - 2.5;
+  return TV.set(
+    clamp(p.pos.x + Math.sin(fa) * fd, -lim, lim), 0,
+    clamp(p.pos.z + Math.cos(fa) * fd, -lim, lim)).clone();
 }
 
 /* ============================================================================
    投放导演 §26/§29
    ========================================================================== */
 const Director = {
-  acc: 0,
+  timer: 0, target: 0, interval: 0,
   update(dt) {
     if (G.bossAlive && G.bossAlive.king) return;   // 尸王阶段停常规刷怪，避免不可读
     const t = G.time, S = TUNE.SPAWN;
     const k = Math.min(1, t / TUNE.RUN_SECONDS);
-    const rate = S.baseRate + S.rateCoef * Math.pow(k, S.rateExp);
-    this.acc += rate * dt * (G.surge ? 1.8 : 1);
 
-    /* 保底在场数：低于门槛就加速补怪，确保任何时刻都有事情做。
-       用加速而不是瞬间填满 —— 一帧塞进几十只会突然出现在视野里。 */
-    const floor = Math.min(S.aliveCap, Math.round(S.floorBase + S.floorCoef * Math.pow(k, S.floorExp)));
-    this.floor = floor;
-    if (G.enemies.count < floor) this.acc += S.floorTopUpRate * dt;
-    while (this.acc >= 1) {
-      this.acc -= 1;
-      if (G.enemies.count >= TUNE.SPAWN.aliveCap) { this.acc = 0; break; }
+    /* 目标在场数 */
+    const target = Math.min(S.aliveCap,
+      Math.round(S.targetBase + S.targetCoef * Math.pow(k, S.targetExp)));
+    this.target = target;
+
+    /* 缺得越多，间隔越短；不缺也保持 maxInterval 的涓流 */
+    const deficit = Math.max(0, target - G.enemies.count);
+    let interval = S.maxInterval / (1 + deficit * S.deficitGain);
+    if (G.surge) interval *= 0.55;
+    interval = Math.max(S.minInterval, interval);
+    this.interval = interval;
+
+    this.timer -= dt;
+    let guard = 0;
+    while (this.timer <= 0 && guard++ < 16) {
+      this.timer += interval;
+      if (G.enemies.count >= S.aliveCap) { this.timer = interval; break; }
       this.spawnOne();
     }
   },
@@ -1283,7 +1296,7 @@ const DebugPanel = {
       ' &nbsp; 弹 <b>' + G.bullets.count + '</b> &nbsp; 特效 <b>' +
       (R.rings.count + R.puffs.count + R.sparks.count + R.bolts.count) + '</b>' +
       ' &nbsp; 危险区 <b>' + G.hazards.count + '</b>' +
-      '<br>保底在场 <b>' + (Director.floor || 0) + '</b> &nbsp; 触发/帧 <b>' + G.procThisFrame + '</b> &nbsp; 深度上限 <b>' + G.derived.maxDepth + '</b>' +
+      '<br>目标在场 <b>' + (Director.target || 0) + '</b> &nbsp; 刷怪间隔 <b>' + (Director.interval || 0).toFixed(2) + 's</b> &nbsp; 触发/帧 <b>' + G.procThisFrame + '</b> &nbsp; 深度上限 <b>' + G.derived.maxDepth + '</b>' +
       ' &nbsp; 经验球 <b>' + G.xp.length + '</b>' +
       '<br>变种占比 <b>' + Math.round(Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation) * 100) + '%</b>' +
       ' &nbsp; 超频 <b>' + Math.round(G.overclock * 100) + '%</b>' +

@@ -71,29 +71,47 @@ addEventListener('load', () => {
     if (err) { report(['STEP1_ERR:' + err]); return; }
     out.push('frames120=ok');
 
-    /* 密度探针：按真实 DPS 打最近的敌人（不是瞬秒），量的是
-       "玩家视野里到底有没有东西可打"。前方 90° 视锥内的数量才是关键指标。 */
+    /* 刷怪审计：直接盯 Director 的实际行为，而不是事后猜。
+       量四件事：最长多久没刷怪 / 有没有刷在玩家脸上 / live 里有没有重复对象 /
+       视野里到底有没有东西可打。 */
     err = guard(() => {
       BOOT.timescale = 4;
-      DebugPanel.god = true;               // 探针要量密度，不是量难度；不能让玩家死了冻住计时
-      let minAll = 9999, sumAll = 0, minFront = 9999, sumFront = 0, n = 0, emptyFront = 0;
+      DebugPanel.god = true;                 // 量的是刷怪，不是难度
+      const origSpawn = Director.spawnOne.bind(Director);
+      let spawns = 0, lastSpawnT = 0, maxGap = 0, tooClose = 0, minSpawnDist = 1e9;
+      Director.spawnOne = function () {
+        origSpawn();
+        const e = G.enemies.live[G.enemies.live.length - 1];
+        spawns++;
+        const g = G.time - lastSpawnT; if (g > maxGap) maxGap = g;
+        lastSpawnT = G.time;
+        if (e) {
+          const d = Math.hypot(e.pos.x - G.player.pos.x, e.pos.z - G.player.pos.z);
+          minSpawnDist = Math.min(minSpawnDist, d);
+          if (d < TUNE.SPAWN.minDist - 0.5) tooClose++;
+        }
+      };
+      let dupFrames = 0, minAll = 9999, sumAll = 0, sumFront = 0, n = 0, emptyFront = 0;
       const DPS = 12 * 9 * 0.55;
       for (let i = 0; i < 1100; i++) {
-        /* 模拟真人：边绕圈走位边转视角，这样"前方有没有怪"是对所有朝向的平均 */
         G.player.yaw += 0.9 * 0.0167 * 4;
         const orbit = G.time * 0.35;
         G.player.pos.x = Math.cos(orbit) * 9;
         G.player.pos.z = Math.sin(orbit) * 9;
         step(1);
-        const dt = 0.0167 * 4;
-        // 对最近的敌人施加与玩家火力相当的伤害
         let near = null, nd = 1e9;
         G.enemies.live.forEach(e => {
           if (e._dead || e.dead) return;
           const d = Math.hypot(e.pos.x - G.player.pos.x, e.pos.z - G.player.pos.z);
           if (d < nd) { nd = d; near = e; }
         });
-        if (near && nd < 40) damageEnemy(near, DPS * dt, makeAttack('primary'), { point: near.pos });
+        if (near && nd < 40) damageEnemy(near, DPS * 0.0167 * 4, makeAttack('primary'), { point: near.pos });
+
+        /* live 里同一个对象出现两次 = 池子重复入列 BUG 复发 */
+        const seen = new Set(); let dup = false;
+        G.enemies.live.forEach(e => { if (seen.has(e.uid)) dup = true; seen.add(e.uid); });
+        if (dup) dupFrames++;
+
         if (G.time > 10) {
           let front = 0;
           G.enemies.live.forEach(e => {
@@ -102,21 +120,25 @@ addEventListener('load', () => {
             let rel = world - (G.player.yaw + Math.PI);
             while (rel > Math.PI) rel -= Math.PI * 2;
             while (rel < -Math.PI) rel += Math.PI * 2;
-            if (Math.abs(rel) < 0.79) front++;      // 前方 ±45°
+            if (Math.abs(rel) < 0.79) front++;
           });
           const a = G.enemies.count;
-          minAll = Math.min(minAll, a); sumAll += a;
-          minFront = Math.min(minFront, front); sumFront += front;
+          minAll = Math.min(minAll, a); sumAll += a; sumFront += front;
           if (front === 0) emptyFront++;
           n++;
         }
       }
+      Director.spawnOne = origSpawn;
       BOOT.timescale = 1;
-      /* 后续阶段继续无敌：这里验的是代码路径覆盖，不是难度 */
       G.player.hp = G.player.maxHp;
-      out.push('density@' + Math.round(G.time) + 's all(min/avg)=' + minAll + '/' + Math.round(sumAll / n) +
-        ' front45(min/avg)=' + minFront + '/' + Math.round(sumFront / n) +
-        ' emptyFrontFrames=' + emptyFront + '/' + n);
+      out.push('spawn@' + Math.round(G.time) + 's n=' + spawns +
+        ' maxGap=' + maxGap.toFixed(2) + 's' +
+        ' minDist=' + minSpawnDist.toFixed(1) + 'm tooClose=' + tooClose +
+        ' dupFrames=' + dupFrames);
+      out.push('alive(min/avg)=' + minAll + '/' + Math.round(sumAll / n) +
+        ' front45avg=' + Math.round(sumFront / n) +
+        ' emptyFront=' + emptyFront + '/' + n +
+        ' target@end=' + Director.target);
     });
     if (err) { report(['DENSITY_ERR:' + err]); return; }
 
