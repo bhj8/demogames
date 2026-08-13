@@ -19,6 +19,27 @@ const _muzzleW = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
 /* ============================================================================
+   地图模式（todo3 §1）
+   ?map=flat 一次性关掉全部 todo3 开关，回到 todo/todo2 的平面版本；
+   这是隔离与回滚的唯一入口，其余代码只读 MODE.city / TUNE.FEATURES.*
+   ========================================================================== */
+const MODE = {
+  city: QS.get('map') !== 'flat',
+  get vertMove() { return this.city && TUNE.FEATURES.verticalMovement; },
+  get vertEnemy() { return this.city && TUNE.FEATURES.verticalEnemies; },
+  get mapEvents() { return this.city && TUNE.FEATURES.dynamicMapEvents; },
+  get evolution() { return TUNE.FEATURES.unifiedEvolution; }
+};
+if (!MODE.city) {
+  /* 平面模式下 todo3 的系统全部让位，旧流程原样运行 */
+  TUNE.FEATURES.verticalMovement = false;
+  TUNE.FEATURES.verticalEnemies = false;
+  TUNE.FEATURES.dynamicMapEvents = false;
+  TUNE.FEATURES.mapBuildInfluence = false;
+}
+if (QS.get('evolution') === 'off') TUNE.FEATURES.unifiedEvolution = false;
+
+/* ============================================================================
    敌人
    ========================================================================== */
 let _enemyUid = 0;
@@ -109,9 +130,15 @@ function configureEnemy(e, tpl, pos, opts) {
 /* ============================================================================
    投放位置 §31：背后禁止无提示近距离刷怪
    ========================================================================== */
-function spawnPosition(forceFront) {
+function spawnPosition(forceFront, layerWant) {
   const p = G.player;
   const S = TUNE.SPAWN;
+  /* 立体城市：从预先验证过可站立、可达的分层刷怪点里挑（§5.3）。
+     几何验证在 CITY._buildSpawnPoints 一次性做完，热路径只做距离与视线判断。 */
+  if (CITY.enabled && MODE.vertEnemy) {
+    const pick = NAV.pickSpawn ? NAV.pickSpawn(forceFront, layerWant) : null;
+    if (pick) return TV.set(pick.x, pick.y, pick.z).clone();
+  }
   for (let tries = 0; tries < 28; tries++) {
     /* 大部分刷在视野前方 —— 玩家转一圈找不到怪是最糟的体验。
        剩下的仍然四面八方，靠 §31 的背后距离与威胁指示器兜底。 */
@@ -1026,7 +1053,10 @@ addEventListener('keydown', e => {
   if (e.code === 'Escape') { G.togglePause(); return; }
   KEY[e.code] = true;
   if (e.code === 'KeyR') tryReload();
-  if ((e.code === 'ShiftLeft' || e.code === 'Space')) tryDash();
+  /* §2.2 立体模式：Space 跳跃（按住时自动翻越/抓边/登墙），Shift 冲刺。
+     平面模式保持旧绑定（两个键都是冲刺），避免破坏 todo/todo2 的手感。 */
+  if (e.code === 'ShiftLeft') tryDash();
+  if (e.code === 'Space') { if (MODE.vertMove) MOVE.onJump(); else tryDash(); }
   if (e.code === 'F1') { DebugPanel.toggle(); e.preventDefault(); }
   else if (BOOT.debug) handleDebugKey(e.code);
   if (e.code === 'Space') e.preventDefault();
@@ -1069,6 +1099,7 @@ function tryReload() {
 
 function tryDash() {
   const p = G.player;
+  if (MODE.vertMove) { MOVE.onDash(); return; }   // 充能与无敌帧的核对在 movement.js
   if (p.dashCd > 0 || p.dashT > 0) return;
   const f = inputDir();
   if (f.lengthSq() < 0.01) { f.set(0, 0, -1).applyAxisAngle(UP, p.yaw); }
@@ -1099,18 +1130,21 @@ function updatePlayer(dt) {
   if (p.dashIFrame > 0) p.dashIFrame -= dt;
   if (p.dashCd > 0) p.dashCd -= dt;
 
-  /* 移动 */
-  if (p.dashT > 0) {
+  /* 移动 —— 立体城市走 movement.js 的状态机；平面模式保持原样（todo3 §1 回退要求） */
+  if (MODE.vertMove) {
+    MOVE.update(dt, p);
+  } else if (p.dashT > 0) {
     p.dashT -= dt;
     p.pos.addScaledVector(p.dashDir, TUNE.PLAYER.dashSpeed * dt);
+    R.collide(p.pos, p.radius);
   } else {
     const want = inputDir().multiplyScalar(d.moveSpeed);
     p.vel.x = smooth(p.vel.x, want.x, TUNE.PLAYER.accel * 0.14, dt);
     p.vel.z = smooth(p.vel.z, want.z, TUNE.PLAYER.accel * 0.14, dt);
     p.pos.addScaledVector(p.vel, dt);
     p.vel.multiplyScalar(Math.exp(-1.2 * dt));
+    R.collide(p.pos, p.radius);
   }
-  R.collide(p.pos, p.radius);
 
   /* 换弹推进：弹量在 magIn 恢复，但要到 reloadEnd 才允许射击 */
   if (g.reloadT > 0) {
@@ -1159,21 +1193,30 @@ function updatePlayer(dt) {
   /* 相机 */
   const speed = Math.hypot(p.vel.x, p.vel.z);
   p.bobT += dt * speed * 1.5;
-  const bob = Math.sin(p.bobT * 2) * 0.022 * Math.min(1, speed / 6);
-  R.camera.position.set(p.pos.x, TUNE.PLAYER.height + bob, p.pos.z);
+  const grounded = MODE.vertMove ? MOVE.pose.grounded : true;
+  /* 空中不做步态晃动 —— 跑酷中再叠 bob 会直接读不清准星（§8.4） */
+  const bob = Math.sin(p.bobT * 2) * 0.022 * Math.min(1, speed / 6) * (grounded ? 1 : 0.15);
+  /* 眼高 = 脚底 + 身高；滑铲下蹲与落地压缩只动高度，不动朝向 */
+  const eye = TUNE.PLAYER.height
+    - (MODE.vertMove ? MOVE.pose.crouch * (TUNE.PLAYER.height - TUNE.MOVEMENT.slideHeight) : 0)
+    - (MODE.vertMove ? MOVE.pose.landImpact * 0.16 : 0);
+  R.camera.position.set(p.pos.x, p.pos.y + eye + bob, p.pos.z);
   R.camera.rotation.set(0, 0, 0);
   R.camera.rotateY(p.yaw + p.camRecoil.yaw);
   R.camera.rotateX(p.pitch + p.camRecoil.pitch + G.shakePitch);
-  R.camera.rotateZ(G.shakeRoll);
+  R.camera.rotateZ(G.shakeRoll + (MODE.vertMove ? MOVE.pose.tilt : 0));
   R.camera.position.x += G.shakeX; R.camera.position.z += G.shakeZ;
 
+  /* 速度用 FOV 表达，不用随机抖动 */
+  const fastK = MODE.vertMove ? clamp((speed - 7) / 9, 0, 1) : 0;
   const fov = TUNE.PLAYER.fovBase + (p.dashT > 0 ? TUNE.PLAYER.fovSprintAdd : 0)
+    + fastK * (TUNE.MOVEMENT.stableCam ? 2 : 6)
     + WEAPON.pose.ads * TUNE.WEAPON_FX.adsFov;
   R.camera.fov = smooth(R.camera.fov, fov, 9, dt);
   R.camera.updateProjectionMatrix();
 
   /* 武器摆动 */
-  R.lamp.position.set(p.pos.x, TUNE.PLAYER.height + 0.4, p.pos.z);
+  R.lamp.position.set(p.pos.x, p.pos.y + TUNE.PLAYER.height + 0.4, p.pos.z);
 
   /* 枪械表现层：只喂状态，动作全部由 weapon.js 自己解算 */
   WEAPON.update(dt, {
@@ -1984,6 +2027,7 @@ function boot() {
   UI.init();
 
   G.player = makePlayer();
+  if (MODE.vertMove) MOVE.init(G.player);
   G.enemies = makeEnemyPool();
   G.bullets = makeBulletPool();
   G.acids = makeAcidPool();
