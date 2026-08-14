@@ -559,6 +559,55 @@ const BUILD = {
     /* 近杀回血的每秒上限 */
     c.healSecT += dt;
     if (c.healSecT >= 1) { c.healSecT = 0; c.healSec = 0; }
+
+    /* 跑墙距离：跑墙护盾与地图奖励都读它。
+       在这里累计而不是塞进 movement.js —— 机动系统不该知道有卡这回事。 */
+    if (p && typeof MOVE !== 'undefined' && MOVE.pose && MOVE.pose.state === 'wallrun') {
+      const step = Math.hypot(p.vel.x, p.vel.z) * dt;
+      c.wallDist += step;
+      c.wallRunSpan = (c.wallRunSpan || 0) + step;
+      const W = TUNE.MUP.wallshield, lv = this.level('wallshield');
+      if (lv > 0 && c.wallDist >= W.distance) {
+        c.wallDist -= W.distance;
+        c.wallShield = Math.min(W.max, (c.wallShield || 0) + W.perLv * lv);
+        c.shield = Math.min(c.shieldMax + c.wallShield, c.shield + W.perLv * lv);
+      }
+      if (c.wallRunSpan >= 8) { c.wallRunSpan = 0; G.bus.emit('wallrunDistance', { d: 8 }); }
+    }
+  },
+
+  /* 机动与生存卡的战斗侧效果。全部挂在事件总线上 ——
+     movement.js 不该知道有卡这回事，它只负责发出「落地了」「冲刺了」。 */
+  installHooks() {
+    G.bus.on('land', e => {
+      const lv = this.level('slam');
+      if (!lv || !e) return;
+      const P = TUNE.MUP.slam;
+      const spd = e.fall || 0;
+      if (spd < P.minSpeed) return;
+      /* 强度读【真实落地速度】，不是固定值 —— 从多高摔下来是玩家的决定 */
+      const dmg = P.dmgPerSpeed * lv * spd;
+      areaDamage(G.player.pos, P.radius, dmg, makeAttack('slam'), 'slam');
+      R.ring(G.player.pos, 1, P.radius, 0xff9a3c, 0.5);
+      Audio2.blast(G.player.pos, true);
+    });
+
+    G.bus.on('dash', () => {
+      const lv = this.level('dashhit');
+      if (!lv) return;
+      const P = TUNE.MUP.dashhit, c = this.ctx, p = G.player;
+      c.dashHitT = c.dashHitT || {};
+      const list = enemiesInRadius(p.pos.x, p.pos.z, 2.4, _dashBuf);
+      list.forEach(e => {
+        if (e.dead || e.boss) return;
+        if ((c.dashHitT[e.uid] || 0) > G.time) return;   // 同一敌人有触发冷却
+        c.dashHitT[e.uid] = G.time + P.cooldown;
+        damageEnemy(e, P.perLv * lv, makeAttack('dashhit'), { point: e.pos });
+        const dx = e.pos.x - p.pos.x, dz = e.pos.z - p.pos.z;
+        const d2 = Math.max(0.01, Math.hypot(dx, dz));
+        e.knock.x += dx / d2 * P.push; e.knock.z += dz / d2 * P.push;
+      });
+    });
   },
 
   /* 实际开火间隔：超频在这里兑现（§8.1 第 9 步） */
@@ -756,6 +805,7 @@ const BUILD = {
   }
 };
 
+const _dashBuf = [];
 const NUMERIC = ['damage', 'fireInterval', 'magazine', 'reloadTime', 'ammoPerShot', 'pellets',
   'pierce', 'bounce', 'blastRadius', 'blastDmg', 'bulletScale', 'knockback',
   'weakpointMult', 'volleyFan', 'ocPeak', 'ocRampTime', 'pierceKeep'];

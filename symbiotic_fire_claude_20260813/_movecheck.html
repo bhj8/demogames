@@ -332,40 +332,44 @@ addEventListener('load', () => setTimeout(() => {
 
   /* 高射速下枪声必须离散：尾音长度要随射击间隔收缩 */
   (function () {
-    WMOD.init(); AG.init(); recompute();
+    BUILD.init(); ATK.init(); recompute();
     const slow = effectiveFireInterval();
-    WMOD.grant('overclock'); WMOD.oc.ramp = 1; recompute();
+    BUILD.take('overclock'); recompute();
+    BUILD.ctx.ocRamp = 1;
     const fast = effectiveFireInterval();
     say('  射击间隔 基础 ' + slow.toFixed(3) + 's → 满超频 ' + fast.toFixed(3) + 's');
     ok(fast < slow, '超频没有真的提高射速');
-    WMOD.init(); AG.init(); recompute();
+    BUILD.init(); ATK.init(); recompute();
   })();
 
-  /* 构筑因果：命中颜色必须来自造成它的模块 */
+  /* 构筑因果：命中火花必须能读出「这一下是什么打的」 */
   (function () {
-    WMOD.init(); AG.init();
-    ['heavy', 'pierce', 'ricochet'].forEach(m => WMOD.grant(m));
-    recompute();
-    const root = AG.beginRoot(1);
-    const g = AG.gene(root, { depth: 0, sourceModule: 'root' });
-    const fakeRoot = { gene: g, bounceHits: 0, pierceHits: 0 };
-    const fakeSplit = { gene: AG.gene(root, { depth: 1, sourceModule: 'split' }), bounceHits: 0, pierceHits: 0 };
-    const cRoot = moduleHitColor(fakeRoot), cSplit = moduleHitColor(fakeSplit);
-    say('  命中色 根弹 #' + cRoot.toString(16) + ' / 分裂弹 #' + cSplit.toString(16));
-    ok(cSplit === TUNE.MODULES.split.color, '派生弹的命中色没有跟着来源模块走');
-    ok(cRoot === TUNE.MODULES.heavy.color, '重型根弹的命中色没有体现重型');
-    WMOD.init(); AG.init(); recompute();
+    BUILD.init(); ATK.init();
+    BUILD.take('heavy'); recompute();
+    const cHeavy = moduleHitColor({ pierceHits: 0 });
+    BUILD.init(); BUILD.take('pierce'); recompute();
+    const cPierce = moduleHitColor({ pierceHits: 2 });
+    BUILD.init(); recompute();
+    const cPlain = moduleHitColor({ pierceHits: 0 });
+    say('  命中色 重弹 #' + cHeavy.toString(16) + ' / 穿透 #' + cPierce.toString(16) +
+        ' / 普通 #' + cPlain.toString(16));
+    ok(cHeavy !== cPlain && cPierce !== cPlain && cHeavy !== cPierce,
+       '三种命中形态的火花颜色必须互相区分得开');
+    BUILD.init(); ATK.init(); recompute();
   })();
 
-  /* 构筑图 */
-  WMOD.init(); AG.init();
-  ['blast', 'pierce'].forEach(m => WMOD.grant(m));
+  /* 构筑图：显示分子等级与伤害来源，不显示任何组合名（todo10 §7.2） */
+  BUILD.init(); ATK.init();
+  ['blast', 'pierce'].forEach(m => BUILD.take(m));
   recompute();
   UI.buildGraph();
   const bg = document.getElementById('buildgraph').innerHTML;
-  ok(bg.indexOf('终点爆破') >= 0, '构筑图没有写出已成立的 S 级组合');
-  say('  构筑图含模块 / 组合 / 节点 / 分支 / 规则 / 谱系预算 六行');
-  WMOD.init(); AG.init(); recompute();
+  ok(bg.indexOf('爆炸 Lv2') >= 0 && bg.indexOf('穿透 Lv2') >= 0,
+     '构筑图没有写出分子与等级');
+  ok(bg.indexOf('伤害来源') >= 0, '构筑图没有分别显示直接 / 爆炸 / 弹射');
+  ok(!/组合|融合|S 级/.test(bg), '构筑图里仍然出现了组合名');
+  say('  构筑图含分子 / 玩法选择 / 武器 / 机动 / 伤害来源 / 弹药 / 性能');
+  BUILD.init(); ATK.init(); recompute();
 
   /* ---------------- M4：热点迁移 ---------------- */
   say('');

@@ -21,8 +21,7 @@ const MAPBUILD = {
 
   init() {
     this.mark = ''; this.markT = 0; this.wallDist = 0; this.eliteId = -1;
-    G.bus.on('zipline', () => {});
-    G.bus.on('airdropPicked', e => { if (e && e.high) this.grant('forceBig', '屋顶空投'); });
+    G.bus.on('airdropOpened', e => { if (e && (e.y || 0) > 3) this.grant('forceBig', '屋顶空投'); });
     G.bus.on('wallrunDistance', e => {
       this.wallDist += (e && e.d) || 0;
       if (this.wallDist >= 24) { this.wallDist = 0; this.grant('extraLevel', '连续墙跑'); }

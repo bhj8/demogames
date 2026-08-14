@@ -80,7 +80,7 @@ const MOVE = {
       if (k >= 1) {
         st.scripted = null;
         st.state = 'ground'; st.grounded = true; st.coyote = M.coyoteTime;
-        st.dashCharge = M.airDashCharges;
+        st.dashCharge = MOVE.charges();
         p.vel.copy(s.exit || TV.set(0, 0, 0));
       }
       this._momentum(p, dt); this._publish(p);
@@ -275,7 +275,7 @@ const MOVE = {
           p.pos.y = sup;
           if (!st.grounded) this._land(p, -p.vel.y);
           p.vel.y = 0; st.grounded = true; st.coyote = M.coyoteTime;
-          st.dashCharge = M.airDashCharges;              // 只有接触稳定地面才恢复
+          st.dashCharge = MOVE.charges();              // 只有接触稳定地面才恢复
           st.lastGroundY = sup; st.airT = 0;
         } else {
           st.grounded = false;
@@ -315,6 +315,11 @@ const MOVE = {
           p.vel.y = Math.max(p.vel.y, M.wallRunRise);
           this.stats.wallRun++;
           st.chain++; G.bus.emit('wallrun', {});
+          /* 连续机动：有效跑墙刷新一次空中冲刺，每次滞空链只给一次 */
+          if (G.derived && G.derived.chainMove && !st.chainRefreshed) {
+            st.chainRefreshed = true;
+            st.dashCharge = Math.max(st.dashCharge, 1);
+          }
         }
       }
     }
@@ -406,7 +411,7 @@ const MOVE = {
       const pad = CITY.nearestDevice(p.pos, 'pad', 1.9);
       if (pad && st.grounded && Math.abs(p.pos.y - pad.y) < 0.9) {
         p.vel.y = M.padImpulse;
-        st.grounded = false; st.state = 'air'; st.dashCharge = M.airDashCharges;
+        st.grounded = false; st.state = 'air'; st.dashCharge = MOVE.charges();
         st.padCd = M.padRearm;
         this.stats.pad++;
         Audio2.dash();
@@ -436,6 +441,7 @@ const MOVE = {
       Audio2.shellDrop(p.pos);
       R.puff(TV.copy(p.pos).setY(p.pos.y + 0.1), 0.2, 1.1 + st.landImpact, 0x8a8f98, 0.22);
     }
+    st.chainRefreshed = false;
     G.bus.emit('land', { impact: st.landImpact, fall: fallSpeed });
   },
 
@@ -487,9 +493,14 @@ const MOVE = {
   },
 
   /* Debug 传送：四个地标与三个高度层 */
+  /* 空中冲刺储能：「二次冲刺」直接加在这里，movement 不查卡表。 */
+  charges() {
+    return (G.derived && G.derived.dashCharges) || TUNE.MOVEMENT.airDashCharges;
+  },
+
   teleport(p, x, y, z) {
     p.pos.set(x, y, z); p.vel.set(0, 0, 0);
     this.st.scripted = null; this.st.zip = null; this.st.state = 'air';
-    this.st.grounded = false; this.st.dashCharge = TUNE.MOVEMENT.airDashCharges;
+    this.st.grounded = false; this.st.dashCharge = MOVE.charges();
   }
 };

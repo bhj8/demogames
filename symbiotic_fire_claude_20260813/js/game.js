@@ -757,7 +757,7 @@ const _xpS = new THREE.Vector3(1, 1, 1);
 function updateXp(dt) {
   const p = G.player;
   const magnet = G.derived.magnetRadius;
-  const pick = TUNE.XP.pickupRadius;
+  const pick = TUNE.XP.pickupRadius * G.derived.pickupMult;
   let n = 0;
   for (let i = G.xp.length - 1; i >= 0; i--) {
     const c = G.xp[i];
@@ -917,7 +917,7 @@ function updateMedical(dt) {
   if (!m) return;
   m.t += dt;
   if (m.t >= m.life) { G.medical = null; R.medMesh.visible = false; return; }
-  if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < M.pickupRadius
+  if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < M.pickupRadius * G.derived.pickupMult
       && (!CITY.enabled || Math.abs(p.pos.y - (m.y || 0)) < 2.4)) {
     const before = p.hp;
     p.hp = Math.min(p.maxHp, p.hp + p.maxHp * M.healFrac);
@@ -1003,7 +1003,7 @@ function updateAirdrop(dt) {
     const m = d.modules[n];
     m.mesh.userData.spin.rotation.y += dt * 1.8;
     m.mesh.visible = rem > 5 ? true : (Math.sin(d.t * 16) > -0.3);
-    if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < A.pickupRadius
+    if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < A.pickupRadius * G.derived.pickupMult
         && (!CITY.enabled || Math.abs(p.pos.y - (m.y || 0)) < 2.4)) {
       applyBuff(m.id);              // 开箱直接生效，不弹第二套选择
       /* §7.8 高风险屋顶空投额外提高下一次进化的史诗概率 */
@@ -2387,6 +2387,7 @@ function boot() {
   G.mouseDX = 0; G.mouseDY = 0;
 
   BUILD.init();
+  BUILD.installHooks();
   ATK.init();
   HORDE.init();
   MAPBUILD.init();

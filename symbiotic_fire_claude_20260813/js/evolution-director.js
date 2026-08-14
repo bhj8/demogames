@@ -162,6 +162,7 @@ const EVO = {
   pick(cardId) {
     const d = this.draw;
     if (!BUILD.cardOf(cardId)) return;
+    const others = (d.pending && d.pending.cards || []).filter(c => c.id !== cardId).map(c => c.id);
     BUILD.take(cardId);
 
     /* 地图修正用后清除，避免长期权重失控（§6.4） */
@@ -189,7 +190,6 @@ const EVO = {
     G.bus.emit('evolutionTaken', { card: BUILD.cardOf(cardId) });
   },
 
-  /* Debug：强制下一次品质（§11.2） */
 
   /* HUD 进度（§6.1 进度条清楚显示溢出） */
   progressFrac() { return this.need > 0 ? Math.min(1, this.progress / this.need) : 0; },
