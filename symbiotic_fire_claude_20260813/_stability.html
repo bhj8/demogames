@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>html,body{margin:0;background:#0d1117;color:#dbe7f0;font:12px/1.55 monospace}
+#out{position:fixed;inset:0;padding:12px;white-space:pre-wrap;overflow:auto;z-index:9;background:#0d1117}
+#gl{position:fixed;inset:0}u{color:#ffb020}b{color:#7ef0a8}i{color:#ff6a7a;font-style:normal}</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud" style="display:none">
+  <div id="top"><div id="clock"></div><div id="xpwrap"><div id="xpfill"></div></div>
+  <div id="lvlrow"><b id="lvlnum"></b></div></div>
+  <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="toast"></div><div id="hint"></div><div id="buffbar"></div>
+  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
+  <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
+  <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
+</div>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="hitmark"><i></i><i></i></div>
+<div id="dmgnums"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
+<div id="dmgdirs"></div><div id="threats"></div><div id="shieldvig"></div><div id="shieldflash"></div>
+<div id="floattext"></div><svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="nextdraw"></div><div id="cards"></div>
+<div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
+<div id="pause"><button id="resume"></button></div><div id="buildgraph"></div><div id="results"></div>
+<div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
+<div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>
+window.__err = [];
+window.onerror = (m, s, l) => { window.__err.push(m + ' @' + (s || '').split('/').pop() + ':' + l); };
+</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/city-scale.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/attack.js"></script>
+<script src="js/build.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   todo10 §10 阶段 D：多种子 12 分钟自动稳定性
+
+   单独放，因为十局各跑满一整局要二十分钟以上 ——
+   混进 _buildcheck 会让那套一秒出结果的验收变得没人愿意跑。
+
+   量两件事：会不会崩，以及十局会不会长成同一把枪（§11.4）。
+   数值强度是 _buildcheck 的事，这里不重复。
+   ========================================================================== */
+const L = [];
+let FAIL = 0;
+const say = s => L.push(s);
+const ok = (cond, msg) => { if (!cond) { FAIL++; say('  <i>FAIL</i> ' + msg); } return cond; };
+
+addEventListener('load', () => setTimeout(() => {
+  try { main(); } catch (e) { done(['THROW:' + e.message + ' | ' + (e.stack || '').split('\n')[1]]); }
+}, 300));
+
+function done(lines) {
+  document.getElementById('out').innerHTML = lines.join('\n');
+  document.title = (FAIL ? 'FAILED(' + FAIL + ')' : 'ALLPASS') + ' err=' + window.__err.length;
+}
+
+function main() {
+  if (window.__err.length) { done(['BOOT_ERR:' + window.__err.join(';')]); return; }
+  window.requestAnimationFrame = () => 0;
+  R.render = () => {};
+  R.resize();
+
+  say('<u>=== todo10 §10 阶段 D：多种子 12 分钟稳定性 ===</u>');
+  const seeds = [11, 22, 33, 44, 55, 66, 77, 88, 99, 111];
+  let errs = 0, builds = [], rejected = 0;
+  seeds.forEach(sd => {
+    const r = fullRun(sd);
+    builds.push(r.build);
+    errs += r.err; rejected += r.rejected;
+    say('  种子 ' + String(sd).padStart(3) + '  ' + fmtTime(r.time) +
+        '  升级 ' + String(r.picks).padStart(2) + '  分子 ' + r.mol +
+        '  击杀 ' + String(r.kills).padStart(5) +
+        '  拒绝 ' + r.rejected + (r.err ? '  <i>错误 ' + r.err + '</i>' : '') +
+        '  ' + r.build);
+  });
+  ok(errs === 0, errs + ' 次运行时错误');
+  ok(rejected === 0, '累计 ' + rejected + ' 次事件触顶 —— 伤害被静默削掉了（§8.3）');
+  const uniq = new Set(builds).size;
+  say('  ' + seeds.length + ' 局里出现 ' + uniq + ' 种不同的分子组合');
+  /* §11.4：连续两局不会因为固定配方自然长成同一把枪 */
+  ok(uniq >= seeds.length * 0.6,
+    '十局只长出 ' + uniq + ' 种枪 —— 说明还是配方在决定结果（§11.4）');
+
+  say('\n' + (FAIL ? '<i>FAILED ' + FAIL + ' 条</i>' : '<b>ALLPASS</b>') +
+      '（运行时错误 ' + window.__err.length + '）');
+  done(L);
+}
+
+let _clock = 0;
+function fullRun(seed) {
+  RNG.init(seed);
+  G.won = false; G.bossAlive = null; G.buff = null;
+  document.getElementById('results').classList.remove('on');
+  BUILD.init(); ATK.init(); MAPEV.init();
+  G.time = 0; G.tlIndex = 0; G.over = false; G.phase = 'play';
+  G.stats.kills = 0;
+  const err0 = window.__err.length;
+  DebugPanel.god = true;                 // 量系统，不量难度
+  /* 每一局都要把世界清干净。只清敌人是不够的：经验球、子弹、危险区
+     会一局一局地攒下来，第十局的每帧开销是第一局的十几倍，
+     表现是「跑到一半越来越慢，最后超时」。 */
+  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+  G.enemies.compact();
+  G.bullets.live.slice().forEach(b => G.bullets.release(b));
+  G.bullets.compact();
+  G.xp.length = 0; G.hazards.length = 0; G.pendings.length = 0;
+  G.medical = null; G.airdrop = null; G.buff = null;
+  G.acids && G.acids.live && G.acids.live.slice().forEach(a => G.acids.release(a));
+  G.acids && G.acids.compact && G.acids.compact();
+  MOVE.teleport(G.player, 0, 1.2, 0);
+  G.player.hp = G.player.maxHp;
+  recompute();
+  G.player.gun.ammo = G.derived.magazine;
+
+  /* frame() 自己记 _last 时间戳，所以每局的 t 必须【接着上一局往下走】——
+     从 0 重新开始会算出负的 dt，第二局起整局一帧都不推进（表现是 0:00）。 */
+  let picks = 0, minFps = 1e9;
+  for (let i = 0; i < 60 * 60 * 12 + 600; i++) {
+    _clock += 16.7;
+    frame(_clock);
+    if (G.phase === 'choose') {
+      const c = document.querySelector('#cards .card');
+      if (c && c.onclick) { c.onclick(); picks++; }
+    }
+    G.player.gun.held = true;
+    G.player.yaw += 0.55 * 0.0167;
+    if (G.over) break;
+  }
+  G.player.gun.held = false;
+  DebugPanel.god = false;
+  return {
+    time: G.time, picks: picks, kills: G.stats.kills,
+    mol: BUILD.molecules().length,
+    build: BUILD.molecules().map(c => c.name).join('+') || '无',
+    rejected: ATK.budget.rejected,
+    err: window.__err.length - err0,
+    minFps: minFps
+  };
+}
+
+</script>
+</body>
+</html>
