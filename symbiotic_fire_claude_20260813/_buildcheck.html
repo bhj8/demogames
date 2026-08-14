@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>html,body{margin:0;background:#0d1117;color:#dbe7f0;font:12px/1.55 monospace}
+#out{position:fixed;inset:0;padding:12px;white-space:pre-wrap;overflow:auto;z-index:9;background:#0d1117}
+#gl{position:fixed;inset:0}u{color:#ffb020}b{color:#7ef0a8}i{color:#ff6a7a;font-style:normal}</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud" style="display:none">
+  <div id="top"><div id="clock"></div><div id="xpwrap"><div id="xpfill"></div></div>
+  <div id="lvlrow"><b id="lvlnum"></b></div></div>
+  <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="toast"></div><div id="hint"></div><div id="buffbar"></div>
+  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
+  <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
+  <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
+</div>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="hitmark"><i></i><i></i></div>
+<div id="dmgnums"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
+<div id="dmgdirs"></div><div id="threats"></div><div id="shieldvig"></div><div id="shieldflash"></div>
+<div id="floattext"></div><svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="nextdraw"></div><div id="cards"></div>
+<div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
+<div id="pause"><button id="resume"></button></div><div id="buildgraph"></div><div id="results"></div>
+<div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
+<div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>
+window.__err = [];
+window.onerror = (m, s, l) => { window.__err.push(m + ' @' + (s || '').split('/').pop() + ':' + l); };
+</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/city-scale.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/attack.js"></script>
+<script src="js/build.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   todo10 阶段 D 验收：自然反应 Build V3
+
+   §10 阶段 D 明确写了「不再跑 28 对组合完成率，改为验证统一规律」。
+   所以这里量的是三件事：
+
+     §9  强度重算 —— 每张卡在它的正确场景里是不是真的更强
+     §11.2 自然组合 —— 多发的每颗弹是不是都会爆、都会穿、都会弹
+     §11.3 弹药与 DPS —— 尤其是 §0.1 那个「齐射 465 / 基线 1140」的病灶
+
+   四个灰盒靶场（§10 阶段 D 第一条）：
+     近距密集 / 长线尸群 / 分散尸群 / 单体精英。
+   同一张卡在不同靶场的表现【应该】差很多 —— 那正是「大选择」的意义。
+   ========================================================================== */
+const L = [];
+let FAIL = 0, WARN = 0;
+const say = s => L.push(s);
+const ok = (cond, msg) => { if (!cond) { FAIL++; say('  <i>FAIL</i> ' + msg); } return cond; };
+const warn = (cond, msg) => { if (!cond) { WARN++; say('  <u>WARN</u> ' + msg); } return cond; };
+const n1 = v => (Math.round(v * 10) / 10).toString();
+const pc = v => (v >= 0 ? '+' : '') + Math.round(v * 100) + '%';
+
+addEventListener('load', () => setTimeout(() => {
+  try { main(); } catch (e) { done(['THROW:' + e.message + ' | ' + (e.stack || '').split('\n')[1]]); }
+}, 300));
+
+function done(lines) {
+  document.getElementById('out').innerHTML = lines.join('\n');
+  document.title = (FAIL ? 'FAILED(' + FAIL + ')' : 'ALLPASS') + ' warn=' + WARN +
+    ' err=' + window.__err.length;
+}
+
+/* --------------------------------------------------------------- 四个靶场 */
+/* 玩家站在 (0,0,30) 朝 -Z。靶子必须放在更小的 z 上 ——
+   摆错 180° 会得到「一枪不中」的假数据，todo5 的测试上当过一次。 */
+const RANGES = {
+  dense: { name: '近距密集', desc: '5×5 阵列，最近 4m', build(add) {
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++) add((c - 2) * 1.8, 26 - r * 2.2);
+  } },
+  line: { name: '长线尸群', desc: '一条 24m 纵队，正对枪线', build(add) {
+    for (let i = 0; i < 10; i++) add(0, 24 - i * 2.6);
+  } },
+  spread: { name: '分散尸群', desc: '9 只，彼此间隔 9m 以上', build(add) {
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) add((c - 1) * 10, 20 - r * 10);
+  } },
+  solo: { name: '单体精英', desc: '一只，18m 外', build(add) { add(0, 12); } }
+};
+
+function buildRange(kind) {
+  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+  G.enemies.compact();
+  G.bullets.live.slice().forEach(b => G.bullets.release(b));
+  G.bullets.compact();
+  G.hazards.length = 0; G.pendings.length = 0;
+
+  const p = G.player;
+  p.pos.set(0, 0, 30); p.vel.set(0, 0, 0); p.yaw = 0; p.pitch = 0;
+  p.hp = p.maxHp = 99999;
+  R.camera.position.set(0, 1.68, 30);
+  R.camera.rotation.set(0, 0, 0);
+  R.camera.updateWorldMatrix(true, false);
+
+  /* 不死靶：量机制，不量击杀。击杀装填要单独测，所以它有自己的靶场。 */
+  const add = (x, z) => {
+    const e = G.enemies.get();
+    configureEnemy(e, ENEMIES.grunt, { x: x, y: 0, z: z }, { grace: 0 });
+    e.hp = e.maxHp = 1e7;
+    e.speed = 0; e.vel.set(0, 0, 0);
+    e.spawnGrace = 999;
+  };
+  RANGES[kind].build(add);
+  G.hash.clear();
+  G.enemies.live.forEach(e => G.hash.insert(e, e.pos.x, e.pos.z));
+}
+
+/* --------------------------------------------------------------- 一次测量 */
+/* §9.1 要求同时量：瞬时 DPS、10 秒持续 DPS、一弹匣总伤害、打空时间、
+   换弹时间占比、每秒弹药消耗、单体伤害、群体有效伤害、弱点收益。
+   全部来自游戏自己的统计，不是测试脚本另算一遍。 */
+const DT = 1 / 60;
+function measure(cards, opts) {
+  opts = opts || {};
+  const SEC = opts.sec || 10;
+  RNG.init(20260814);
+  BUILD.init(); ATK.init();
+  G.stats.dmgDealt = 0; G.stats.hits = 0; G.stats.shots = 0;
+  (cards || []).forEach(id => BUILD.take(id));
+  recompute();
+  buildRange(opts.range || 'dense');
+
+  const p = G.player, g = p.gun;
+  g.ammo = G.derived.magazine; g.reloadT = 0; g.fireT = 0; g.held = true;
+  DebugPanel.noSpread = true;
+  G.phase = 'play';
+
+  let t = 0, shots = 0, ammoUsed = 0, reloadT = 0, fireT = 0;
+  let firstMagDmg = 0, firstMagT = 0, magDone = false;
+  let burstDmg = 0, burstT = 0;
+
+  while (t < SEC) {
+    t += DT;
+    BUILD.tick(DT, p);
+    ATK.tick(DT);
+    /* 站桩要能攒起来：玩家在靶场是不动的，lastPos 每帧同步即可 */
+    if (opts.moving) { p.pos.x += 4.0 * DT; }   // 真的在跑，不是抖一下
+
+    if (g.reloadT > 0) {
+      g.reloadT -= DT; reloadT += DT;
+      if (g.reloadT <= 0) { g.reloadT = 0; g.ammo = G.derived.magazine; }
+    } else {
+      fireT += DT;
+      g.fireT -= DT;
+      if (!G.derived.infiniteMag && g.ammo <= 0) {
+        g.reloadT = G.derived.reloadTime;
+        if (!magDone) { magDone = true; firstMagT = t; firstMagDmg = G.stats.dmgDealt; }
+        BUILD.onReloadStart();
+      } else if (g.fireT <= 0) {
+        const before = g.ammo;
+        fire(); shots++; ammoUsed += Math.max(0, before - g.ammo);
+        g.fireT = effectiveFireInterval();
+      }
+    }
+    G.hash.clear();
+    G.enemies.live.forEach(e => { if (!e.dead && !e._dead) G.hash.insert(e, e.pos.x, e.pos.z); });
+    updateBullets(DT);
+    G.bullets.compact();
+    if (t <= 1.0) { burstDmg = G.stats.dmgDealt; burstT = t; }
+  }
+  g.held = false;
+  if (!magDone) { firstMagT = t; firstMagDmg = G.stats.dmgDealt; }
+
+  const st = BUILD.stats;
+  const cycle = Math.max(0.001, fireT + reloadT);
+  return {
+    dmg: Math.round(G.stats.dmgDealt),
+    dps: Math.round(G.stats.dmgDealt / SEC),
+    burst: Math.round(burstDmg / Math.max(0.001, burstT)),
+    magDmg: Math.round(firstMagDmg), magT: n1(firstMagT),
+    shots: shots, ammo: ammoUsed, ammoPerSec: n1(ammoUsed / SEC),
+    reloadShare: Math.round(reloadT / cycle * 100),
+    fireShare: Math.round(fireT / cycle * 100),
+    hits: G.stats.hits,
+    direct: Math.round(st.direct), blast: Math.round(st.blast), bounce: Math.round(st.bounce),
+    saved: st.ammoSaved,
+    rejected: ATK.budget.rejected,
+    cost: G.derived.ammoPerShot, pellets: G.derived.pellets
+  };
+}
+
+const brief = r => 'DPS ' + r.dps + '  瞬时 ' + r.burst + '  弹匣 ' + r.magDmg + '/' + r.magT + 's' +
+  '  开火 ' + r.fireShare + '%  耗弹 ' + r.cost + '/枪  命中 ' + r.hits;
+
+/* ========================================================================== */
+function main() {
+  if (window.__err.length) { done(['BOOT_ERR:' + window.__err.join(';')]); return; }
+  window.requestAnimationFrame = () => 0;
+  R.render = () => {};
+  R.resize();
+  audit();
+}
+
+function audit() {
+  say('<u>=== todo10 阶段 D：自然反应 Build V3 验收 ===</u>');
+
+  /* ---------------------------------------------------- §11.3 基线与多发 */
+  say('\n<u>[§0.1 / §11.3] 病灶复查：多发不能比基线弱</u>');
+  const base = measure([], { range: 'dense' });
+  const vol = measure(['volley'], { range: 'dense' });
+  say('  基线      ' + brief(base));
+  say('  多发 Lv2  ' + brief(vol));
+  ok(vol.dmg > base.dmg * 1.4,
+    '多发在近距离必须明显强于基线（' + vol.dmg + ' vs ' + base.dmg + '，' +
+    pc(vol.dmg / base.dmg - 1) + '），todo5 那版是 465/1140');
+
+  /* §9.2：多发必须分别在 3 / 8 / 15 米测试，证明近距超额、远距衰减 */
+  say('\n<u>[§9.2] 多发的距离曲线：近距超额、远距衰减</u>');
+  const atDist = d => {
+    const r = measureAtDistance(['volley'], d);
+    const b = measureAtDistance([], d);
+    return { r: r, b: b, gain: r.dmg / Math.max(1, b.dmg) };
+  };
+  const d3 = atDist(3), d8 = atDist(8), d15 = atDist(15);
+  say('  3m  多发/基线 ' + n1(d3.gain) + '×   8m ' + n1(d8.gain) + '×   15m ' + n1(d15.gain) + '×');
+  ok(d3.gain > d15.gain, '多发在近距离的收益必须高于远距离（' + n1(d3.gain) + '× vs ' + n1(d15.gain) + '×）');
+  ok(d3.gain > 1.5, '多发在 3m 必须是真正的超额输出（' + n1(d3.gain) + '×）');
+
+  /* ------------------------------------------------ §11.2 自然组合 */
+  say('\n<u>[§11.2] 自然组合：统一规律，不是逐对配方</u>');
+  const vb = measure(['volley', 'blast'], { range: 'dense' });
+  const b1 = measure(['blast'], { range: 'dense' });
+  say('  爆炸      ' + brief(b1) + '  爆炸伤害 ' + b1.blast);
+  say('  多发+爆炸 ' + brief(vb) + '  爆炸伤害 ' + vb.blast);
+  ok(vb.blast > b1.blast * 1.6,
+    '多发的每颗弹都要能独立触发爆炸（' + vb.blast + ' vs ' + b1.blast + '）');
+
+  /* 同一个靶场里比，跨靶场比出来的差是靶场的差，不是机制的差 */
+  const bLine = measure(['blast'], { range: 'line' });
+  const pb = measure(['pierce', 'blast'], { range: 'line' });
+  const p1 = measure(['pierce'], { range: 'line' });
+  say('  穿透        ' + brief(p1));
+  say('  爆炸@长线   ' + brief(bLine) + '  爆炸伤害 ' + bLine.blast);
+  say('  穿透+爆炸   ' + brief(pb) + '  爆炸伤害 ' + pb.blast);
+  ok(pb.blast > bLine.blast * 1.5,
+    '穿透的每一次命中都要完整触发爆炸，不是只有终点才爆（' +
+    pb.blast + ' vs 单爆炸 ' + bLine.blast + '）');
+
+  const pr = measure(['pierce', 'ricochet'], { range: 'dense' });
+  const r1 = measure(['ricochet'], { range: 'dense' });
+  say('  弹射      ' + brief(r1) + '  弹射伤害 ' + r1.bounce);
+  say('  穿透+弹射 ' + brief(pr) + '  弹射伤害 ' + pr.bounce);
+  ok(pr.bounce > r1.bounce * 1.5,
+    '穿 N 个人就该产生 N 条弹射链，而不是穿完才折一次（' + pr.bounce + ' vs ' + r1.bounce + '）');
+
+  const hv = measure(['ricochet', 'blast', 'heavy'], { range: 'dense' });
+  const rb = measure(['ricochet', 'blast'], { range: 'dense' });
+  say('  弹射+爆炸      ' + brief(rb) + '  直接 ' + rb.direct + ' 爆 ' + rb.blast + ' 弹 ' + rb.bounce);
+  say('  弹射+爆炸+重弹 ' + brief(hv) + '  直接 ' + hv.direct + ' 爆 ' + hv.blast + ' 弹 ' + hv.bounce);
+  ok(hv.blast > rb.blast && hv.bounce > rb.bounce,
+    '重弹必须同时放大直击、爆炸与弹射（爆 ' + hv.blast + '/' + rb.blast +
+    '，弹 ' + hv.bounce + '/' + rb.bounce + '）');
+
+  /* ------------------------------------------------ §9.2 大升级最低标准 */
+  say('\n<u>[§9.2] 每个大升级在它的正确场景里至少 +40%</u>');
+  const scen = [
+    { id: 'volley', range: 'dense', why: '近距密集' },
+    { id: 'blast', range: 'dense', why: '近距密集' },
+    { id: 'pierce', range: 'line', why: '长线尸群' },
+    { id: 'ricochet', range: 'dense', why: '近距密集' },
+    { id: 'heavy', range: 'solo', why: '单体精英' },
+    { id: 'overclock', range: 'solo', why: '单体精英' },
+    { id: 'close', range: 'dense', why: '近距密集' },
+    { id: 'crit', range: 'solo', why: '单体精英' },
+    { id: 'overload', range: 'dense', why: '近距密集' },
+    { id: 'root', range: 'line', why: '站定输出' }
+  ];
+  scen.forEach(s => {
+    const b = measure([], { range: s.range });
+    const a = measure([s.id], { range: s.range });
+    const g = a.dmg / Math.max(1, b.dmg) - 1;
+    say('  ' + BUILD.cardOf(s.id).name.padEnd(5, '　') + ' @' + s.why +
+        '  ' + pc(g) + '   ' + brief(a));
+    ok(g > 0, BUILD.cardOf(s.id).name + ' 在自己的目标场景不允许低于基线（' + pc(g) + '）');
+    warn(g >= 0.40, BUILD.cardOf(s.id).name + ' 只有 ' + pc(g) + '，低于 §9.2 的 +40%');
+  });
+
+  /* ------------------------------------------------ §9.2 双倍装药 */
+  say('\n<u>[§9.2] 双倍装药：瞬时接近 ×2，持续因换弹折损</u>');
+  const o0 = measure([], { range: 'dense' });
+  const o1 = measure(['overload'], { range: 'dense' });
+  say('  无        ' + brief(o0));
+  say('  双倍装药  ' + brief(o1));
+  ok(o1.burst > o0.burst * 1.5, '瞬时输出必须接近 ×2（' + o1.burst + ' vs ' + o0.burst + '）');
+  ok(o1.cost === o0.cost * 2, '每枪总耗弹必须 ×2（' + o1.cost + ' vs ' + o0.cost + '）');
+  ok(o1.reloadShare > o0.reloadShare, '换弹真空必须真的变多（' + o1.reloadShare + '% vs ' + o0.reloadShare + '%）');
+
+  /* ------------------------------------------------ §9.2 弹药循环 */
+  say('\n<u>[§9.2] 扩容 / 快装 / 节弹：在每枪 1 / 2 / 4 发耗弹下分别测</u>');
+  const loads = [{ n: 1, c: [] }, { n: 2, c: ['volley'] }, { n: 4, c: ['volley', 'heavy', 'overload'] }];
+  loads.forEach(L2 => {
+    const b = measure(L2.c, { range: 'dense' });
+    const m = measure(L2.c.concat(['mag']), { range: 'dense' });
+    const r = measure(L2.c.concat(['reload']), { range: 'dense' });
+    const t = measure(L2.c.concat(['thrift']), { range: 'dense' });
+    say('  耗弹 ' + b.cost + '/枪　扩容 ' + pc(m.dps / b.dps - 1) +
+        '　快装 ' + pc(r.dps / b.dps - 1) +
+        '　节弹 ' + pc(t.dps / b.dps - 1) + '（省 ' + t.saved + ' 发）' +
+        '　换弹占比 ' + b.reloadShare + '%');
+    ok(m.dps >= b.dps, '扩容在耗弹 ' + b.cost + ' 时不得降低持续 DPS');
+    ok(r.dps >= b.dps, '快装在耗弹 ' + b.cost + ' 时不得降低持续 DPS');
+  });
+  {
+    const b = measure(['volley', 'heavy', 'overload'], { range: 'dense' });
+    const m = measure(['volley', 'heavy', 'overload', 'mag'], { range: 'dense' });
+    const p2 = measure(['volley', 'heavy', 'overload', 'power'], { range: 'dense' });
+    say('  高耗弹 Build：扩容 ' + pc(m.dps / b.dps - 1) + '　威力 ' + pc(p2.dps / b.dps - 1));
+    warn(m.dps >= p2.dps,
+      '§11.3 期望高耗弹 Build 里扩容能成为高价值 DPS 选择（扩容 ' + m.dps + ' vs 威力 ' + p2.dps + '）');
+  }
+
+  /* ------------------------------------------------ §9.2 超频 */
+  say('\n<u>[§9.2] 超频：峰值真实可见，且没有新增人工惩罚</u>');
+  const oc0 = measure([], { range: 'solo', sec: 10 });
+  const oc1 = measure(['overclock'], { range: 'solo', sec: 10 });
+  say('  无超频 ' + brief(oc0) + '  每秒耗弹 ' + oc0.ammoPerSec);
+  say('  超频   ' + brief(oc1) + '  每秒耗弹 ' + oc1.ammoPerSec);
+  ok(oc1.shots > oc0.shots * 1.15, '超频必须真的打出更多发（' + oc1.shots + ' vs ' + oc0.shots + '）');
+  ok(oc1.cost === oc0.cost, '超频不得额外消耗弹药（' + oc1.cost + ' vs ' + oc0.cost + '）');
+
+  /* ------------------------------------------------ §9.2 站桩 / 专注 */
+  say('\n<u>[§9.2] 站桩满层值得冒险；专注对精英有效、对尸群不成为必选</u>');
+  const rt0 = measure([], { range: 'line' });
+  const rt1 = measure(['root'], { range: 'line' });
+  const rtM = measure(['root'], { range: 'line', moving: true });
+  say('  站定 ' + pc(rt1.dmg / rt0.dmg - 1) + '　移动中 ' + pc(rtM.dmg / rt0.dmg - 1));
+  ok(rt1.dmg > rtM.dmg, '一旦产生位移就必须清空（站定 ' + rt1.dmg + ' vs 移动 ' + rtM.dmg + '）');
+  ok(rt1.dmg > rt0.dmg * 1.3, '站满层必须值得玩家冒险停住（' + pc(rt1.dmg / rt0.dmg - 1) + '）');
+
+  /* ------------------------------------------------ §8.3 性能 */
+  say('\n<u>[§8.3] 最重构筑：伤害算满，只砍对象与特效</u>');
+  const heavyBuild = ['volley', 'volley', 'volley', 'pierce', 'pierce', 'ricochet', 'ricochet', 'blast', 'blast', 'overclock'];
+  const hb = measure(heavyBuild, { range: 'dense', sec: 6 });
+  say('  ' + heavyBuild.length + ' 张卡：' + brief(hb));
+  say('  直接 ' + hb.direct + '  爆炸 ' + hb.blast + '  弹射 ' + hb.bounce +
+      '  弹丸/枪 ' + hb.pellets + '  事件拒绝 ' + hb.rejected);
+  ok(hb.dmg > 0 && isFinite(hb.dmg), '最重构筑必须仍然结算出有限伤害');
+  ok(hb.direct > 0 && hb.blast > 0 && hb.bounce > 0, '三条伤害来源都必须仍然在工作');
+  ok(hb.rejected === 0,
+    '触顶拒绝 ' + hb.rejected + ' 次 —— 伤害被静默削掉了，§8.3 明令禁止');
+
+  /* ------------------------------------------------ §11.1 三秒可读 */
+  say('\n<u>[§11.1] 三秒可读：卡面不允许出现实现语言</u>');
+  const banned = ['根弹', '次级弹', '谱系', '载荷', '预算', '消费者', '继承系数', '事件节点',
+                  'S 级', '融合', '派生'];
+  let bad = 0;
+  BUILD.allIds().forEach(id => {
+    BUILD.init();
+    const c = BUILD.cardOf(id);
+    const txt = [c.name, c.gain, c.cost].concat(c.line(0, c.levels)).join(' ');
+    banned.forEach(w => { if (txt.indexOf(w) >= 0) { bad++; say('  <i>' + c.name + '</i> 出现了「' + w + '」'); } });
+    if (!c.gain || !c.cost) { bad++; say('  <i>' + c.name + '</i> 缺少收益或代价'); }
+    if (c.line(0, c.levels).length < 2) { bad++; say('  <i>' + c.name + '</i> 没有「当前值 → 选择后数值」'); }
+  });
+  ok(bad === 0, bad + ' 处卡面文案违反 §7.1');
+  say('  ' + BUILD.allIds().length + ' 张卡全部检查完毕');
+
+  /* ------------------------------------------------ §11.2 没有配方表 */
+  say('\n<u>[§11.2] 代码里不存在逐对配方表</u>');
+  const src = ['REACTION', 'PAIR_NAME', 'PAIR_EFFECTS', 'reactionOf', 'pairInfo', 'MODULE_PAIRS'];
+  const leaked = src.filter(k => typeof window[k] !== 'undefined');
+  ok(leaked.length === 0, '仍然存在组合表：' + leaked.join(' '));
+  ok(typeof TUNE.MODULE_PAIRS === 'undefined', 'TUNE 里仍有 MODULE_PAIRS');
+  say('  组合名称表：不存在。战斗结果只来自统一规律。');
+
+  /* ------------------------------------------------ §6 三选一与保底 */
+  say('\n<u>[§6] 三选一：保底只托底不封顶，品质档已删除</u>');
+  ok(typeof TUNE.RARITY === 'undefined', '品质档 TUNE.RARITY 仍然存在');
+  {
+    RNG.init(7); BUILD.init();
+    const first = BUILD.candidates();
+    ok(first.length === 3 && first.every(c => c.kind === 'mol'),
+      '第 1 次必须固定三张不同核心分子（拿到 ' + first.map(c => c.name).join('/') + '）');
+    ok(first.every(c => c.card.levels === 2), '大升级必须固定 +2 级');
+    BUILD.take(first[0].id);
+    let molBy4 = BUILD.molecules().length;
+    for (let i = 2; i <= 4; i++) {
+      const cs = BUILD.candidates();
+      const m = cs.find(c => c.kind === 'mol' && !BUILD.has(c.id)) || cs[0];
+      BUILD.take(m.id);
+      molBy4 = BUILD.molecules().length;
+    }
+    ok(molBy4 >= 2, '第 4 次结束前必须能拿到 2 个分子（实际 ' + molBy4 + '）');
+  }
+  {
+    /* 平均分子数：跑 400 局，每局按目标次数发牌，每次随机选一张 */
+    let sum = 0, runs = 400, noWeapon = 0;
+    for (let s = 0; s < runs; s++) {
+      RNG.init(1000 + s); BUILD.init();
+      /* 保底的承诺是「至少出现 1 张」，不是「玩家必须选它」——
+         所以这里查的是【发牌】里有没有武器卡，不是玩家拿了什么。 */
+      let dry = 0, worst = 0;
+      for (let i = 0; i < TUNE.BUILD.targetCount; i++) {
+        const cs = BUILD.candidates();
+        const offered = cs.some(c => c.kind !== 'mup');
+        dry = offered ? 0 : dry + 1;
+        worst = Math.max(worst, dry);
+        const pick = cs[Math.floor(RNG.evo.next() * cs.length)];
+        BUILD.take(pick.id);
+      }
+      if (worst > 0) noWeapon++;
+      sum += BUILD.molecules().length;
+    }
+    const avg = sum / runs;
+    say('  ' + runs + ' 局平均分子数 ' + n1(avg) + '（目标 3 左右，保底 2）');
+    ok(avg >= 2.4 && avg <= 4.2, '平均分子数应落在 3 附近（实际 ' + n1(avg) + '）');
+    ok(noWeapon === 0, noWeapon + ' 局出现过「三张全是机动生存卡」的发牌');
+  }
+
+  BUILD.init(); recompute();
+  say('\n<u>=== 以下必须由真人回答（§11.4），脚本不能代替 ===</u>');
+  say('  1 三秒内能不能复述每张卡的收益和代价？');
+  say('  2 能不能用一句普通话描述本局武器？');
+  say('  3 升级是不是越来越强、组合像不像自己长出来的？');
+  say('  4 至少 10 局的体感：会不会两局长成同一把枪？');
+
+  say('\n' + (FAIL ? '<i>FAILED ' + FAIL + ' 条</i>' : '<b>ALLPASS</b>') +
+      '（' + WARN + ' 条提醒，运行时错误 ' + window.__err.length + '）');
+  done(L);
+}
+
+/* 距离曲线专用：把单排靶子放到指定距离 */
+function measureAtDistance(cards, dist) {
+  RNG.init(20260814);
+  BUILD.init(); ATK.init();
+  G.stats.dmgDealt = 0; G.stats.hits = 0; G.stats.shots = 0;
+  (cards || []).forEach(id => BUILD.take(id));
+  recompute();
+
+  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+  G.enemies.compact();
+  G.bullets.live.slice().forEach(b => G.bullets.release(b));
+  G.bullets.compact();
+  const p = G.player;
+  p.pos.set(0, 0, 30); p.vel.set(0, 0, 0); p.yaw = 0; p.pitch = 0;
+  p.hp = p.maxHp = 99999;
+  R.camera.position.set(0, 1.68, 30);
+  R.camera.rotation.set(0, 0, 0);
+  R.camera.updateWorldMatrix(true, false);
+  for (let c = 0; c < 3; c++) {
+    const e = G.enemies.get();
+    configureEnemy(e, ENEMIES.grunt, { x: (c - 1) * 1.3, y: 0, z: 30 - dist }, { grace: 0 });
+    e.hp = e.maxHp = 1e7; e.speed = 0; e.vel.set(0, 0, 0); e.spawnGrace = 999;
+  }
+  G.hash.clear();
+  G.enemies.live.forEach(e => G.hash.insert(e, e.pos.x, e.pos.z));
+
+  const g = p.gun;
+  g.ammo = G.derived.magazine; g.reloadT = 0; g.fireT = 0; g.held = true;
+  DebugPanel.noSpread = true; G.phase = 'play';
+  for (let t = 0; t < 4; t += DT) {
+    BUILD.tick(DT, p); ATK.tick(DT);
+    if (g.reloadT > 0) {
+      g.reloadT -= DT;
+      if (g.reloadT <= 0) { g.reloadT = 0; g.ammo = G.derived.magazine; }
+    } else {
+      g.fireT -= DT;
+      if (!G.derived.infiniteMag && g.ammo <= 0) g.reloadT = G.derived.reloadTime;
+      else if (g.fireT <= 0) { fire(); g.fireT = effectiveFireInterval(); }
+    }
+    G.hash.clear();
+    G.enemies.live.forEach(e => { if (!e.dead && !e._dead) G.hash.insert(e, e.pos.x, e.pos.z); });
+    updateBullets(DT); G.bullets.compact();
+  }
+  g.held = false;
+  return { dmg: Math.round(G.stats.dmgDealt), hits: G.stats.hits };
+}
+</script>
+</body>
+</html>

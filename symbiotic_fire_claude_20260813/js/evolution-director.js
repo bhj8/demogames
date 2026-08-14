@@ -19,10 +19,7 @@ const EVO = {
     this.draw = {
       evolutionIndex: 0,          // 已完成的进化次数
       lastChoiceTime: 0,          // 上一次选择【关闭】的时刻
-      pending: null,              // {quality, cards, since, reason}
-      commonStreak: 0,
-      hasEpic: false,
-      mapQualityMod: 0,           // 只影响下一抽，用后清除
+      pending: null,              // {cards, since, reason}
       mapTagBias: null,
       deferT: 0, deferReason: '-'
     };
@@ -138,123 +135,37 @@ const EVO = {
 
   /* --------------------------------------------------- §7.1 步骤 2：品质 */
   /* 必须先抽品质，再生成三张同品质卡。禁止先抽三张再按颜色比较。 */
-  drawQuality(t) {
-    const RA = TUNE.RARITY, P = TUNE.PITY, d = this.draw;
-    const band = RA.bands.find(b => t >= b.from && t < b.to) || RA.bands[RA.bands.length - 1];
-    const raw = Object.assign({}, band.w);
-    const w = Object.assign({}, raw);
-
-    /* §7.8 地图修正：只从普通概率转移到史诗，不降低既有好运 */
-    let mapMod = 0;
-    if (d.mapQualityMod > 0) {
-      mapMod = Math.min(d.mapQualityMod, TUNE.MAP_BUILD.qualityBonusCap);
-      const move = Math.min(mapMod, w.common);
-      w.common -= move; w.epic += move;
-    }
-
-    /* §7.4 保底一：连续 3 次普通后，下一次至少稀有。
-       在当前时间段的稀有 / 史诗 / 传奇之间重新归一化。 */
-    let pityRare = false;
-    if (d.commonStreak >= P.commonStreak) {
-      pityRare = true;
-      const rest = w.rare + w.epic + w.legend;
-      if (rest > 0) {
-        w.common = 0;
-        w.rare /= rest; w.epic /= rest; w.legend /= rest;
-      } else { w.common = 0; w.rare = 1; }
-    }
-
-    let q = this._roll(w);
-
-    /* §7.8 精英路线猎杀：下一次品质至少稀有。
-       同样写成“抽完再抬”，不改权重表 —— 抬底线不等于给高品质额外权重。 */
-    let mapMin = false;
-    if (d.mapMinQuality) {
-      const need = RA.order.indexOf(d.mapMinQuality);
-      if (RA.order.indexOf(q) < need) { q = d.mapMinQuality; mapMin = true; }
-    }
-
-    /* §7.4 保底二：7:30 仍未出现史诗或传奇。
-       先正常抽，结果低于史诗才提升为史诗；自然抽中传奇保留传奇。
-       —— 传奇不因本条获得额外归一化权重，所以必须写成“抽完再抬”，不能改权重表。 */
-    let pityEpic = false;
-    if (t >= P.epicByTime && !d.hasEpic) {
-      const ord = RA.order.indexOf(q);
-      if (ord < RA.order.indexOf('epic')) { q = 'epic'; pityEpic = true; }
-    }
-
-    this._lastDraw = { t: t, raw: raw, final: w, q: q, pityRare: pityRare, pityEpic: pityEpic, mapMod: mapMod, mapMin: mapMin };
-    return q;
-  },
-
-  _roll(w) {
-    const order = TUNE.RARITY.order;
-    let total = 0;
-    for (let i = 0; i < order.length; i++) total += w[order[i]] || 0;
-    let r = RNG.mutation.next() * total;
-    for (let i = 0; i < order.length; i++) {
-      r -= (w[order[i]] || 0);
-      if (r <= 0) return order[i];
-    }
-    return 'common';
-  },
-
-  /* ------------------------------------------- §7.1 步骤 3～5：候选生成 */
+  /* ------------------------------------------------- 候选生成（todo10 §6.2）
+     品质档已经删掉：不再先抽品质、再凑三张同品质卡。
+     一次三选一就是从同一个池里按权重取三张，每张自己写清楚给几级。 */
   _open() {
     const d = this.draw;
-    let q = this.drawQuality(G.time);
-    /* 抽到的品质如果在当前构筑下凑不出三张，就换一个能凑出的品质：
-       优先向【更高】品质借（对玩家只会更好），实在没有才向下。
-       §7.5 的底线是「三张同品质」和「不偷偷混入低品质」，
-       所以这里换的是整次的品质，而不是把三张拆成两张。 */
-    if (!MODPOOL.viable(q, d)) {
-      const order = TUNE.RARITY.order, i = order.indexOf(q);
-      let alt = null;
-      for (let k = i + 1; k < order.length && !alt; k++) if (MODPOOL.viable(order[k], d)) alt = order[k];
-      for (let k = i - 1; k >= 0 && !alt; k--) if (MODPOOL.viable(order[k], d)) alt = order[k];
-      if (alt) {
-        this._lastDraw.substituted = q + '→' + alt;
-        this.substitutions = (this.substitutions || 0) + 1;
-        q = alt;
-      }
-    }
-    const cards = MODPOOL.candidates(q, d);
+    const cards = BUILD.candidates();
     if (!cards.length) {                      // 理论上不会发生，兜底不卡在 choose 相
       d.pending = null; d.lastChoiceTime = G.time; this.progress = 0;
       return;
     }
     d.pending.open = true;
-    d.pending.quality = q;
     d.pending.cards = cards;
+    const info = { index: d.evolutionIndex, pity: BUILD.sinceBig === 0 && BUILD.draws > 1,
+                   mapMark: MAPBUILD.markText ? MAPBUILD.markText() : '' };
     this.log.push({
-      i: d.evolutionIndex + 1, t: Math.round(G.time), q: q,
-      pityRare: this._lastDraw.pityRare, pityEpic: this._lastDraw.pityEpic,
-      mapMod: this._lastDraw.mapMod, defer: d.deferReason,
-      cards: cards.map(c => c.id)
+      i: d.evolutionIndex + 1, t: Math.round(G.time),
+      defer: d.deferReason, cards: cards.map(c => c.id)
     });
     G.phase = 'choose';
     Audio2.mutation();
-    G.ui.showEvolution(q, cards, this._lastDraw, id => this.pick(id));
+    G.ui.showEvolution(cards, info, id => this.pick(id));
   },
 
   /* -------------------------------------------- §7.1 步骤 6～7：应用 */
   pick(cardId) {
     const d = this.draw;
-    const card = MODPOOL.byId[cardId];
-    if (!card) return;
-    const others = d.pending.cards.filter(c => c.id !== cardId).map(c => c.id);
-
-    card.apply();
-    WMOD.taken[cardId] = (WMOD.taken[cardId] || 0) + 1;
-
-    /* 保底计数：只统计品质，不做任何反向压制（§7.4） */
-    const q = d.pending.quality;
-    d.commonStreak = (q === 'common') ? d.commonStreak + 1 : 0;
-    if (q === 'epic' || q === 'legend') d.hasEpic = true;
+    if (!BUILD.cardOf(cardId)) return;
+    BUILD.take(cardId);
 
     /* 地图修正用后清除，避免长期权重失控（§6.4） */
     MAPBUILD.consume();
-    d.mapQualityMod = 0; d.mapTagBias = null;
 
     d.evolutionIndex++;
     d.lastChoiceTime = G.time;
@@ -275,26 +186,14 @@ const EVO = {
     G.ui.hideCards();
     G.ui.mutationSlots();
     G.phase = 'play';
-    G.bus.emit('evolutionTaken', { card: card, quality: q });
+    G.bus.emit('evolutionTaken', { card: BUILD.cardOf(cardId) });
   },
 
   /* Debug：强制下一次品质（§11.2） */
-  forceQuality(q) { this._force = q; },
 
   /* HUD 进度（§6.1 进度条清楚显示溢出） */
   progressFrac() { return this.need > 0 ? Math.min(1, this.progress / this.need) : 0; },
   overflowFrac() { return this.need > 0 ? Math.max(0, (this.progress - this.need) / this.need) : 0; }
 };
 
-/* Debug 强制品质：包在 drawQuality 外层，保持 §7.1 的顺序记录不变 */
-EVO._drawQualityRaw = EVO.drawQuality;
-EVO.drawQuality = function (t) {
-  const q = this._drawQualityRaw(t);
-  if (this._force) {
-    this._lastDraw.forced = this._force;
-    const f = this._force; this._force = null;
-    this._lastDraw.q = f;
-    return f;
-  }
-  return q;
-};
+

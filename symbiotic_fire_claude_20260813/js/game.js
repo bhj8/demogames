@@ -595,8 +595,8 @@ function updateAcids(dt) {
    齐射/弹射/动势在 todo5 §9 里刻意没有对应怪物，自然被过滤掉。 */
 function playerThemes() {
   const out = [];
-  WMOD.own.forEach(m => {
-    const v = HORDE.MODULE_VARIANT[m];
+  BUILD.molecules().forEach(c => {
+    const m = c.id, v = HORDE.MODULE_VARIANT[m];
     if (v && out.indexOf(v) < 0) out.push(v);
   });
   return out;
@@ -1108,9 +1108,9 @@ function updateBuff(dt) {
 function emitBuildChanged() {
   WEAPON.on('buildChanged', {
     twin: G.derived.pellets > 1,
-    magLevel: lvl('mag') + (WMOD.has('overclock') ? 1 : 0),
+    magLevel: BUILD.level('mag') + (BUILD.has('overclock') ? 1 : 0),
     heavy: G.derived.weaponHeavy,
-    modules: WMOD.own.slice()
+    modules: BUILD.molecules().map(c => c.id)
   });
 }
 
@@ -1199,8 +1199,8 @@ function tryReload() {
   g.reloadT = G.derived.reloadTime;
   g.reloadTotal = G.derived.reloadTime;
   g.magFilled = false;                        // 弹量要等 magIn 事件才恢复
-  /* §18 换弹期间保留一半超频进度 */
-  WMOD.oc.ramp *= TUNE.MODULES.overclock.reloadKeep;
+  /* §2.6 换弹后重新开始升速 */
+  BUILD.onReloadStart();
   /* 分阶段动作与声音由表现层按 total 的比例驱动，
      所以快速装填升级会同比例加速整套流程，不会动作与计时错位 */
   WEAPON.on('reloadStart', { total: g.reloadTotal });
@@ -1249,19 +1249,14 @@ function updatePlayer(dt) {
     if (g.reloadT <= 0) { g.reloadT = 0; WEAPON.on('reloadEnd'); G.bus.emit('reloadDone', {}); }
   }
 
-  /* todo5：模块状态机（超频升速 / 动势积蓄 / 过热）统一在这里推进。
-     §6.1 第 7 条 —— 超频只改发射节奏，所以它没有资格进入伤害结算链。 */
-  WMOD.tick(dt, {
-    firing: g.held && g.ammo > 0 && g.reloadT <= 0,
-    speed: Math.hypot(p.vel.x, p.vel.z)
-  });
+  /* Build 的运行时状态（超频档位 / 站桩 / 专注 / 护盾）统一在这里推进。
+     §8.1 第 9 步 —— 超频只更新下一次开火间隔，没有资格进入伤害结算链。 */
+  BUILD.tick(dt, p);
 
   /* 射击 §11.3 —— 弹匣打空后自动换弹，但先留一个可感知的空仓瞬间（todo2 §6.2） */
   g.fireT -= dt;
   g.dryT -= dt;
-  /* 传奇「弹匣规则改写」：不再消耗弹匣，改为过热节奏 —— 过热期间强制停火 */
-  const heatLock = WMOD.hasRule('r_mag') && WMOD.overheated > 0;
-  if (g.reloadT <= 0 && G.phase === 'play' && !heatLock) {
+  if (g.reloadT <= 0 && G.phase === 'play') {
     if (!d.infiniteMag && g.ammo <= 0) {
       g.emptyT += dt;
       if (g.held && g.dryT <= 0) { WEAPON.on('empty'); g.dryT = 0.28; }
@@ -1318,8 +1313,8 @@ function updatePlayer(dt) {
     yawDelta: G.mouseDX, pitchDelta: G.mouseDY,
     /* todo5 §11：枪模上的两条发光通道改由模块驱动 ——
        升速看得见（超频），蓄能看得见（动势）。 */
-    overclock: WMOD.oc.ramp,
-    conductCharge: Math.max(WMOD.mom.charge, WMOD.mom.round > 0 ? 1 : 0),
+    overclock: BUILD.ctx.ocRamp,
+    conductCharge: 0,
     stableLevel: lvl('stable'),
     ammo: g.ammo, magazine: d.magazine, infiniteMag: d.infiniteMag,
     onMagIn: () => { g.ammo = d.magazine; g.magFilled = true; }
@@ -1338,10 +1333,14 @@ function fire() {
   const p = G.player, g = p.gun, d = G.derived, W = TUNE.WEAPON_FX;
   /* todo5：开火瞬间先决定「这一枪是否落在动势强化轮里」，
      因为 §2.8 强化的是一整轮射击，不是某一颗难以感知的子弹。 */
-  WMOD.onFire();
-  /* 单次耗弹是资源原子（§1.1）：齐射、爆裂、重型都会把它推高 */
+  /* §8.1 第 1 步：先结算耗弹。多发、重弹推高基础耗弹，
+     双倍装药在最后把总数翻倍 —— 顺序已经在 BUILD.derive 里定死。 */
   const cost = d.ammoPerShot;
-  if (!d.infiniteMag) g.ammo = Math.max(0, g.ammo - cost);
+  if (!d.infiniteMag) {
+    const back = BUILD.thriftBack(cost);       // 节弹只返还额外那部分
+    g.ammo = Math.max(0, g.ammo - cost + back);
+  }
+  BUILD.onFire(cost);
   G.stats.shots++;
   p.shotIndex++;
   g.bloom = Math.min(1, g.bloom + TUNE.GUN.bloomPerShot);
@@ -1365,7 +1364,7 @@ function fire() {
   /* --- §6.1 第 1～2 步：一次扳机 = 一个根攻击 = N 颗根弹 ---
      整次齐射共享同一份派生预算、事件预算与统一爆炸预算，
      这就是 todo5 §4.1「单次攻击有统一爆炸预算」在代码里的样子。 */
-  const root = AG.beginRoot(d.pellets);
+  const root = ATK.beginRoot(d.pellets);
   const fan = (d.volleyFan || 0) * Math.PI / 180;
   for (let i = 0; i < d.pellets; i++) {
     const dir = baseDir.clone();
@@ -1378,36 +1377,30 @@ function fire() {
     /* 散布仍然叠在图案之上，但幅度小得多 */
     const a = RNG.fx.range(0, Math.PI * 2), r = Math.sqrt(RNG.fx.next()) * spread;
     dir.addScaledVector(right0, Math.cos(a) * r).addScaledVector(up0, Math.sin(a) * r).normalize();
-    AG.rootBullet(root, muzzleWorld, dir, i);
+    ATK.rootBullet(root, muzzleWorld, dir, i);
   }
 
   /* 曳光从真实枪口出发，但弹道仍从准星方向收敛 —— 避免"瞄哪打不到哪" */
   WEAPON.muzzleWorldPos(_muzzleW);
   /* §11 每个模块的枪线必须能分辨：重型粗、动势蓄能亮、齐射多条 */
   let tracerColor = 0xffd9a0, tracerLen = W.tracerLength;
-  if (d.momActive > 0.01) tracerColor = TUNE.MODULES.momentum.color;
-  else if (d.heavyOn) { tracerColor = TUNE.MODULES.heavy.color; tracerLen *= 1.3; }
-  else if (d.pellets > 1) tracerColor = TUNE.MODULES.volley.color;
+  if (d.heavyOn) { tracerColor = 0xff6a4a; tracerLen *= 1.3; }
+  else if (d.pellets > 1) tracerColor = 0x7fd4ff;
   const nTracer = Math.min(3, d.pellets);
   for (let i = 1; i < nTracer; i++) WEAPON.addTracer(_muzzleW, baseDir, tracerColor, tracerLen * (0.8 - i * 0.1));
   WEAPON.addTracer(_muzzleW, baseDir, tracerColor, tracerLen);
 
-  const ramp = WMOD.oc.ramp;
+  const ramp = BUILD.ctx.ocRamp;
   const isLast = !d.infiniteMag && g.ammo <= 0;
   WEAPON.on('shot', {
     isLastRound: isLast, pellets: d.pellets, overclock: ramp,
     heavy: heavy, boltSpeed: 1 + ramp * 0.45,
-    momentum: d.momActive
+    momentum: 0
   });
   Audio2.shot(1 + ramp * 0.35, heavy, effectiveFireInterval());
   if (isLast) Audio2.lastRound();
 
-  /* 动势强化轮的释放必须有区别于普通射击的视听轮廓（§4.6）*/
-  if (d.momActive > 0.4) {
-    G.shake(0.05 + d.momActive * 0.05, null);
-    Audio2.blast(p.pos, false);
-  }
-  WMOD.afterFire();
+
 
   /* 开火不震屏 —— 力量全部由枪模、机械部件、枪口光和声音承担 */
   G.bus.emit('fire', {});
@@ -1716,51 +1709,51 @@ const UI = {
   buildGraph() {
     const el = $('buildgraph');
     if (!el) return;
-    if (!WMOD.own.length) { el.innerHTML = '<i>还没有基础模块</i>'; return; }
-    const mods = WMOD.own.map(id => {
-      const M = TUNE.MODULES[id];
-      return '<span class="bgm" style="color:' + M.css + '">' + M.name + '</span>';
-    }).join('');
+    if (!BUILD.order.length) { el.innerHTML = '<i>还没有任何升级</i>'; return; }
+    const grp = kind => BUILD.order.filter(id => BUILD.cardOf(id).kind === kind)
+      .map(id => {
+        const c = BUILD.cardOf(id);
+        return '<span class="bgm" style="color:' + c.css + '">' + c.name + ' Lv' + BUILD.lv[id] + '</span>';
+      }).join('');
     const row = (k, v) => '<div class="bgrow"><span class="bgk">' + k + '</span><span>' + (v || '—') + '</span></div>';
-    const pairs = WMOD.pairs().map(p2 => {
-      const nm = p2.info ? p2.info.name : (TUNE.MODULES[p2.a].name + '×' + TUNE.MODULES[p2.b].name);
-      return (p2.tier === 'S' ? '<b class="bgs">' + nm + '</b>' : nm) + ' [' + p2.tier + ']';
-    }).join('　');
-    const nodes = Object.keys(WMOD.nodes).filter(k => WMOD.nodes[k] > 0)
-      .map(k => NODE_MAP[k].name + (WMOD.nodes[k] > 1 ? '×' + WMOD.nodes[k] : '')).join('　');
-    el.innerHTML = '<div class="bgmods">' + mods + '</div>' +
-      row('组合反应', pairs) +
-      row('深化节点', nodes) +
-      row('形态分支', WMOD.branches.map(b => BRANCH_MAP[b].name).join('　')) +
-      row('规则改写', WMOD.rules.map(r => RULE_MAP[r].name).join('　')) +
-      row('谱系预算', '派生 ' + AG.gBudget.derived + ' · 事件 ' + AG.gBudget.events +
-        ' · 触顶 ' + AG.gBudget.rejected + ' · 最大深度 ' + AG.gBudget.maxDepth);
+    const st = BUILD.stats, tot = Math.max(1, st.direct + st.blast + st.bounce);
+    const share = (n, v) => n + ' ' + Math.round(v / tot * 100) + '%';
+    el.innerHTML = '<div class="bgmods">' + grp('mol') + '</div>' +
+      row('玩法选择', grp('choice')) +
+      row('武器', grp('wup')) +
+      row('机动生存', grp('mup')) +
+      /* §7.2 结算与构筑图分别显示直接 / 爆炸 / 弹射 —— 不显示任何组合名 */
+      row('伤害来源', share('直接', st.direct) + '　' + share('爆炸', st.blast) + '　' + share('弹射', st.bounce)) +
+      row('弹药', '已消耗 ' + Math.round(st.ammoSpent) + '　返还 ' + Math.round(st.ammoSaved)) +
+      row('性能', ATK.debugLine());
   },
 
   mutationSlots() {
     this.slots.innerHTML = '';
-    {
-      const max = TUNE.MODULE_BUILD.maxModules;
-      for (let i = 0; i < max; i++) {
-        const s = document.createElement('div');
-        s.className = 'slot';
-        const id = WMOD.own[i], M = id && TUNE.MODULES[id];
-        if (M) {
-          s.style.borderColor = M.css; s.style.color = M.css;
-          s.style.boxShadow = '0 0 12px ' + M.css + '44';
-          s.textContent = M.name[0];
-          s.title = M.name + '：' + M.effect;
-        } else { s.classList.add('empty'); s.textContent = '·'; }
-        this.slots.appendChild(s);
-      }
-      const combos = WMOD.pairs().filter(p => p.tier === 'S' && p.info);
-      if (combos.length) {
-        const tag = document.createElement('div');
-        tag.className = 'scombo';
-        tag.innerHTML = combos.map(p =>
-          '<i style="color:' + TUNE.MODULES[p.b].css + '">' + p.info.name + '</i>').join('');
-        this.slots.appendChild(tag);
-      }
+    /* §7.2 HUD 只显示核心分子的名字和等级。没有组合名，也没有槽位上限 ——
+       todo10 §1.1 删掉了「最多 3 个基础模块」的硬限制。 */
+    const mol = BUILD.molecules();
+    if (!mol.length) {
+      const s0 = document.createElement('div');
+      s0.className = 'slot empty'; s0.textContent = '·';
+      this.slots.appendChild(s0);
+      return;
+    }
+    mol.forEach(c => {
+      const s1 = document.createElement('div');
+      s1.className = 'slot';
+      s1.style.borderColor = c.css; s1.style.color = c.css;
+      s1.style.boxShadow = '0 0 12px ' + c.css + '44';
+      s1.textContent = c.name[0];
+      s1.title = c.name + ' Lv' + BUILD.level(c.id) + '：' + c.gain;
+      this.slots.appendChild(s1);
+    });
+    const st = BUILD.stateText();
+    if (st) {
+      const tag = document.createElement('div');
+      tag.className = 'scombo';
+      tag.innerHTML = '<i>' + st + '</i>';
+      this.slots.appendChild(tag);
     }
   },
 
@@ -1818,89 +1811,57 @@ const UI = {
      先揭示本次整体品质，再同时展开三张同品质卡；
      卡面不展示后台权重、复杂公式或长段 lore。
      ------------------------------------------------------------------ */
-  /* todo5 §7.2 卡面：最多四行 —— 名称 / 一句主效果 / 一句代价 / 动态 S 预览。
-     十几个底层原子参数一律不上主卡面，只进展开说明。 */
-  _moduleCardHtml(c, quality, RA) {
-    const col = c.css || RA.css[quality];
-    /* 动态预览只显示【真实成立】的 S 组合：
-       模块卡问「拿了它会形成什么」，其他卡直接写它深化的那一对。 */
-    let prev = '';
-    if (c.kind === 'module') {
-      const s = WMOD.previewS(c.module);
-      if (s.length) prev = s.map(x =>
-        '与你的【' + TUNE.MODULES[x.other].name + '】形成：<b>' + x.name + '</b>').join('<br>');
-    } else if (c.pairName) {
-      prev = '深化你的 <b>' + c.pairName + '</b>';
-    } else if (c.module && WMOD.has(c.module)) {
-      prev = '深化你的【' + TUNE.MODULES[c.module].name + '】';
-    }
-    const kindTag = { module: '基础模块', node: '深化节点', branch: '形态分支',
-      pair: '组合深化', rule: '规则改写', cond: '条件分支', mod: '通用改装' }[c.kind] || '';
-    return '<div class="qtag" style="color:' + RA.css[quality] + '">' + RA.name[quality] +
-        (kindTag ? ' · ' + kindTag : '') + '</div>' +
-      '<div class="cname" style="color:' + col + '">' + c.name +
-        (c.en ? '<span class="cen">' + c.en + '</span>' : '') + '</div>' +
-      '<div class="cline you"><span class="tag">效果</span>' + c.effect + '</div>' +
-      (c.cost && c.cost !== '—' ? '<div class="cline cost"><span class="tag kcost">代价</span>' + c.cost + '</div>' : '') +
-      (prev ? '<div class="crel spreview">' + prev + '</div>' : '') +
-      (c.detail ? '<div class="cdetail">' + c.detail + '</div>' : '');
+  /* §7.1 卡面：一个普通词名称 / 一句绿色收益 / 一句红色代价 /
+     当前值 → 选择后数值。禁止出现根弹、载荷、谱系、S 级反应这类实现语言。 */
+  _cardHtml(o) {
+    return '<div class="qtag" style="color:' + o.css + '">' +
+        (o.big ? '大升级' : '升级') + ' · ' + o.levelText + '</div>' +
+      '<div class="cname" style="color:' + o.css + '">' + o.name + '</div>' +
+      '<div class="cline you"><span class="tag">得到</span>' + o.gain + '</div>' +
+      (o.cost && o.cost !== '—'
+        ? '<div class="cline cost"><span class="tag kcost">代价</span>' + o.cost + '</div>' : '') +
+      '<div class="cdetail">' + o.lines.join('<br>') + '</div>';
   },
 
-  showEvolution(quality, cards, info, pick) {
-    const RA = TUNE.RARITY;
+  showEvolution(cards, info, pick) {
     const wrap = this.cards;
     wrap.innerHTML = '';
 
-    /* 保底 / 地图印记：只说明来源，绝不伪称必出（§7.10） */
+    /* 只说明来源，绝不伪称必出（§7.10 保留）。品质档已经删掉，
+       所以这里没有「本次是史诗」这种东西 —— 每张卡自己写清楚给几级。 */
     const marks = [];
-    if (info && (info.pityRare || info.pityEpic)) marks.push('<span class="emark pity">保底生效</span>');
-    if (info && info.mapMod > 0) marks.push('<span class="emark map">屋顶空投印记</span>');
-    if (info && info.mapMin) marks.push('<span class="emark map">精英猎杀印记</span>');
+    if (info && info.pity) marks.push('<span class="emark pity">保底生效</span>');
+    if (info && info.mapMark) marks.push('<span class="emark map">' + info.mapMark + '</span>');
 
     const head = document.createElement('div');
     head.className = 'cardhead';
-    head.innerHTML =
-      '<div class="qreveal q-' + quality + '" style="--qc:' + RA.css[quality] + '">' +
-        '<b>' + RA.name[quality] + '</b><span>进化 ' + (EVO.draw.evolutionIndex + 1) + '</span>' +
-      '</div>' +
-      '<div class="cs">三张同品质 ' + marks.join('') + '</div>';
+    head.innerHTML = '<div class="cs">选择 ' + (info ? info.index + 1 : 1) + '　' + marks.join('') + '</div>';
     wrap.appendChild(head);
 
     const row = document.createElement('div');
     row.className = 'cardrow evorow';
-    cards.forEach((c, i) => {
+    cards.forEach((o, i) => {
       const el = document.createElement('div');
-      el.className = 'card evo q-' + quality;
-      el.style.setProperty('--mc', c.css || RA.css[quality]);
-      /* 先揭示品质再展开三张：用动画延迟表达，不占一帧逻辑 */
-      el.style.animationDelay = (RA.revealTime + i * 0.05) + 's';
-      el.innerHTML = (c.effect !== undefined)
-        ? this._moduleCardHtml(c, quality, RA)
-        : ('<div class="qtag" style="color:' + RA.css[quality] + '">' + RA.name[quality] + '</div>' +
-           '<div class="cname" style="color:' + (c.css || RA.css[quality]) + '">' + c.name + '</div>' +
-           '<div class="cline you"><span class="tag">你</span>' + c.text + '</div>' +
-           (c.horde ? '<div class="cline horde"><span class="tag">尸潮</span>' + c.horde + '</div>' : '') +
-           (c.relation ? '<div class="crel">' + c.relation + '</div>' : ''));
-      el.onclick = () => pick(c.id);
+      el.className = 'card evo' + (o.big ? ' q-epic' : ' q-common');
+      el.style.setProperty('--mc', o.css);
+      el.style.animationDelay = (0.06 + i * 0.05) + 's';
+      el.innerHTML = this._cardHtml(o);
+      el.onclick = () => pick(o.id);
       row.appendChild(el);
     });
     wrap.appendChild(row);
 
     const foot = document.createElement('div');
     foot.className = 'cardfoot';
-    /* 新手前两局提示一次，之后自动隐藏（§7.10） */
-    const desc = WMOD.describe();
     foot.textContent = G.evoHintsLeft > 0
-      ? '每局最多 3 个基础模块 —— 选组合方向，不用比颜色'
-      : (desc[1] || '');
+      ? '大升级给 2 级，小升级给 1 级 —— 没有品质随机，卡面写多少就是多少'
+      : BUILD.hudText();
     if (G.evoHintsLeft > 0) G.evoHintsLeft--;
     wrap.appendChild(foot);
 
     wrap.classList.add('on');
-    /* 史诗与传奇给一次明显但短促的音画奖励，不拖慢连续试玩（§7.10） */
-    if (quality === 'epic' || quality === 'legend') { Audio2.levelup(); this.flashHeal(); }
     document.exitPointerLock();
-  }
+  },
 };
 G.ui = UI;
 
@@ -2020,27 +1981,34 @@ function showResults(won) {
   if (G.stats.blasts) chain.push('爆裂 ×' + G.stats.blasts);
   if (G.stats.bolts) chain.push('闪电 ×' + G.stats.bolts);
 
-  /* todo5 §11：结算页分别统计各模块的触发次数、直接伤害、派生伤害、
-     命中目标数与弹药消耗 —— 归因必须能和肉眼体验对上（§12.1 第 5 条）。 */
+  /* §7.2 结算页继续分别显示直接、爆炸、弹射等伤害，以及弹药消耗、
+     换弹时间占比和有效开火时间。这里【不显示任何组合名】——
+     §11.2 的验收条件是「删掉组合名称表后战斗结果不变」，
+     那么结算页当然也不该有组合名可显示。 */
   let modBlock = '';
   {
-    const rows = WMOD.own.map(id => {
-      const s = WMOD.stats[id], M = TUNE.MODULES[id];
-      return '<tr><td style="color:' + M.css + '">' + M.name + '</td>' +
-        '<td>' + s.trigger + '</td><td>' + Math.round(s.direct) + '</td>' +
-        '<td>' + Math.round(s.derived) + '</td><td>' + s.targets + '</td>' +
-        '<td>' + s.ammo + '</td></tr>';
+    const st = BUILD.stats;
+    const tot = Math.max(1, st.direct + st.blast + st.bounce);
+    const rows = BUILD.order.map(id => {
+      const c = BUILD.cardOf(id);
+      return '<tr><td style="color:' + c.css + '">' + c.name + '</td>' +
+        '<td>Lv' + BUILD.lv[id] + '</td><td>' + c.gain + '</td></tr>';
     }).join('');
-    const combos = WMOD.pairs().filter(p => p.info).map(p =>
-      '<span class="rmod" style="border-color:' + TUNE.MODULES[p.b].css + '">' +
-      p.info.name + ' [' + p.tier + ']</span>').join('');
+    const bar = (n, v, css) => '<span class="rmod" style="border-color:' + css + '">' +
+      n + ' ' + Math.round(v / tot * 100) + '%</span>';
+    const fireT = Math.max(0.001, st.fireT + st.reloadT);
     modBlock =
-      '<div class="rsec">本局武器模块</div>' +
-      '<div class="rmods">' + (combos || '<i>没有形成组合</i>') + '</div>' +
-      (rows ? '<table class="rmodtab"><tr><th>模块</th><th>触发</th><th>直接伤害</th>' +
-        '<th>派生伤害</th><th>命中目标</th><th>耗弹</th></tr>' + rows + '</table>' : '') +
-      '<div class="runseen">谱系预算：派生 ' + AG.gBudget.derived + ' · 事件 ' + AG.gBudget.events +
-        ' · 触顶拒绝 ' + AG.gBudget.rejected + ' · 最大深度 ' + AG.gBudget.maxDepth + '</div>';
+      '<div class="rsec">伤害来自哪里</div>' +
+      '<div class="rmods">' +
+        bar('直接', st.direct, '#ffd08a') + bar('爆炸', st.blast, '#ff9a3c') +
+        bar('弹射', st.bounce, '#c58aff') + '</div>' +
+      '<div class="runseen">弹药：消耗 ' + Math.round(st.ammoSpent) +
+        ' · 返还 ' + Math.round(st.ammoSaved) +
+        ' · 换弹占比 ' + Math.round(st.reloadT / fireT * 100) + '%' +
+        ' · 有效开火 ' + Math.round(st.fireT / fireT * 100) + '%</div>' +
+      (rows ? '<div class="rsec">本局构筑</div><table class="rmodtab">' +
+        '<tr><th>升级</th><th>等级</th><th>效果</th></tr>' + rows + '</table>' : '') +
+      '<div class="runseen">性能：' + ATK.debugLine() + '</div>';
   }
 
   el.innerHTML =
@@ -2074,7 +2042,6 @@ function handleDebugKey(code) {
   if (code === 'Digit9') D.jump(540);
   if (code === 'Digit0') D.jump(719);
 }
-
 const DebugPanel = {
   el: null, god: false, showEvents: false, frames: 0, fpsT: 0, fps: 0,
   showWeak: false, noSpread: false, showDmg: false, rangeMode: false, _weakGizmos: null,
@@ -2186,15 +2153,14 @@ const DebugPanel = {
       else if (a === 'tg_vault') { TUNE.MOVEMENT.vaultMaxHeight = TUNE.MOVEMENT.vaultMaxHeight > 0.5 ? 0.45 : 1.2; this.log('自动翻越高度 ' + TUNE.MOVEMENT.vaultMaxHeight); }
       else if (a === 'tg_stable') { TUNE.MOVEMENT.stableCam = !TUNE.MOVEMENT.stableCam; this.log('稳定跑酷镜头 ' + (TUNE.MOVEMENT.stableCam ? 'ON' : 'off')); }
       else if (a.indexOf('ev_') === 0) this.log(MAPEV.force());
-      else if (a.indexOf('q_') === 0) { EVO.forceQuality(a.slice(2)); this.log('下一次品质强制为 ' + TUNE.RARITY.name[a.slice(2)]); }
       else if (a === 'evo_now') { EVO.progress = EVO.need + 1; EVO.draw.lastChoiceTime = -999; this.log('已把进化条打满'); }
       else if (a === 'grant_base') {
-        MODULE_IDS.slice(0, 3).forEach(id => WMOD.grant(id));
-        recompute(); UI.mutationSlots(); this.log('已授予三个基础模块');
+        BUILD.allIds('mol').slice(0, 3).forEach(id => BUILD.take(id));
+        recompute(); UI.mutationSlots(); this.log('已授予三个核心分子');
       }
-      else if (a === 'grant_branch') {
-        WMOD.own.forEach(m => { const b = BRANCH_BY_MOD[m]; if (b) WMOD.grantBranch(b.id); });
-        recompute(); this.log('已授予当前模块的全部形态分支');
+      else if (a.indexOf('give_') === 0) {
+        BUILD.take(a.slice(5)); recompute(); UI.mutationSlots();
+        this.log('已授予 ' + BUILD.cardOf(a.slice(5)).name);
       }
       else if (a[0] === 'j') this.jump(parseInt(a.slice(1), 10));
     };
@@ -2208,9 +2174,12 @@ const DebugPanel = {
         ['坠落伤害', 'tg_fall'], ['关墙跑', 'tg_wallrun'], ['关空冲', 'tg_dash'], ['关翻越', 'tg_vault'],
         ['稳定镜头', 'tg_stable'],
         ['热点迁移', 'ev_next'],
-        ['下次普通', 'q_common'], ['下次稀有', 'q_rare'], ['下次史诗', 'q_epic'], ['下次传奇', 'q_legend'],
-        ['立刻进化', 'evo_now'], ['授予全部基础', 'grant_base'], ['授予连接+融合', 'grant_fuse'],
-        ['融合精英', 'sp_fusion']
+        ['立刻升级', 'evo_now'], ['给三个分子', 'grant_base'],
+        ['给多发', 'give_volley'], ['给爆炸', 'give_blast'], ['给穿透', 'give_pierce'],
+        ['给弹射', 'give_ricochet'], ['给重弹', 'give_heavy'], ['给超频', 'give_overclock'],
+        ['给贴脸', 'give_close'], ['给远射', 'give_far'], ['给爆头', 'give_crit'],
+        ['给低血', 'give_lowhp'], ['给站桩', 'give_root'], ['给双倍装药', 'give_overload'],
+        ['给专注', 'give_focus'], ['融合精英', 'sp_fusion']
       ].map(x => '<button data-a="' + x[1] + '">' + x[0] + '</button>').join('');
     }
 
@@ -2233,12 +2202,12 @@ const DebugPanel = {
       if (TIMELINE[G.tlIndex].kind === 'boss') break;
       G.tlIndex++;
     }
-    /* 跳时间时把构筑也补上：随机拿满 3 个模块，
-       否则跳到 10 分钟会得到一个「时间很晚但一个模块都没有」的假状态。 */
-    while (WMOD.own.length < TUNE.MODULE_BUILD.maxModules) {
-      const rem = MODULE_IDS.filter(id => !WMOD.has(id));
+    /* 跳时间时把构筑也补上：按平均 3 个分子随机发，
+       否则跳到 10 分钟会得到一个「时间很晚但一张卡都没有」的假状态。 */
+    while (BUILD.molecules().length < 3) {
+      const rem = BUILD.allIds('mol').filter(id => !BUILD.has(id));
       if (!rem.length) break;
-      WMOD.grant(RNG.mutation.pick(rem));
+      BUILD.take(RNG.mutation.pick(rem));
     }
     G.player.level = Math.max(G.player.level, Math.round(expectedLevel(t)));
     recompute();
@@ -2319,8 +2288,7 @@ const DebugPanel = {
         .map((v, i) => ({ v: v, i: i })).sort((a, b) => b.v - a.v).slice(0, 3)
         .filter(x => x.v > 0.01).map(x => x.i + ':' + x.v.toFixed(1)).join(' ') || '-' : '-') + '</b>' +
       '<br>变种占比 <b>' + Math.round(Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation) * 100) + '%</b>' +
-      ' &nbsp; 超频 <b>' + Math.round(WMOD.oc.ramp * 100) + '%</b>' +
-      ' &nbsp; 动势 <b>' + Math.round(WMOD.mom.charge * 100) + '%</b>' +
+      ' &nbsp; ' + (BUILD.stateText() || '无状态卡') +
       '<br>无敌 <b style="color:' + (this.god ? '#7ef0a8' : '#8899aa') + '">' + (this.god ? 'ON' : 'off') + '</b>' +
       ' &nbsp; 种子 <b>' + RNG.master + '</b>';
 
@@ -2366,31 +2334,23 @@ const DebugPanel = {
     /* --- §11.2 进化与构筑 --- */
     {
       const d = EVO.draw, ld = EVO._lastDraw || {};
-      const fmtw = w => w ? TUNE.RARITY.order.map(k => TUNE.RARITY.name[k] + (w[k] * 100).toFixed(0) + '%').join(' ') : '-';
       $('dbgevo').innerHTML =
-        '进化 <b>' + d.evolutionIndex + '</b>/目标' + TUNE.EVOLUTION.targetCount +
+        '选择 <b>' + d.evolutionIndex + '</b>/目标' + TUNE.BUILD.targetCount +
         ' 距上次 <b>' + (G.time - d.lastChoiceTime).toFixed(1) + 's</b>(下限' + TUNE.EVOLUTION.hardFloor + ')' +
         ' 进度 <b>' + EVO.progress.toFixed(0) + '/' + EVO.need.toFixed(0) + '</b>' +
-        ' 溢出 <b>' + EVO.overflow.toFixed(0) + '</b>' +
         ' pending <b>' + (d.pending ? (d.pending.open ? '已开' : '排队:' + d.deferReason) : '-') + '</b>' +
-        '<br>原始概率 ' + fmtw(ld.raw) + '<br>最终概率 ' + fmtw(ld.final) +
-        ' → <b style="color:' + (TUNE.RARITY.css[ld.q] || '#fff') + '">' + (TUNE.RARITY.name[ld.q] || '-') + '</b>' +
-        (ld.pityRare ? ' <b style="color:#7ef0a8">三连普通保底</b>' : '') +
-        (ld.pityEpic ? ' <b style="color:#7ef0a8">7:30史诗保底</b>' : '') +
-        (ld.mapMod ? ' <b style="color:#ff8a1e">地图+' + (ld.mapMod * 100).toFixed(0) + '%</b>' : '') +
-        '<br>连败普通 <b>' + d.commonStreak + '</b> 已出史诗 <b>' + (d.hasEpic ? 'Y' : 'N') + '</b>' +
+        '<br>构筑 <b>' + (BUILD.hudText() || '空') + '</b>' +
+        '<br>状态 <b>' + (BUILD.stateText() || '-') + '</b>' +
         ' 下一抽修正 <b>' + (typeof MAPBUILD !== 'undefined' ? MAPBUILD.statusText() : '-') + '</b>' +
-        '<br>' + WMOD.describe().join('<br>') +
-        '<br>谱系预算 <b>' + AG.debugLine() + '</b>' +
-        '<br>超频 <b>' + WMOD.oc.ramp.toFixed(2) + '</b>' +
-        ' 动势 <b>' + WMOD.mom.charge.toFixed(2) + '</b>' +
-        ' 强化轮 <b style="color:#7ec8ff">' + (WMOD.mom.round > 0
-          ? WMOD.mom.strength.toFixed(2) + '(发' + WMOD.mom.shots + '/' + WMOD.mom.timer.toFixed(2) + 's)' : '-') + '</b>' +
+        '<br>性能 <b>' + ATK.debugLine() + '</b>' +
         ' 耗弹/发 <b>' + G.derived.ammoPerShot + '</b>' +
         ' 弹丸 <b>' + G.derived.pellets + '</b>' +
         ' 贯穿 <b>' + G.derived.pierce + '</b> 弹射 <b>' + G.derived.bounce + '</b>' +
-        '<br>卡池 <b>' + MODPOOL.cards.length + '</b> 审计拒绝 <b style="color:' +
-          (MODPOOL.rejected.length ? '#ff6a7a' : '#7ef0a8') + '">' + MODPOOL.rejected.length + '</b>' +
+        '<br>伤害 直接<b>' + Math.round(BUILD.stats.direct) + '</b>' +
+        ' 爆炸<b>' + Math.round(BUILD.stats.blast) + '</b>' +
+        ' 弹射<b>' + Math.round(BUILD.stats.bounce) + '</b>' +
+        ' 弹药 花<b>' + Math.round(BUILD.stats.ammoSpent) + '</b>' +
+        ' 省<b>' + Math.round(BUILD.stats.ammoSaved) + '</b>' +
         '<br>共同进化 <b>' + (typeof HORDE !== 'undefined' ? HORDE.describe() : '-') + '</b>';
     }
   }
@@ -2426,14 +2386,10 @@ function boot() {
   G.buff = null; G.meleeWhiffs = 0; G.hurtCount = 0;
   G.mouseDX = 0; G.mouseDY = 0;
 
-  /* 模块状态 → 谱系/消费者登记 → 卡池审计 → 导演。顺序不能反：
-     MODPOOL.audit() 要读 AG.consumers 和 WEAPON.moduleFx，
-     所以必须排在 WEAPON.build() 和 AG.init() 之后。 */
-  WMOD.init();
-  AG.init();
+  BUILD.init();
+  ATK.init();
   HORDE.init();
   MAPBUILD.init();
-  MODPOOL.init();
   EVO.init();
   MAPEV.init();
 
@@ -2503,7 +2459,7 @@ function frame(now) {
       updateXp(dt);
       trackXpRate(dt);
       NAV.updateCamp(dt);
-      AG.tick(dt);
+      ATK.tick(dt);
       EVO.update(dt);
       if (!DebugPanel.freezeEvents) MAPEV.update(dt);
       HORDE.update(dt);

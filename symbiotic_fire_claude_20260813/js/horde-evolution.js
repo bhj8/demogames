@@ -152,7 +152,7 @@ const HORDE = {
     const id = this.state && this.state.bossTerminalRule;
     if (!id || !e.king) return;
     e.terminalRule = id;
-    const card = (typeof MODPOOL !== 'undefined' && MODPOOL.byId[id]) || EVOPOOL.byId[id];
+    const card = (typeof BUILD !== 'undefined' && BUILD.cardOf(id)) || null;
     G.ui.toast('尸王掌握了：' + (card ? card.name : id), TUNE.RARITY.css.legend, true);
   },
 

@@ -44,41 +44,15 @@ const _ext = new THREE.Vector3();
 function lvl(id) { return G.mods[id] || 0; }
 
 function recompute() {
-  const g = TUNE.GUN;
   const d = {};
 
-  /* 基础火力。枪本身不再有「伤害 +X%」「射速 +X%」这类改装 ——
-     那些原子按 todo5 §1/§8 禁止单独作为卡牌，只能作为模块内部的构成。 */
-  d.damage = g.damage;
-  d.fireInterval = g.fireInterval;
-  d.magazine = Math.round(g.magazine * (1 + 0.40 * lvl('mag')));
-  d.reloadTime = g.reloadTime * Math.pow(0.75, lvl('reload'));
-  d.spreadBase = g.spreadBase;
-  d.spreadBloom = g.spreadBloom;
-  d.recoil = g.recoil;
-  d.weakpointMult = g.weakpointMult + 0.5 * lvl('optic');
-  d.pellets = g.pellets;
-  d.executeBonus = 0;
-  d.knockback = g.knockback;
-  d.weaponHeavy = 1;
-  d.bulletScale = 1;
-  d.pierce = g.pierce;
+  /* Build 的折算是唯一的一次查表，热路径只读 G.derived（todo10 §8.2）。
+     这里只折算「读武器状态」的东西；距离、爆头、低血、站桩、专注
+     全部在命中时按受害者重算 —— 它们跟着位置和时间变，折进来就是错的。 */
+  BUILD.derive(d);
 
-  /* 派生效果的搜索与返还 */
-  d.mutDamage = 1;
-  d.mutRadius = 1;
-  d.hunter = lvl('hunter') > 0;
-  d.searchMult = d.hunter ? 1.25 : 1;
-  d.aftershock = lvl('aftershock') > 0;
-  d.feedback = lvl('feedback') > 0;
-  d.maxDepth = TUNE.PROC.maxDepth;
-
-  /* 生存与节奏 */
-  d.moveSpeed = TUNE.PLAYER.moveSpeed * (1 + 0.12 * lvl('stim'));
-  d.dashCooldown = TUNE.PLAYER.dashCooldown * Math.pow(0.80, lvl('dashcd'));
-
-  /* 空投强化（临时，结束后 recompute 会完整还原） */
-  d.infiniteMag = false;
+  /* 空投强化是临时叠加，必须在 Build 折算【之后】乘，
+     否则下一次 recompute 会把它算进基线里回不去。 */
   if (G.buff) {
     const A = TUNE.AIRDROP;
     if (G.buff.id === 'ammo') {
@@ -89,27 +63,20 @@ function recompute() {
       d.dashCooldown *= (1 - A.adrenDashCd);
     }
   }
-  d.traumaHeal = lvl('trauma');
-  d.magnetRadius = TUNE.XP.magnetRadius * (1 + 0.50 * lvl('magnet'));
 
-  const oldMax = G.player ? G.player.maxHp : TUNE.PLAYER.maxHp;
-  d.maxHp = TUNE.PLAYER.maxHp * (1 + 0.20 * lvl('armor'));
-  if (G.player && d.maxHp > oldMax) G.player.hp += (d.maxHp - oldMax);  // §23 等额治疗
-  if (G.player) { G.player.maxHp = d.maxHp; G.player.hp = Math.min(G.player.hp, d.maxHp); }
-
-  /* 可组合模块的折算是唯一的一次查表，热路径只读 G.derived。 */
-  WMOD.applyDerived(d);
+  /* 最大生命由「强心」在 BUILD.take 里直接改玩家，这里只跟读 ——
+     以前这行是 `G.player.maxHp = d.maxHp`，会把强心加的血每帧抹掉。 */
+  if (G.player) {
+    d.maxHp = G.player.maxHp;
+    G.player.hp = Math.min(G.player.hp, d.maxHp);
+  }
 
   G.derived = d;
   return d;
 }
 
-/* 有效射速：超频只改发射节奏（todo5 §6.1 第 7 条），不建平行伤害系统 */
-function effectiveFireInterval() {
-  const d = G.derived;
-  if (!WMOD.has('overclock')) return d.fireInterval;
-  return d.fireInterval / (1 + (d.ocRampMax || 0) * WMOD.oc.ramp);
-}
+/* 有效射速：超频只更新下一次开火间隔（§8.1 第 9 步），不建平行伤害系统 */
+function effectiveFireInterval() { return BUILD.fireInterval(); }
 
 function procAllowed(ctx) { return ctx.procDepth < G.derived.maxDepth; }
 
@@ -423,7 +390,7 @@ function makeBulletPool() {
 
 function spawnBullet(origin, dir, dmg, ctx, opts) {
   opts = opts || {};
-  const cap = (typeof TUNE.GENEALOGY !== 'undefined') ? TUNE.GENEALOGY.projectileCap : 300;
+  const cap = TUNE.BUILD.projectileCap;
   if (G.bullets.count >= cap) return null;
   const b = G.bullets.get();
   b.pos.copy(origin); b.prev.copy(origin);
@@ -440,7 +407,6 @@ function spawnBullet(origin, dir, dmg, ctx, opts) {
   b.gene = opts.gene || null;
   b.baseDmg = opts.gene ? dmg : 0;
   b.pendingBlast = false; b.homing = 0;
-  b.splitBudget = G.derived.splitCount || 0;
   return b;
 }
 
@@ -499,22 +465,20 @@ function segCylinder(p0, p1, cx, cz, r, y0, y1) {
 
 /* 命中反馈的颜色来源：谁造成的，就用谁的颜色（TODO.md M6）。
    根弹按当前最显著的根弹属性走，派生弹按它的 sourceModule 走。 */
+/* 命中火花按【是什么打出来的】着色，玩家不看结算页也能读出因果。
+   V3 只有三种主弹形态可分：穿透过的、重弹、普通。
+   弹射与爆炸有自己的表现，不走这里。 */
 function moduleHitColor(b) {
-  const g = b.gene;
-  if (!g) return 0xffd08a;
-  if (g.sourceModule && g.sourceModule !== 'root' && TUNE.MODULES[g.sourceModule])
-    return TUNE.MODULES[g.sourceModule].color;
-  if (b.bounceHits > 0) return TUNE.MODULES.ricochet.color;
   const d = G.derived;
-  if (d.momActive > 0.01) return TUNE.MODULES.momentum.color;
-  if (b.pierceHits > 0) return TUNE.MODULES.pierce.color;
-  if (d.heavyOn) return TUNE.MODULES.heavy.color;
+  if (b.pierceHits > 0) return 0x8affc1;
+  if (d.heavyOn) return 0xff6a4a;
+  if (d.pellets > 1) return 0x7fd4ff;
   return 0xffd08a;
 }
 
 /* 子弹退场的唯一出口：谱系里还欠一次终点结算的，在这里补上（todo5 §4.3） */
 function retireBullet(b) {
-  if (b.gene && typeof AG !== 'undefined') AG.onBulletEnd(b, b.pos);
+  
   G.bullets.release(b);
 }
 
@@ -612,7 +576,7 @@ function resolveBulletHit(b, e, point, weak) {
 
   /* todo5 §6.3：同一目标在单根攻击里的重复命中上限。
      不通过就当没打中 —— 子弹继续飞，但不再对这只敌人结算第 N+1 次。 */
-  if (b.gene && typeof AG !== 'undefined' && !AG.gate(b.gene, e)) {
+  if (b.root && !ATK.gate(b.root, e)) {
     R.spark(point, b.dir, 0x8fa4b8);
     return;
   }
@@ -622,7 +586,10 @@ function resolveBulletHit(b, e, point, weak) {
   const facing = V3.set(e.face.x, 0, e.face.z).normalize();
   const fromFront = toHit.dot(facing) > MUT.ossify.enemy.frontDot;
 
-  let dmg = b.dmg;
+  /* §8.2：读武器状态的倍率已经在 d.damage 里；读位置与目标的在这里按
+     这一个受害者重算 —— 距离、爆头、低血、站桩、专注。
+     爆炸与弹射继承的是【这一次攻击】的爆头判定，但距离各自重算。 */
+  let dmg = b.dmg * BUILD.victimMul(e, weak);
   if (weak) dmg *= G.derived.weakpointMult;
   const hpBefore = e.hp;
   const dealt = damageEnemy(e, dmg, b.ctx, { point: point, weakpoint: weak, fromFront: fromFront, bullet: b });
@@ -659,19 +626,16 @@ function resolveBulletHit(b, e, point, weak) {
      打在骨板上也算一次命中（伤害被抵消，但确实命中了），所以无条件发出。 */
   G.bus.emit('hit', { enemy: e, ctx: b.ctx, point: point, dir: b.dir, weak: weak, dealt: dealt });
 
-  /* todo5 §6.1：贯穿 → 弹射 → 分裂 → 爆裂 的顺序全部在 AG.onHit 里，
+  /* §8.1 的攻击顺序全部在 ATK.onHit 里：直接伤害 → 爆炸 → 弹射链 → 穿透继续。
      是一个函数里的顺序语句，而不是若干个各自订阅、顺序靠优先级碰运气的回调。 */
-  if (b.gene && typeof AG !== 'undefined') {
-    if (!AG.onHit(b, e, point, weak, dealt)) G.bullets.release(b);
+  if (killed) BUILD.onKill(e, ATK._closeTo(e));
+  if (b.root) {
+    if (!ATK.onHit(b, e, point, weak, dealt)) G.bullets.release(b);
     return;
   }
 
-  /* 贯穿（todo/todo2/todo3 的旧路径，?build=old 时仍然走这里） */
-  if (b.pierce > 0) {
-    b.pierce--; b.pierceHits++;
-  } else {
-    G.bullets.release(b);
-  }
+  /* 没有根攻击的子弹（敌方投射物等）不走玩家的攻击流程 */
+  G.bullets.release(b);
 }
 
 /* ============================================================================
@@ -698,6 +662,16 @@ function hurtPlayer(amount, fromPos, kind) {
     if (G.buff.shield <= 0) G.buff.t = 0;       // 吸满即结束
     if (amount <= 0.001) return;                // 完全挡下，不进入受伤流程
   }
+
+  /* 再生盾 / 跑墙护盾：在生命之前吃伤害。受伤后重新计时（BUILD.onHurt）。 */
+  const bc = BUILD.ctx;
+  if (bc.shield > 0) {
+    const eat = Math.min(bc.shield, amount);
+    bc.shield -= eat; amount -= eat;
+    G.ui.shieldHit(bc.shield <= 0);
+    if (amount <= 0.001) { BUILD.onHurt(); return; }
+  }
+  BUILD.onHurt();
 
   p.hp -= amount;
   Audio2.hurt(kind);

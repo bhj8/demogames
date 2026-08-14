@@ -658,216 +658,169 @@ TUNE.EVOLUTION = {
   safeDelayMax: 12           // 安全窗口最多延迟多久，超过则强制弹出
 };
 
-/* --- 品质概率 §7.3 ---
-   分段按 [起, 止, 普通, 稀有, 史诗, 传奇]，10:30 后不再生成选择。 */
-TUNE.RARITY = {
-  order: ['common', 'rare', 'epic', 'legend'],
-  name: { common: '普通', rare: '稀有', epic: '史诗', legend: '传奇' },
-  css: { common: '#c8d4e0', rare: '#4fa8ff', epic: '#b060ff', legend: '#ffb020' },
-  bands: [
-    { from: 0,   to: 180, w: { common: 0.70, rare: 0.27, epic: 0.03, legend: 0.00 } },
-    { from: 180, to: 480, w: { common: 0.52, rare: 0.33, epic: 0.13, legend: 0.02 } },
-    /* 末段传奇 0.06 → 0.05：整局「出现过传奇」实测 35.4%，压着 §7.3 的
-       25~35% 上界出去了。只动末段，不碰中段 —— 中段那 0.02 决定的是
-       「中期能不能撞上一次传奇」，动它会改掉整局的节奏感受。 */
-    { from: 480, to: 630, w: { common: 0.38, rare: 0.35, epic: 0.22, legend: 0.05 } }
-  ],
-  revealTime: 0.42           // §7.10 先揭示整体品质 0.35～0.5 秒，再展开三张
-};
-
-/* --- 保底 §7.4：只限制坏运气，不限制好运气 --- */
-TUNE.PITY = {
-  commonStreak: 3,           // 连续 3 次普通后，下一次至少稀有
-  epicByTime: 450,           // 7:30 仍未出现史诗或传奇
-  noLegendPity: true,        // 传奇永不保底
-  noReverseBalance: true,    // 不做“连续高品质后强制普通”
-  linkBiasAfter: 2           // 已有两个基础变异却长期没有连接时，抬高连接卡权重
-};
-
-/* --- 地图行为对下一抽的修正 §7.8 --- */
-TUNE.MAP_BUILD = {
-  roofDropEpicBonus: 0.08,   // 屋顶空投：史诗 +8 个百分点，从普通里扣
-  qualityBonusCap: 0.12,     // 品质奖励叠加上限
-  tagBiasMult: 1.8,          // 标签权重 ×1.8
-  eliteHuntMinQuality: 'rare',
-  bannerTime: 6.0            // HUD 上修正提示的显示时长
-};
-
-/* --- 效果预算 §7.7 / §12 性能 ---
-   所有连锁统一经过它，禁止各卡自行无限生成对象。 */
-TUNE.EFFECT_BUDGET = {
-  perSecond: 220,            // 每秒可生成的效果事件总量
-  perFrame: 48,
-  maxDepth: 3,               // 融合与传奇的最大递归深度
-  perTargetPerChain: 1,      // 同一根攻击对同一目标的同类效果次数
-  spawnCapProjectile: 220,
-  spawnCapZone: 28,
-  soundConcurrent: 6         // 同一连锁的同时发声上限
-};
-
 /* ============================================================================
-   todo5 —— 可组合武器模块
-   §6.3「所有具体比例进入集中配置，不散落在战斗代码」：
-   下面这一整段就是那个集中配置。attack-graph.js / weapon-modules.js 里
-   不允许出现调参用的魔法数字。
+   todo10 —— 自然反应 Build V3
+
+   §6.3 品质档整个删掉。玩家抽到的是【固定的量】，不是一次赌博：
+     大升级（核心分子 / 大玩法选择）= +2 级，小升级 = +1 级。
+     Bao 2026-08-14：「传奇是最大的败笔，玩家随机到的应该是固定的，
+     要不然玩家会非常挫败。」
+
+   §0.3 这里【没有】反应矩阵、没有组合名、没有逐对配方。
+   六个分子 + 一套统一攻击规律，组合结果自己长出来。
    ========================================================================== */
+TUNE.BUILD = {
+  /* --- 每次选择给几级（§6.3 改版）--- */
+  bigLevels: 2,              // 核心分子 / 大玩法选择：首次与重复都给 2 级
+  smallLevels: 1,            // 武器 / 机动 / 生存小升级
 
+  /* --- §6.1 一局结构 --- */
+  targetCount: 18,           // 16~20 次选择，由经验曲线动态产生
+  cutoff: 630,               // 最后 90 秒停止升级（12 分钟局）
+  moleculeSoftCap: 4,        // 拿到第 4 个分子后新分子权重下降，但不锁死
+  moleculeSoftWeight: 0.35,
 
-/* --- §6.3 硬上限：这些必须从第一天存在，数值可调、存在性不可调 --- */
-TUNE.GENEALOGY = {
-  derivedPerRoot: 14,        // 单根攻击最大派生弹数量
-  eventsPerRoot: 22,         // 单根攻击最大效果事件数
-  maxDepth: 3,               // 最大递归深度
-  hitsPerTargetPerRoot: 3,   // 同一目标单根攻击的重复命中上限
-  perFrame: 64,              // 单帧全局效果预算
-  perSecond: 340,            // 每秒全局效果预算
-  projectileCap: 260,        // 场上弹丸总量（含派生）
-  blastPerRoot: 1.0,         // 单根攻击的统一爆炸预算（§4.1：不是每颗一份）
-  blastRadiusFloor: 0.42,    // 分摊后的半径下限倍率，低于此不值得画
-  blastRadiusCeil: 1.30,
-  soundPerBlastWindow: 2,    // §11 同一时间窗内最多几次完整爆炸音
-  blastSoundWindow: 0.11
+  /* --- 保底（Bao：只托底不封顶，规则可以多一点）--- */
+  firstDrawAllMolecules: true,   // 第 1 次固定三张不同分子
+  secondMoleculeByDraw: 4,       // 第 4 次结束前必得第 2 个分子
+  bigEveryDraws: 2,              // 连续 2 次没有大升级 → 下次至少 1 张
+  /* 每一次发牌都至少有一张武器侧的卡（分子 / 大选择 / 武器小升级）。
+     机动生存卡不允许占满三张 —— 那一次的武器成长会直接归零。 */
+  ammoBiasAtCost: 2,             // 每枪耗弹 ≥2 时抬高弹药循环卡权重
+  ammoBiasMult: 2.2,
+
+  /* --- §8.3 性能上限。这是【对象与事件】的上限，不是伤害预算 ---
+     伤害永远算满（纯数学，很便宜），触顶只合并视觉与音效、只砍对象。 */
+  /* 单根攻击的效果事件。§8.3 列出的必保上限里【没有】这一条 ——
+     它只是防死循环的保险丝，不是平衡旋钮。多发 8 颗 × 穿透 3 次 ×
+     （爆炸 10 个目标 + 弹射 4 跳各自再爆）本来就上千，
+     调低它等于静默削掉玩家已经看见并理解的伤害，正是 §8.3 禁止的事。 */
+  eventsPerRoot: 4000,
+  hitsPerTargetPerRoot: 3,   // 同一根攻击对同一目标的重复命中
+  projectileCap: 260,
+  perFrame: 6000,            // 单帧伤害事件（解耦后很便宜，只防死循环）
+  perSecond: 90000,
+  fxPerFrame: 40,            // 视觉对象：这才是真正稀缺的东西
+  blastSoundWindow: 0.11,    // 同一时间窗内的爆炸音合并
+  soundPerBlastWindow: 2,
+
+  /* --- 距离曲线（多发的单弹衰减 §2.1）---
+     近距离满伤，远距离掉到 farKeep。贴脸/远射是【另一条】曲线，
+     Bao 已确认两者互斥就互斥，不做折中。 */
+  pelletNear: 6,             // 6m 内每颗弹丸满伤
+  pelletFar: 14,             // 14m 外只剩 farKeep
+  pelletFarKeep: 0.45,
+
+  /* --- §8.1 弹射与爆炸的搜索半径 --- */
+  bounceSearch: 14,
+  blastSearch: 6.0,
+
+  /* --- 爆炸的统一衰减（Bao：稍微不收敛一点）---
+     同一根攻击里第 n 次爆炸 ×max(floor, ratio^(n-1))。
+     0.93 前 8 次几乎不掉，掉到 0.55 就不再掉 —— 之后每多一次命中
+     都是稳定的 +55%，总和线性增长、不收敛。 */
+  blastDecay: 0.93,
+  blastDecayFloor: 0.55
 };
 
-/* --- §1 底层原子的基线（不作为卡牌暴露）--- */
-TUNE.ATOMS = {
-  ammoPerShot: 1,
-  volleySpreadDeg: 3.6,      // 齐射自身的图案角，与散布无关
-  splitSearch: 15,
-  ricochetSearch: 14,
-  terminalRange: 46          // 贯穿弹没打到人时，终点爆破的最远兑现距离
-};
-
-/* --- §2 八个玩家可见模块。数值全部是灰盒建议值 --- */
-TUNE.MODULES = {
+/* --- §2 六个核心分子。数值全部是灰盒建议值，D 阶段用靶场调 --- */
+TUNE.MOL = {
   volley: {
-    name: '齐射', en: 'Volley', css: '#ffc24a', color: 0xffc24a,
-    effect: '一次发射多颗子弹',
-    cost: '同时消耗对应数量的弹药',
-    pellets: 2,              // 并发弹丸 +2
-    ammo: 2,                 // 单次耗弹 +2
-    dmgPerPellet: 0.62,      // 单弹衰减，但总量上升
-    fanDeg: 3.6
+    name: '多发', css: '#7fd4ff',
+    pelletsAt1: 3,           // 1 级 3 颗
+    pelletPerLv: 1,
+    ammoAt1: 2,              // 1 级单次耗弹 2
+    ammoEveryLv: 2,          // 每两级再 +1
+    fanDeg: 3.4
   },
   blast: {
-    name: '爆裂', en: 'Detonation', css: '#ff8a1e', color: 0xff8a1e,
-    effect: '命中产生范围爆炸',
-    cost: '每次攻击额外消耗弹药',
-    radius: 3.5,
-    dmgRatio: 0.78,
-    ammo: 1,
-    bossDirect: 1.0,         // §2.2 对 Boss 保留直击 + 爆炸双份价值
-    ringInner: 0.45          // 空心爆破分支用
+    name: '爆炸', css: '#ff9a3c',
+    dmgAt1: 0.52,            // 本次命中伤害的 52%（§9.2 要求大升级 ≥ +40%）
+    dmgPerLv: 0.09,
+    radiusAt1: 2.5,
+    radiusPerLv: 0.32
   },
   pierce: {
-    name: '穿透', en: 'Pierce', css: '#e8eeff', color: 0xf0f4ff,
-    effect: '子弹贯穿目标，并把已获得的效果带到后排',
-    cost: '后排命中逐次衰减',
-    count: 3,
-    dmgDecay: 0.82,          // 每贯穿一次的伤害继承
-    payloadDecay: 0.72,      // 载荷（爆裂等）的继承
-    rampPerHit: 0.12,        // 过穿增幅分支用
-    rampMax: 0.48
-  },
-  split: {
-    name: '分裂', en: 'Fission', css: '#b060ff', color: 0xb060ff,
-    effect: '主弹命中后生成次级弹',
-    cost: '次级弹只继承部分能力',
-    count: 2,
-    dmgCoef: 0.45,
-    payloadCoef: 0.50,
-    pierceInherit: 0.35,     // §5 次级弹继承低倍率穿透
-    scale: 0.78,
-    waveHits: 4,             // §5 分裂×超频：合并成周期性分裂波，禁止逐弹爆炸
-    waveCount: 4,
-    heavyFewer: 1            // §5 分裂×重型：少量、清晰、冲击强
-  },
-  heavy: {
-    name: '重型', en: 'Heavy', css: '#ff5f3c', color: 0xff5f3c,
-    effect: '弹体、伤害与击退大幅提高',
-    cost: '射速明显下降',
-    dmg: 1.90,
-    scale: 1.80,
-    knock: 2.20,
-    rate: 1.75,              // fireInterval 乘数，>1 = 更慢
-    ammo: 1,
-    weaponHeavy: 0.55,       // 枪模后坐 / 枪声 / 抛壳的加重量
-    blastScale: 1.35,        // §5 爆裂×重型：更大更强但更慢
-    siegeLen: 13             // 攻城分支的震波线长
-  },
-  overclock: {
-    name: '超频', en: 'Overclock', css: '#ff3355', color: 0xff3355,
-    effect: '弹匣与射速提高，持续射击继续升速',
-    cost: '停火后升速会衰减',
-    mag: 1.50,
-    rate: 0.86,              // 基础射速直接变快
-    rampTime: 2.2,
-    rampMax: 0.45,
-    holdGrace: 0.55,
-    decay: 0.50,
-    reloadKeep: 0.5,
-    heavyRampMult: 1.85,     // §4.5 重型×超频：夺回速度的幅度
-    heavyRampTime: 1.45,     // 升速过程更长，让「逐步升成重炮」可读
-    bounceRampAt: 0.70,      // §5 超频×弹射：持续命中提高弹射次数
-    redlineMax: 0.80         // 红线分支的上限
+    name: '穿透', css: '#8affc1',
+    countAt1: 2,
+    countPerLv: 1,
+    keepAt1: 0.80,
+    keepPerLv: 0.03,
+    keepMax: 0.95
   },
   ricochet: {
-    name: '弹射', en: 'Ricochet', css: '#4fe0a8', color: 0x4fe0a8,
-    effect: '子弹结束当前命中后折向另一个目标',
-    cost: '每次折向都会衰减',
-    count: 2,
-    dmgDecay: 0.72,
-    payloadDecay: 0.62,
-    pierceInherit: 0.50,     // §4.4 弹射后继承较低贯穿，避免无限折线
-    search: 14,
-    minTurnDeg: 12           // 转折必须看得出来
+    name: '弹射', css: '#c58aff',
+    countAt1: 1,
+    countPerLv: 1,
+    firstKeep: 0.68,         // 68% → 48% → 33% → 23%（§9.2 要求大升级 ≥ +40%）
+    hopDecay: 0.70
   },
-  momentum: {
-    name: '动势', en: 'Momentum', css: '#7ec8ff', color: 0x7ec8ff,
-    effect: '高速移动积蓄动势，强化下一轮射击',
-    cost: '需要先跑起来',
-    releaseAt: 0.34,         // 低于此不进入强化轮
-    gainDash: 0.42, gainSlide: 0.30, gainWallrun: 0.55, gainAirDash: 0.38,
-    gainFallPerM: 0.055, gainSpeed: 0.16,   // 单纯高速奔跑也慢慢攒
-    decay: 0.18,             // 落地静止后每秒衰减
-    /* 「下一轮」的定义随构筑变化（§2.8）。
-       §3 的复核条款：动势如果最终只是「移动后伤害 +X%」就该降级 ——
-       所以强化轮的【规模】必须跟着动势强度走，而不是恒定一发。 */
-    roundShots: 2,           // 默认底座：两发起步，再按强度追加
-    roundExtra: 2,           // 满动势时额外追加的发数
-    roundHeavy: 1,           // 重型：强化「下一次强冲击」，就是一发
-    roundVolley: 1,          // 齐射：强化整次齐射
-    roundStreamT: 1.15,      // 超频：强化一段短时枪流
-    dmg: 1.95, scale: 0.75, knock: 1.25, blastR: 0.48,
-    pierceAt: 0.50, splitAt: 0.60, bounceAt: 0.60,
-    bounceAtFull: 0.90,      // §5 弹射×动势：满动势再多给一次折向
-    bounceKeep: 0.20,        // 以及更低的衰减 —— 「或」的两半都做
-    /* 动能炮（§4.6）的两个系数不在这里 —— 它们属于 TUNE.MODULE_PAIRS，
-       那是关键组合的唯一出处。同一个数写两个地方，改了不生效的那次
-       就是这么来的（§6.3 要求集中配置，重复即等于没有集中）。 */
-    ammoBack: 0.22           // 动能核心分支：动势兑换弹药
+  heavy: {
+    name: '重弹', css: '#ff6a4a',
+    dmgAt1: 2.2,
+    dmgPerLv: 0.35,
+    rateAt1: 0.65,           // 射速降到 65%
+    ratePerLv: 0.05,
+    rateMax: 0.90,
+    ammoExtra: 1,
+    scale: 1.55,
+    knock: 1.9
+  },
+  overclock: {
+    name: '超频', css: '#ffd24a',
+    peakAt1: 0.70,           // 峰值 +70% 射速
+    peakPerLv: 0.15,
+    rampAt1: 1.6,            // 达到峰值所需的持续射击时间（每个弹匣都要重新升，太慢就白拿）
+    rampPerLv: -0.25,
+    rampMin: 1.0,
+    decay: 2.6               // 停火后每秒衰减多少档
   }
 };
 
-/* §2 每局最多 3 个基础模块；C(8,3)=56 种底座 */
-TUNE.MODULE_BUILD = {
-  maxModules: 3,
-  minByDraw: 4,              // §7.1 第 4 次选择结束前至少 2 个
-  minModules: 2,
-  originFirst: true          // §7.1 第一次固定三张不同基础模块
+/* --- §3 七个大玩法选择。全部按「等级」缩放，首次到手就是 2 级 --- */
+TUNE.CHOICE = {
+  close:   { name: '贴脸', css: '#ff5f7a', near: 7,  far: 14, gainPerLv: 0.35, lossPerLv: 0.15, lossFloor: 0.40 },
+  far:     { name: '远射', css: '#6ac8ff', near: 7,  far: 15, gainPerLv: 0.35, lossPerLv: 0.15, lossFloor: 0.40 },
+  /* Bao：现在爆头太容易了，先按 1.5 / 0.7 走，等怪的形状改了再抬 */
+  crit:    { name: '爆头', css: '#ffe066', gainPerLv: 0.25, lossPerLv: 0.15, lossFloor: 0.40 },
+  lowhp:   { name: '低血', css: '#ff4d5e', threshold: 0.40, gainPerLv: 0.40 },
+  root:    { name: '站桩', css: '#b0ffb0', moveEps: 0.55, delay: 0.5, rampTime: 2.5, gainPerLv: 0.50 },
+  overload:{ name: '双倍装药', css: '#ff8ae0', ammoMult: 2, gainPerLv: 0.50 },
+  focus:   { name: '专注目标', css: '#9affe0', perStackPerLv: 0.05, maxStacks: 10, resetAfter: 1.0 }
 };
 
-/* §4.5 / §4.1 等六组关键反应里需要专门代码的部分，参数放这里 */
-TUNE.MODULE_PAIRS = {
-  'heavy+overclock': { rampMult: 1.85, rampTime: 1.45 },
-  'blast+volley':    { budgetPerExtra: 0.22 },
-  'blast+pierce':    { terminal: true, tickRatio: 0.0 },
-  'pierce+ricochet': { pierceInherit: 0.50 },
-  'blast+split':     { payload: 0.50 },
-  /* §4.6 动能炮：重型的强化轮只有一发（「下一次强冲击」），
-     所以那一发必须是真正的尖峰。1.60 只够抵掉「多发变一发」的损失，
-     合起来就和两个模块各打各的一样 —— §4.5 点名反对的那种相互抵消。 */
-  'heavy+momentum':  { dmg: 3.00, scale: 1.45 }
+/* --- §4 七个武器小升级：允许是清楚的数值成长，不假装成新机制 --- */
+TUNE.WUP = {
+  power:    { name: '威力',   css: '#ffd0a0', perLv: 0.22 },
+  rate:     { name: '射速',   css: '#ffd0a0', perLv: 0.22 },
+  mag:      { name: '扩容',   css: '#a0d0ff', perLv: 0.50 },
+  reload:   { name: '快装',   css: '#a0d0ff', perLv: 0.30, floor: 0.45 },
+  weak:     { name: '弱点',   css: '#ffe066', perLv: 0.55 },
+  thrift:   { name: '节弹',   css: '#a0ffd0', at1: 0.22, perLv: 0.08, cap: 0.75 },
+  killload: { name: '击杀装填', css: '#a0ffd0', perKill: 1 }
+};
+
+/* --- §5 九个机动、生存与资源升级。它们不得成为地图基本路线的通行证 --- */
+TUNE.MUP = {
+  vigor:       { name: '强心',     css: '#7ef0a8', hpPerLv: 25 },
+  regenshield: { name: '再生盾',   css: '#6ac8ff', quiet: 6.0, perLv: 25 },
+  lifesteal:   { name: '近杀回血', css: '#7ef0a8', range: 8, perLv: 2, capPerSec: 6 },
+  dash2:       { name: '二次冲刺', css: '#ffd24a', perLv: 1 },
+  chainmove:   { name: '连续机动', css: '#ffd24a' },
+  slam:        { name: '落地冲击', css: '#ff9a3c', minSpeed: 12, dmgPerSpeed: 3.0, radius: 5.5 },
+  wallshield:  { name: '跑墙护盾', css: '#6ac8ff', distance: 8, perLv: 18, max: 60 },
+  dashhit:     { name: '冲刺撞击', css: '#ff6a4a', perLv: 22, cooldown: 1.2, push: 7 },
+  magnet:      { name: '拾取强化', css: '#a0ffd0', perLv: 0.5 }
+};
+
+/* --- 地图行为的兑现（§6 的地图奖励）---
+   品质删掉之后，「下一抽史诗 +8%」这类修正没有兑现口了。
+   Bao：地图本身是下一轮要大改的东西，这一版先按最直白的方式给。 */
+TUNE.MAP_BUILD = {
+  bannerTime: 6.0,
+  roofDrop: 'forceBig',      // 屋顶开空投 → 下一次必含 1 张大升级
+  wallrun: 'extraLevel',     // 连续墙跑 → 下一张卡多给 1 级
+  eliteHunt: 'fourth'        // 猎杀跨层精英 → 下一次多一个选项（四选一）
 };
 
 /* --- todo5 §9 超频尸：加速过程必须可见，并存在失速窗口 ---

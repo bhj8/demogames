@@ -53,6 +53,7 @@ class RngChannel {
 const RNG = {
   master: 0,
   mods: null,      // 普通升级抽卡
+  evo: null,       // 三选一发牌（todo10：Build 卡池唯一的随机源）
   mutation: null,  // 共同变异抽卡
   spawn: null,     // 变种与刷怪
   event: null,     // 精英时间点与位置
@@ -60,12 +61,13 @@ const RNG = {
   init(seed) {
     this.master = seed | 0;
     this.mods     = new RngChannel(seed ^ 0x1a2b3c);
+    this.evo      = new RngChannel(seed ^ 0x3c4d5e);
     this.mutation = new RngChannel(seed ^ 0x5e6f70);
     this.spawn    = new RngChannel(seed ^ 0x9c0ffe);
     this.event    = new RngChannel(seed ^ 0xdeadb1);
     this.fx       = new RngChannel(seed ^ 0x0badf0);
   },
-  resetAll() { ['mods', 'mutation', 'spawn', 'event', 'fx'].forEach(k => this[k].reset()); }
+  resetAll() { ['mods', 'evo', 'mutation', 'spawn', 'event', 'fx'].forEach(k => this[k].reset()); }
 };
 
 /* ============================================================================

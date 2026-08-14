@@ -43,18 +43,17 @@ const WEAPON = {
 
   /* ==========================================================================
      todo5 §11：每个模块必须拥有独立、可合并的反馈层。
-     这张表是【登记表，不是文案】—— MODPOOL.audit() 会用它核对
+     这张表是【登记表，不是文案】—— 每个分子必须有看得见的枪械反馈
      「这张卡有没有反馈路径」，所以每一项后面都注明由谁真的画/响出来。
      缺一项，对应卡牌不进随机池。
      ========================================================================== */
   moduleFx: {
     volley: 'muzzle+多条枪线（_onShot flashOuter2 / game.js fire 多曳光）',
-    blast: '爆点+冲击波+合并音效（AG._blastFx）',
+    blast: '爆点+冲击波+合并音效（ATK._blastFx）',
     pierce: '连续命中音阶+纵向尾迹（_onShot boltSpeed / addTracer 长枪线）',
-    split: '父弹→子弹的出生粒子（AG._spawnSplit R.puff）',
     heavy: '枪模后坐+巨响+粗枪线（_onShot heavy 通道）',
     overclock: '升速音层+枪口密度+血管发光（update veinMat / boltSpeed）',
-    ricochet: '折线曳光（AG._bounce addTracer）',
+    ricochet: '折线曳光（ATK._bounceFx）',
     momentum: '移动蓄能与释放提示（update coilMat + game.js fire momentum 分支）'
   },
 
