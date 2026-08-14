@@ -317,7 +317,15 @@ const MODPOOL = {
   /* ==========================================================================
      §7.1 步骤 3～5：在已抽定的品质内建有效池 → 加权 → 生成三张
      ========================================================================== */
-  candidates(quality, drawState) {
+  /* 某个品质在当前构筑下还凑不凑得出三张。
+     满 3 模块之后普通/稀有会先被抽干 —— 这不是 bug，是「只有 3 个模块可深化」
+     的必然结果。所以让【导演换一个品质】，而不是把三张同品质拆成两张，
+     也不是偷偷混入低品质卡（§7.5 明令禁止后者）。 */
+  viable(quality, drawState) {
+    return this.candidates(quality, drawState, true).length >= 3;
+  },
+
+  candidates(quality, drawState, probe) {
     const B = TUNE.MODULE_BUILD;
     const idx = drawState.evolutionIndex;
 
@@ -326,7 +334,7 @@ const MODPOOL = {
     const forceModule = (B.originFirst && idx === 0) ||
       (idx + 1 >= B.minByDraw && WMOD.own.length < B.minModules);
 
-    let pool = this.cards.filter(c => c.quality === quality && c.requires(SYN.build));
+    let pool = this.cards.filter(c => c.quality === quality && c.requires());
     if (forceModule) {
       const mods = pool.filter(c => c.kind === 'module');
       if (mods.length >= 3) return this._pickDistinctModule(mods, 3);

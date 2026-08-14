@@ -101,6 +101,26 @@ const MODULE_NODES = [
   { id: 'n_mom_scale', mod: 'momentum', name: '释放增幅', text: '动势释放规模提高',
     cost: '—', max: 2, consumer: 'momentum.gain' },
 
+  /* 每个模块的第三个节点。
+     两个节点撑不住一局 15 次进化：满 3 模块之后普通/稀有池会被抽干，
+     三选一就只能凑出 1~2 张（500 局模拟里真的发生了）。 */
+  { id: 'n_volley_ammo', mod: 'volley', name: '供弹优化', text: '齐射的额外耗弹 -1',
+    cost: '弹丸数量不变', max: 2, consumer: 'volley.ammo' },
+  { id: 'n_blast_budget', mod: 'blast', name: '装药分配', text: '单次攻击的统一爆炸预算提高',
+    cost: '仍然是一份预算，不是每颗一份', max: 2, consumer: 'blast.budget' },
+  { id: 'n_pierce_width', mod: 'pierce', name: '破甲弹芯', text: '贯穿时弹体更大，更容易咬住整列',
+    cost: '—', max: 2, consumer: 'pierce.width' },
+  { id: 'n_split_scale', mod: 'split', name: '碎片增重', text: '次级弹的体积与击退提高',
+    cost: '—', max: 2, consumer: 'split.scale' },
+  { id: 'n_heavy_body', mod: 'heavy', name: '弹体扩张', text: '重型弹体进一步增大',
+    cost: '—', max: 2, consumer: 'heavy.body' },
+  { id: 'n_oc_hold', mod: 'overclock', name: '惯性飞轮', text: '停火后的升速衰减明显变慢',
+    cost: '—', max: 2, consumer: 'overclock.hold' },
+  { id: 'n_ric_range', mod: 'ricochet', name: '索敌增幅', text: '弹射的搜索范围提高',
+    cost: '—', max: 2, consumer: 'ricochet.range' },
+  { id: 'n_mom_gain', mod: 'momentum', name: '动势导流', text: '移动积蓄动势的速率提高',
+    cost: '—', max: 2, consumer: 'momentum.gain' },
+
   /* §8 允许的条件分支：弱点 / 换弹 / 击杀 —— 稀有档 */
   { id: 'n_cond_weak', mod: null, q: 'rare', name: '弱点回响', text: '弱点命中让本次攻击的载荷继承提高',
     cost: '只在打中弱点时生效', max: 2, consumer: 'cond.weak' },
@@ -153,7 +173,6 @@ const BRANCH_BY_MOD = {}; MODULE_BRANCHES.forEach(b => { BRANCH_BY_MOD[b.mod] = 
    WMOD —— 本局构筑状态 + 派生折算 + §11 归因
    ========================================================================== */
 const WMOD = {
-  enabled: false,
   own: [],                 // 持有的基础模块（有序，最多 3）
   ownSet: {},
   nodes: {},               // nodeId -> stacks
@@ -175,7 +194,6 @@ const WMOD = {
   stats: null,
 
   init() {
-    this.enabled = !!TUNE.FEATURES.composableBuildV2;
     this.own = []; this.ownSet = {};
     this.nodes = {}; this.branches = []; this.rules = []; this.taken = {};
     this.mom = { charge: 0, round: 0, shots: 0, timer: 0, strength: 0, peak: 0 };
@@ -200,7 +218,8 @@ const WMOD = {
     this._installed = true;
     const m = () => TUNE.MODULES.momentum;
     const add = v => {
-      if (!this.enabled || !this.has('momentum')) return;
+      if (!this.has('momentum')) return;
+      v *= 1 + 0.30 * this.node('n_mom_gain');
       this.mom.charge = Math.min(1, this.mom.charge + v);
       this.mom.peak = Math.max(this.mom.peak, this.mom.charge);
     };
@@ -212,14 +231,14 @@ const WMOD = {
     G.bus.on('land', ev => { if (ev && ev.fall > 6) add((ev.fall - 6) * m().gainFallPerM); });
     /* §8 条件分支「换弹冲击」：换弹完成后的第一次攻击获得一轮强化 */
     G.bus.on('reloadDone', () => {
-      if (!this.enabled || this.node('n_cond_reload') <= 0) return;
+      if (this.node('n_cond_reload') <= 0) return;
       this.flags.reloadBoost = true;
       if (this.has('momentum')) this.startRound(Math.max(this.mom.charge, 0.55));
       recompute();
     });
     /* §8 条件分支「击杀续链」：击杀返还派生预算，让同一根攻击继续传播 */
     G.bus.on('kill', ev => {
-      if (!this.enabled || this.node('n_cond_kill') <= 0) return;
+      if (this.node('n_cond_kill') <= 0) return;
       const g = ev && ev.ctx;
       if (!g || !g.root) return;
       g.root.derived = Math.min(G.derived.genDerived, g.root.derived + WMOD.node('n_cond_kill'));
@@ -300,7 +319,6 @@ const WMOD = {
      这里是唯一的折算点：热路径（attack-graph / updateBullets）只读 G.derived。
      ========================================================================== */
   applyDerived(d) {
-    if (!this.enabled) return d;
     const M = TUNE.MODULES, A = TUNE.ATOMS, GE = TUNE.GENEALOGY;
 
     /* --- 预算上限：传奇规则是唯一能改它们的东西，且都带上限（§7.3）--- */
@@ -325,7 +343,7 @@ const WMOD = {
       let extra = v.pellets + this.node('n_volley_pellet');
       if (this.hasBranch('b_volley_wall')) extra += 2;
       d.pellets = 1 + extra;
-      d.ammoPerShot += v.ammo + this.node('n_volley_pellet');
+      d.ammoPerShot += Math.max(1, v.ammo + this.node('n_volley_pellet') - this.node('n_volley_ammo'));
       /* 单弹衰减：总量上升，但不能让玩家觉得「只是数字拆开」 */
       const per = this.hasBranch('b_volley_wall') ? v.dmgPerPellet * 0.86 : v.dmgPerPellet;
       d.damage *= per;
@@ -339,7 +357,7 @@ const WMOD = {
       const h = M.heavy;
       d.heavyOn = true;
       d.damage *= h.dmg;
-      d.bulletScale *= h.scale;        // 动势的额外放大在下面的强化轮里加
+      d.bulletScale *= h.scale * (1 + 0.22 * this.node('n_heavy_body'));   // 动势的额外放大在强化轮里加
       d.knockback *= h.knock * (1 + 0.22 * this.node('n_heavy_knock'));
       d.fireInterval *= 1 + (h.rate - 1) * Math.pow(0.72, this.node('n_heavy_rate'));
       d.ammoPerShot += h.ammo;
@@ -367,6 +385,7 @@ const WMOD = {
       d.pierce = p.count + this.node('n_pierce_count');
       d.pierceDecay = Math.min(0.97, p.dmgDecay + 0.06 * this.node('n_pierce_keep'));
       d.piercePayload = p.payloadDecay + 0.07 * this.node('n_pierce_keep');
+      d.pierceWidth = 1 + 0.30 * this.node('n_pierce_width');
       d.pierceRampOn = this.hasBranch('b_pierce_over');
       d.pierceRamp = p.rampPerHit; d.pierceRampMax = p.rampMax;
     }
@@ -381,7 +400,7 @@ const WMOD = {
       const bump = 1 + 0.18 * this.node('n_split_inherit');
       d.splitDmg = s.dmgCoef * bump * (this.has('heavy') ? 1.55 : 1);
       d.splitPayload = s.payloadCoef * bump;
-      d.splitScale = s.scale * (this.has('heavy') ? 1.35 : 1);
+      d.splitScale = s.scale * (this.has('heavy') ? 1.35 : 1) * (1 + 0.28 * this.node('n_split_scale'));
       d.splitHome = this.hasBranch('b_split_home');
       /* §5 分裂×超频：合并成周期性分裂波，绝不逐弹生成对象 */
       d.splitWave = this.has('overclock');
@@ -400,7 +419,7 @@ const WMOD = {
       const momKeep = this.mom.round > 0 ? TUNE.MODULES.momentum.bounceKeep * this.mom.strength : 0;
       d.bounceDecay = Math.min(0.95, r.dmgDecay + 0.07 * this.node('n_ric_keep') + momKeep);
       d.bouncePayload = r.payloadDecay + 0.07 * this.node('n_ric_keep') + momKeep;
-      d.bounceSearch = r.search;
+      d.bounceSearch = r.search * (1 + 0.25 * this.node('n_ric_range'));
       d.bounceLash = this.hasBranch('b_ric_lash');
     }
 
@@ -417,6 +436,7 @@ const WMOD = {
       /* §4.1 齐射×爆裂：预算随齐射数放大，但仍然是一份统一预算 */
       if (this.has('volley'))
         d.blastBudget += TUNE.MODULE_PAIRS['blast+volley'].budgetPerExtra * (d.pellets - 1);
+      d.blastBudget += 0.25 * this.node('n_blast_budget');
       /* §4.3 穿透×爆裂：中途不炸，终点兑现 */
       d.blastTerminal = this.has('pierce');
     }
@@ -473,7 +493,6 @@ const WMOD = {
      每帧推进：超频升速、动势积蓄、过热、强化轮倒计时
      ========================================================================== */
   tick(dt, ctx) {
-    if (!this.enabled) return;
     const M = TUNE.MODULES, d = G.derived;
 
     /* --- 超频升速（§2.6）：只改发射节奏，不创建平行伤害系统（§6.1 第 7 条）--- */
@@ -493,7 +512,7 @@ const WMOD = {
       } else {
         this.oc.idle += dt;
         /* §5 超频×动势：高速移动帮助保持超频 */
-        const hold = o.holdGrace * (this.mom.round > 0 ? 2.4 : 1);
+        const hold = o.holdGrace * (this.mom.round > 0 ? 2.4 : 1) * (1 + 0.55 * this.node('n_oc_hold'));
         if (this.oc.idle > hold) this.oc.ramp = Math.max(0, this.oc.ramp - o.decay * dt);
       }
     }
@@ -529,7 +548,6 @@ const WMOD = {
 
   /* 开火瞬间：决定这一枪是否处于强化轮，并累计弹药归因 */
   onFire() {
-    if (!this.enabled) return;
     const M = TUNE.MODULES, d = G.derived;
     /* 动势释放：达到阈值就在下一次射击开启强化轮（§2.8 强化「一轮」）*/
     if (this.has('momentum') && this.mom.round <= 0 && this.mom.charge >= M.momentum.releaseAt) {
@@ -581,7 +599,7 @@ const WMOD = {
 
   /* --------------------------------------------------------------- §11 归因 */
   count(mod, field, v) {
-    if (!this.enabled || !this.stats[mod]) return;
+    if (!this.stats[mod]) return;
     this.stats[mod][field] += (v === undefined ? 1 : v);
   },
 

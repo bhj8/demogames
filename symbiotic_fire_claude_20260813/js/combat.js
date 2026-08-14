@@ -42,47 +42,36 @@ const _ext = new THREE.Vector3();
    派生数值 —— 所有改装与变异的加成在这里一次性算完，热路径不做查表
    ========================================================================== */
 function lvl(id) { return G.mods[id] || 0; }
-function hasMut(id) { return !!G.mutationSet[id]; }
 
 function recompute() {
   const g = TUNE.GUN;
   const d = {};
 
-  /* 基础火力 */
-  d.damage = g.damage * (1 + 0.25 * lvl('caliber'));
-  d.fireInterval = g.fireInterval / (1 + 0.18 * lvl('bolt'));
+  /* 基础火力。枪本身不再有「伤害 +X%」「射速 +X%」这类改装 ——
+     那些原子按 todo5 §1/§8 禁止单独作为卡牌，只能作为模块内部的构成。 */
+  d.damage = g.damage;
+  d.fireInterval = g.fireInterval;
   d.magazine = Math.round(g.magazine * (1 + 0.40 * lvl('mag')));
   d.reloadTime = g.reloadTime * Math.pow(0.75, lvl('reload'));
-  d.spreadBase = g.spreadBase * Math.pow(0.75, lvl('stable'));
-  d.spreadBloom = g.spreadBloom * Math.pow(0.75, lvl('stable'));
-  d.recoil = g.recoil * Math.pow(0.80, lvl('stable'));
+  d.spreadBase = g.spreadBase;
+  d.spreadBloom = g.spreadBloom;
+  d.recoil = g.recoil;
   d.weakpointMult = g.weakpointMult + 0.5 * lvl('optic');
-  d.pellets = g.pellets + (lvl('twin') ? 1 : 0);
-  if (lvl('twin')) d.damage *= 0.72;
-  d.executeBonus = lvl('execute') ? 0.40 : 0;
+  d.pellets = g.pellets;
+  d.executeBonus = 0;
   d.knockback = g.knockback;
-  /* 枪械"重量"：大口径与巨化让单发冲击、枪口爆音与抛壳都变重（todo2 §11） */
-  d.weaponHeavy = 1 + 0.12 * lvl('caliber');
-
-  /* 巨化 §21：玩家侧是纯被动 */
+  d.weaponHeavy = 1;
   d.bulletScale = 1;
-  if (hasMut('giant')) {
-    const p = MUT.giant.player;
-    d.damage *= p.dmgMult; d.knockback *= p.knockMult; d.bulletScale = p.sizeMult;
-    d.weaponHeavy += 0.25;
-  }
+  d.pierce = g.pierce;
 
-  /* 骨化 §19：贯穿 */
-  d.pierce = g.pierce + (hasMut('ossify') ? MUT.ossify.player.pierce : 0);
-
-  /* 触发链改装 */
-  d.mutDamage = 1 + 0.25 * lvl('catalyst');
-  d.mutRadius = 1 + 0.20 * lvl('spread');
+  /* 派生效果的搜索与返还 */
+  d.mutDamage = 1;
+  d.mutRadius = 1;
   d.hunter = lvl('hunter') > 0;
   d.searchMult = d.hunter ? 1.25 : 1;
   d.aftershock = lvl('aftershock') > 0;
   d.feedback = lvl('feedback') > 0;
-  d.maxDepth = TUNE.PROC.maxDepth + (lvl('cascade') ? 1 : 0);
+  d.maxDepth = TUNE.PROC.maxDepth;
 
   /* 生存与节奏 */
   d.moveSpeed = TUNE.PLAYER.moveSpeed * (1 + 0.12 * lvl('stim'));
@@ -108,24 +97,18 @@ function recompute() {
   if (G.player && d.maxHp > oldMax) G.player.hp += (d.maxHp - oldMax);  // §23 等额治疗
   if (G.player) { G.player.maxHp = d.maxHp; G.player.hp = Math.min(G.player.hp, d.maxHp); }
 
-  /* todo5 §6.3：可组合模块的折算是唯一的一次查表，热路径只读 G.derived。
-     两套 Build 互斥 —— v2 打开时 todo3 的连接 / 融合完全让位（§10 的隔离要求）。 */
-  if (typeof WMOD !== 'undefined' && WMOD.enabled) WMOD.applyDerived(d);
-  else if (typeof SYN !== 'undefined' && SYN.build) SYN.applyDerived(d);
+  /* 可组合模块的折算是唯一的一次查表，热路径只读 G.derived。 */
+  WMOD.applyDerived(d);
 
   G.derived = d;
   return d;
 }
 
-/* 有效射速：todo5 里超频只改发射节奏（§6.1 第 7 条），不建平行伤害系统 */
+/* 有效射速：超频只改发射节奏（todo5 §6.1 第 7 条），不建平行伤害系统 */
 function effectiveFireInterval() {
   const d = G.derived;
-  if (typeof WMOD !== 'undefined' && WMOD.enabled) {
-    if (!WMOD.has('overclock')) return d.fireInterval;
-    return d.fireInterval / (1 + (d.ocRampMax || 0) * WMOD.oc.ramp);
-  }
-  if (!hasMut('overclock')) return d.fireInterval;
-  return d.fireInterval / (1 + MUT.overclock.player.maxBonus * G.overclock);
+  if (!WMOD.has('overclock')) return d.fireInterval;
+  return d.fireInterval / (1 + (d.ocRampMax || 0) * WMOD.oc.ramp);
 }
 
 function procAllowed(ctx) { return ctx.procDepth < G.derived.maxDepth; }
@@ -251,137 +234,6 @@ function areaDamage(center, radius, dmg, ctx, tag) {
   return hits;
 }
 
-/* ============================================================================
-   玩家侧共同变异 —— 全部通过订阅实现
-   ========================================================================== */
-function installPlayerMutations() {
-
-  /* --- 爆裂 §16：击杀 → 以尸体为中心爆炸 --- */
-  G.bus.on('kill', ev => {
-    if (!hasMut('blast')) return;
-    const ctx = ev.ctx;
-    if (!ctx.canTriggerOnKill) return;
-    if (ctx.blastGeneration >= TUNE.PROC.blastMaxGeneration) return;
-    if (!procAllowed(ctx)) return;
-
-    const p = MUT.blast.player;
-    const radius = p.radius * G.derived.mutRadius;
-    const dmg = G.derived.damage * p.dmgRatio * G.derived.mutDamage;
-
-    /* 派生上下文：爆炸不累计电导、不再分裂，但可以继续触发击杀效果 */
-    const sub = deriveAttack(ctx, 'blast', {
-      blastGeneration: ctx.blastGeneration + 1,
-      canBuildConduction: false,
-      splitUsed: true
-    });
-
-    areaDamage(ev.enemy.pos, radius, dmg, sub, 'blast' + sub.blastGeneration);
-    G.stats.blasts++; G.procThisFrame++;
-    onEffectiveProc();
-
-    if (R.rings.count < TUNE.FX.maxConcurrentBlastFx) {
-      R.ring(ev.enemy.pos, 0.3, radius, MUT.blast.color, 0.36);
-      R.puff(V3.copy(ev.enemy.pos).setY(ev.enemy.pos.y + 0.8), 0.3, radius * 0.7, 0xffb35c, 0.26);
-    }
-    Audio2.blast(ev.enemy.pos, false);
-    G.shake(0.10, ev.enemy.pos);
-  }, 10);
-
-  /* --- 分裂 §17：主弹首次命中 → 分出 2 枚 --- */
-  G.bus.on('hit', ev => {
-    if (!hasMut('fission')) return;
-    const ctx = ev.ctx;
-    if (ctx.splitUsed) return;
-    if (ctx.source !== 'primary') return;
-    if (!procAllowed(ctx)) return;
-    ctx.splitUsed = true;
-
-    const p = MUT.fission.player;
-    if (G.bullets.count >= TUNE.PROC.splitProjectileCap + 64) return;
-
-    const range = p.searchRange * G.derived.searchMult * G.derived.mutRadius;
-    const exclude = new Set([ev.enemy.uid]);
-    const origin = ev.point;
-
-    for (let i = 0; i < p.count; i++) {
-      const tgt = pickChainTarget(origin.x, origin.z, range, exclude);
-      let dir;
-      if (tgt) {
-        exclude.add(tgt.uid);
-        dir = V3.copy(tgt.pos).setY(tgt.pos.y + tgt.height * 0.55).sub(origin).normalize().clone();
-      } else {
-        /* §17 找不到目标时按左右夹角射出 */
-        const a = (i === 0 ? 1 : -1) * 0.55;
-        dir = ev.dir.clone();
-        dir.applyAxisAngle(new THREE.Vector3(0, 1, 0), a).normalize();
-      }
-      const sub = deriveAttack(ctx, 'split', { splitUsed: true, canBuildConduction: true });
-      spawnBullet(origin, dir, G.derived.damage * p.dmgRatio * G.derived.mutDamage, sub, {
-        split: true, pierce: 0, scale: 0.8
-      });
-    }
-    G.stats.splits++; G.procThisFrame++;
-    onEffectiveProc();
-  }, 5);
-
-  /* --- 电导 §20：每 6 次命中 → 连锁闪电 --- */
-  G.bus.on('hit', ev => {
-    if (!hasMut('conduct')) return;
-    const ctx = ev.ctx;
-    if (!ctx.canBuildConduction) return;   // §34 闪电伤害不累计电导
-    if (!procAllowed(ctx)) return;
-
-    G.conductCounter++;
-    const p = MUT.conduct.player;
-    if (G.conductCounter < p.hits) return;
-    G.conductCounter = 0;
-
-    const dmg = G.derived.damage * p.dmgRatio * G.derived.mutDamage;
-    const range = p.jumpRange * G.derived.searchMult * G.derived.mutRadius;
-    const exclude = new Set([ev.enemy.uid]);
-    const pts = [ev.point.clone()];
-    let from = ev.enemy;
-
-    const sub = deriveAttack(ctx, 'lightning', {
-      canBuildConduction: false,          // 闪电不喂自己
-      splitUsed: true
-    });
-
-    for (let j = 0; j < p.jumps; j++) {
-      const tgt = pickChainTarget(from.pos.x, from.pos.z, range, exclude);
-      if (!tgt) break;
-      exclude.add(tgt.uid);
-      const hp = V3.copy(tgt.pos).setY(tgt.pos.y + tgt.height * 0.6).clone();
-      /* 中间加一个抖点，让闪电读起来像闪电 */
-      const mid = pts[pts.length - 1].clone().lerp(hp, 0.5);
-      mid.x += RNG.fx.range(-0.6, 0.6); mid.y += RNG.fx.range(0.1, 0.9); mid.z += RNG.fx.range(-0.6, 0.6);
-      pts.push(mid, hp);
-      if (markOnce(sub, tgt, 'bolt')) damageEnemy(tgt, dmg, sub, { point: hp, weakpoint: false });
-      from = tgt;
-    }
-    if (pts.length > 1) {
-      R.bolt(pts, MUT.conduct.color);
-      Audio2.zap(ev.point);
-      G.stats.bolts++; G.procThisFrame++;
-      onEffectiveProc();
-    }
-  }, 6);
-
-  /* --- 余震 §23：击退撞到其他敌人 --- */
-  G.bus.on('knockImpact', ev => {
-    if (!G.derived.aftershock) return;
-    const ctx = ev.ctx;
-    if (!procAllowed(ctx)) return;
-    const sub = deriveAttack(ctx, 'collision', { canBuildConduction: false, splitUsed: true });
-    const dmg = G.derived.damage * 0.5 * G.derived.mutDamage;
-    if (markOnce(sub, ev.other, 'aftershock')) {
-      damageEnemy(ev.other, dmg, sub, { point: ev.other.pos });
-      R.puff(ev.other.pos, 0.2, 1.2, 0xffffff, 0.18);
-      G.procThisFrame++;
-    }
-  });
-}
-
 /* 神经回授 §23：每次有效触发返还 1 发，每秒最多 4 发 */
 function onEffectiveProc() {
   G.stats.procs++;
@@ -405,7 +257,7 @@ function installHordeMutations() {
       /* todo5 §9：爆裂尸必须是【双向决策】而不是单纯的惩罚 ——
          弱点击破 → 当场炸向尸群，是玩家可以主动利用的清场手段；
          普通击杀 → 仍然是延迟引信，只伤害玩家，需要规避。 */
-      if (e.killedWeak && TUNE.FEATURES.composableBuildV2) {
+      if (e.killedWeak) {
         const r = cfg.radius * 1.15;
         const ctx = makeAttack('hordeBlast', { canTriggerOnKill: false, splitUsed: true });
         areaDamage(e.pos, r, cfg.dmg * 1.6 * G.dmgScale(), ctx, 'hordeBlast');
@@ -435,7 +287,7 @@ function installHordeMutations() {
       const cfg = MUT.fission.enemy;
       /* todo5 §9：弱点击杀破坏裂变核 —— 幼体不再生成。
          这给了玩家一个明确的「打哪里」的决策，而不是无差别地怕它死。 */
-      if (e.killedWeak && TUNE.FEATURES.composableBuildV2) {
+      if (e.killedWeak) {
         R.puff(e.pos, 0.25, 1.4, 0xfff0b0, 0.28);
         R.spark(e.pos, null, MUT.fission.color);
         Audio2.weakConfirm(true);
@@ -679,14 +531,14 @@ function updateBullets(dt) {
       R.spark(b.pos, null, 0x9fb4c8);
       retireBullet(b); continue;
     }
-    let blocked = false;
-    for (let o = 0; o < R.obstacles.length; o++) {
-      const ob = R.obstacles[o];
-      if (b.pos.y > ob.h) continue;              // 高过柱顶就飞过去
-      const dx = b.pos.x - ob.x, dz = b.pos.z - ob.z;
-      if (dx * dx + dz * dz < ob.r * ob.r) { blocked = true; break; }
+    /* 子弹撞城市几何。
+       之前这里查的是旧平面竞技场的 R.obstacles 圆柱表 —— 城市地图下那张表恒为空，
+       于是子弹会直接穿过整栋楼。城市地图里「墙能挡枪线」是战术的前提：
+       没有它，掩体、街道峡谷和纵深选择全部不成立。 */
+    if (CITY.segBlocked(b.prev.x, b.prev.y, b.prev.z, b.pos.x, b.pos.y, b.pos.z)) {
+      R.spark(b.pos, null, 0x9fb4c8);
+      retireBullet(b); continue;
     }
-    if (blocked) { R.spark(b.pos, null, 0x9fb4c8); retireBullet(b); continue; }
 
     /* 扫掠命中 */
     const midX = (b.pos.x + b.prev.x) * 0.5, midZ = (b.pos.z + b.prev.z) * 0.5;
@@ -757,12 +609,6 @@ function resolveBulletHit(b, e, point, weak) {
 
   let dmg = b.dmg;
   if (weak) dmg *= G.derived.weakpointMult;
-  /* 骨化玩家侧：贯穿递增 §19（todo5 的贯穿递增改由 b_pierce_over 分支在 AG 里处理） */
-  if (hasMut('ossify') && b.pierceHits > 0) {
-    const p = MUT.ossify.player;
-    dmg *= 1 + Math.min(p.rampMax, p.rampPerPierce * b.pierceHits);
-  }
-
   const hpBefore = e.hp;
   const dealt = damageEnemy(e, dmg, b.ctx, { point: point, weakpoint: weak, fromFront: fromFront, bullet: b });
   const killed = e.dead && hpBefore > 0;

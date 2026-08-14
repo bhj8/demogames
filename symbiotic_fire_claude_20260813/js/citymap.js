@@ -29,7 +29,7 @@ const CITY = {
   _grid: null, _cell: 6, _parts: null, _built: false,
 
   /* ------------------------------------------------------------------ 构建 */
-  build(scene, layout) {
+  build(scene) {
     const M = TUNE.VERTICAL_MAP;
     this.half = M.half; this.halfX = M.half; this.halfZ = M.half;
     this._cell = M.spawnCell;
@@ -46,32 +46,14 @@ const CITY = {
     this.group = new THREE.Group();
     scene.add(this.group);
 
-    this.layout = layout || 'vertical-old';
-    if (this.layout === 'city-scale') {
-      /* todo4：城市尺度地图。布局与旧立体地图完全独立，
-         CITY 只提供碰撞、查询与层级 API，几何由 city-scale.js 注册。 */
-      CITYSCALE.build(this);
-      this._flushParts();
-      this.reindex();
-      CITYSCALE.buildNav(this);
-      CITYSCALE.buildSpawnPoints(this);
-    } else {
-      this._buildShell();
-      this._buildStreet();
-      this._buildParking();
-      this._buildConstruction();
-      this._buildHospital();
-      this._buildMall();
-      this._buildMidRing();
-      this._buildDevices();
-      this._buildDynamics();
+    /* 城市尺度是唯一的布局。CITY 只提供碰撞、查询与层级 API，
+       几何由 city-scale.js 注册 —— 两者的分工不变，只是不再有第二种布局。 */
+    CITYSCALE.build(this);
+    this._flushParts();
+    this.reindex();
+    CITYSCALE.buildNav(this);
+    CITYSCALE.buildSpawnPoints(this);
 
-      this._flushParts();
-      this._mountZips();
-      this.reindex();
-      this._buildNav();
-      this._buildSpawnPoints();
-    }
     this._built = true;
     this.enabled = true;
     return this;
@@ -380,252 +362,26 @@ const CITY = {
   layerIndex(y) { const l = this.layerOf(y); return l === 'street' ? 0 : l === 'mid' ? 1 : 2; },
 
   /* --------------------------------------------------------------- 布局 */
-  _buildShell() {
-    const H = this.half;
-    /* 地面 */
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(H * 2, H * 2),
-      new THREE.MeshLambertMaterial({ color: 0x1e242e }));
-    floor.rotation.x = -Math.PI / 2;
-    this.group.add(floor);
-    this.addBox(0, -1, 0, H * 2, 2, H * 2, { noDraw: true, surf: SURF.DECK });
-
-    const grid = new THREE.GridHelper(H * 2, 35, 0x2c3a4a, 0x232b36);
-    grid.position.y = 0.014;
-    grid.material.opacity = 0.4; grid.material.transparent = true;
-    this.group.add(grid);
-
-    /* 边界：高到不可翻越，明确是场地边缘而不是路线 */
-    for (let i = 0; i < 4; i++) {
-      const a = i * Math.PI / 2;
-      const cx = Math.round(Math.sin(a)) * H, cz = Math.round(Math.cos(a)) * H;
-      this.addBox(cx, 11, cz, i % 2 ? 1.5 : H * 2, 22, i % 2 ? H * 2 : 1.5, { mat: 'decor', surf: SURF.DECOR });
-    }
-    /* 远景轮廓：纯装饰、无碰撞 */
-    for (let i = 0; i < 22; i++) {
-      const a = (i / 22) * Math.PI * 2, d = 52 + (i % 5) * 10;
-      const h = 14 + (i * 7 % 30);
-      this.addBox(Math.cos(a) * d, h / 2, Math.sin(a) * d, 8 + (i % 4) * 3, h, 8 + (i % 3) * 3,
-        { noCollide: true, mat: 'decor', surf: SURF.DECOR });
-    }
-  },
 
   /* 地标一：中央十字路口 —— 主要街面战斗区与高密度经验区 */
-  _buildStreet() {
-    this.landmarks.push({ id: 'cross', name: '中央十字路口', x: 0, z: 0, y: 0, css: '#ffc14d' });
-
-    /* 车辆 / 公交 / 集装箱 / 路障：全部 ≤1.2m 或可站立，构成第一条翻越教学 */
-    const cars = [
-      [-4.2, -5.5, 2.0, 1.1, 4.4], [4.0, -9.5, 2.0, 1.1, 4.4], [-3.6, 4.6, 2.0, 1.1, 4.4],
-      [4.4, 11.0, 2.0, 1.1, 4.4], [-11.0, 2.4, 4.4, 1.1, 2.0], [12.5, -2.6, 4.4, 1.1, 2.0],
-      [-16.0, -3.4, 4.4, 1.1, 2.0], [17.5, 3.2, 4.4, 1.1, 2.0]
-    ];
-    cars.forEach(([x, z, sx, sy, sz]) => this.addBox(x, sy / 2, z, sx, sy, sz, { surf: SURF.VAULT, mat: 'prop' }));
-
-    /* 公交车：可站立的中继台，把街面和中层连起来 */
-    const buses = [[-6.0, -16.5, 2.6, 3.0, 9.0], [6.2, 15.0, 2.6, 3.0, 9.0]];
-    buses.forEach(([x, z, sx, sy, sz]) => this.addBox(x, sy / 2, z, sx, sy, sz, { surf: SURF.DECK, mat: 'prop' }));
-
-    /* 集装箱：两级台阶，vault → 站上去 → 够到中层环 */
-    const cont = [[-9.5, -9.5, 0, 2.4], [9.5, 9.5, 0, 2.4], [9.2, -9.2, 0, 2.4], [-9.2, 9.2, 0, 2.4]];
-    cont.forEach(([x, z, y, h]) => {
-      this.addBox(x, y + h / 2, z, 5.0, h, 2.6, { surf: SURF.DECK, mat: 'prop' });
-      this.addBox(x + 3.4, y + 0.55, z, 1.6, 1.1, 2.6, { surf: SURF.VAULT, mat: 'prop' });
-    });
-
-    /* 店铺雨棚：街面 → 中层的第一段自然路线 */
-    [[-7.6, -3.0], [7.6, 3.0], [-7.6, 13.0], [7.6, -13.0]].forEach(([x, z]) => {
-      this.addBox(x, 3.4, z, 3.2, 0.3, 6.0, { surf: SURF.DECK, mat: 'prop' });
-    });
-  },
 
   /* 地标二：立体停车楼 —— 宽缓坡道、楼层绕行与快速跳楼路线 */
-  _buildParking() {
-    this.landmarks.push({ id: 'parking', name: '立体停车楼', x: 19, z: -19, y: 15, css: '#4fa8ff' });
-    const x0 = 9, x1 = 29, z0 = -29, z1 = -9;
-    const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
-    const decks = [5, 10, 15];
-    decks.forEach((y, i) => {
-      /* 楼板留出坡道井：x 23.5 以东是坡道 */
-      const w = i === 2 ? (x1 - x0) : 14.5;
-      const c = i === 2 ? cx : x0 + w / 2;
-      this.addBox(c, y - 0.2, cz, w, 0.4, z1 - z0, { surf: SURF.DECK, mat: 'parking' });
-      /* 外围矮护栏：可翻越，是主要的“跳楼”出口 */
-      this.addBox(c, y + 0.5, z0 + 0.3, w, 1.0, 0.6, { surf: SURF.VAULT, mat: 'parking' });
-      this.addBox(c, y + 0.5, z1 - 0.3, w, 1.0, 0.6, { surf: SURF.VAULT, mat: 'parking' });
-      this.addBox(x0 + 0.3, y + 0.5, cz, 0.6, 1.0, z1 - z0, { surf: SURF.VAULT, mat: 'parking' });
-    });
-    /* 承重柱：立面可墙跑 */
-    for (let i = 0; i < 4; i++) {
-      const px = x0 + 2 + (i % 2) * 11, pz = z0 + 3 + Math.floor(i / 2) * 13;
-      this.addBox(px, 7.5, pz, 1.2, 15, 1.2, { surf: SURF.WALLRUN, mat: 'parking' });
-      this._band(px, 1.2, 1.2, pz, 15);
-    }
-    /* 宽缓坡道：ground → 5 → 10 → 15，全部用基础动作即可通过 */
-    this.addRamp(26, z1 - 1.5, 26, z0 + 1.5, 0.4, 5, 5.0, 'parking');
-    this.addRamp(26, z0 + 1.5, 26, z1 - 1.5, 5.2, 10, 5.0, 'parking');
-    this.addRamp(26, z1 - 1.5, 26, z0 + 1.5, 10.2, 15, 5.0, 'parking');
-  },
 
   /* 地标三：在建大楼与吊车 —— 墙跑、脚手架、吊车桥与楼间跨越 */
-  _buildConstruction() {
-    this.landmarks.push({ id: 'site', name: '在建大楼', x: -19, z: -19, y: 17, css: '#ff8a1e' });
-    /* 核心塔：四面立面全部可墙跑 */
-    this.addBox(-19, 8.5, -19, 10, 17, 10, { surf: SURF.WALLRUN, mat: 'build' });
-    this._band(-19 - 5.05, 0.1, 10, -19, 17);
-    this._band(-19 + 5.05, 0.1, 10, -19, 17);
-    this._band(-19, 10, 0.1, -19 - 5.05, 17);
-    this._band(-19, 10, 0.1, -19 + 5.05, 17);
-
-    /* 脚手架：4 / 8 / 12 / 16，四层环绕两面，间距 4m —— 跳跃+登墙+抓边可达 */
-    [4, 8, 12, 16].forEach(y => {
-      this.addBox(-19, y - 0.15, -13.2, 12.5, 0.3, 2.6, { surf: SURF.DECK, mat: 'build' });
-      this.addBox(-13.2, y - 0.15, -19, 2.6, 0.3, 12.5, { surf: SURF.DECK, mat: 'build' });
-      this.addBox(-19, y + 0.5, -12.1, 12.5, 0.9, 0.4, { surf: SURF.VAULT, mat: 'build' });
-    });
-    /* 攀爬锚点：竖向标识，敌人也走同一条线（§5.1） */
-    [4, 8, 12, 16].forEach(y => this._anchor(-13.2, y - 2, -13.2));
-
-    /* 吊车：塔身 + 可行走吊臂，事件里会旋转 */
-    this.addBox(-27, 11, -27, 1.6, 22, 1.6, { surf: SURF.WALLRUN, mat: 'build' });
-    this.addBox(-19.5, 17.2, -19.5, 1.8, 0.4, 20, { surf: SURF.DECK, mat: 'build', dyn: 'craneA' });
-    this.addBox(-19.5, 17.9, -19.5, 0.3, 1.0, 20, { surf: SURF.DECOR, mat: 'build', dyn: 'craneA', noCollide: true });
-  },
 
   /* 地标四：医院停机坪 —— 高层空投点、精英事件与终局高压区域 */
-  _buildHospital() {
-    this.landmarks.push({ id: 'helipad', name: '医院停机坪', x: 19, z: 19, y: 18, css: '#2fe07a' });
-    this.addBox(19, 9, 19, 16, 18, 16, { surf: SURF.WALLRUN, mat: 'hospital' });
-    this._band(19 - 8.05, 0.1, 16, 19, 18);
-    this._band(19, 16, 0.1, 19 - 8.05, 18);
-
-    /* 阳台：6 / 11，两侧各一，构成两个独立出口 */
-    [[6, -1], [11, 1]].forEach(([y, side]) => {
-      this.addBox(19 + side * 9.2, y - 0.15, 19, 2.6, 0.3, 13, { surf: SURF.DECK, mat: 'hospital' });
-      this.addBox(19, y - 0.15, 19 + side * 9.2, 13, 0.3, 2.6, { surf: SURF.DECK, mat: 'hospital' });
-      this.addBox(19 + side * 10.4, y + 0.5, 19, 0.4, 0.9, 13, { surf: SURF.VAULT, mat: 'hospital' });
-    });
-    /* 消防梯：南面 0 → 11 的连续台阶，敌人走 stairs 连接 */
-    this.addRamp(11.5, 28.0, 11.5, 12.0, 0.4, 6, 2.2, 'hospital');
-    this.addRamp(13.9, 12.0, 13.9, 26.0, 6.2, 11, 2.2, 'hospital');
-    [6, 11].forEach(y => this._anchor(10.6, y - 2, 19));
-
-    /* 停机坪：屋顶 18 + 抬高的停机台 */
-    this.addBox(19, 18.15, 19, 11, 0.3, 11, { surf: SURF.DECK, mat: 'hospital' });
-    for (let i = 0; i < 8; i++) {
-      const a = i / 8 * Math.PI * 2;
-      this.addBox(19 + Math.cos(a) * 5.2, 18.4, 19 + Math.sin(a) * 5.2, 0.6, 0.2, 0.6,
-        { noCollide: true, mat: 'device', surf: SURF.DECOR });
-    }
-    /* 屋顶通风口：敌人的屋顶入侵口（§5.3） */
-    this.addBox(24.5, 18.9, 14.5, 2.4, 1.6, 2.4, { surf: SURF.VAULT, mat: 'hospital' });
-  },
 
   /* 商场街区：中层的连续移动通道，屋顶 9m 是三层之间的中转 */
-  _buildMall() {
-    this.addBox(-19, 4.5, 19, 16, 9, 16, { surf: SURF.WALLRUN, mat: 'mall' });
-    this._band(-19 + 8.05, 0.1, 16, 19, 9);
-    this._band(-19, 16, 0.1, 19 - 8.05, 9);
-    this.addBox(-19, 9.15, 19, 16.4, 0.3, 16.4, { surf: SURF.DECK, mat: 'mall' });
-    /* 雨棚：3.4m，街面 → 屋顶的中继 */
-    [[-10.2, 15], [-10.2, 23], [-15, 10.4], [-23, 10.4]].forEach(([x, z]) => {
-      const horiz = Math.abs(x) > Math.abs(z) - 8;
-      this.addBox(x, 3.4, z, horiz ? 2.8 : 6.0, 0.3, horiz ? 6.0 : 2.8, { surf: SURF.DECK, mat: 'mall' });
-    });
-    /* 屋顶设备：水箱与空调机，提供掩体与二段落脚点 */
-    this.addBox(-23, 10.4, 15, 3.0, 2.2, 3.0, { surf: SURF.DECK, mat: 'prop' });
-    this.addBox(-14.5, 9.9, 23, 2.6, 1.2, 2.6, { surf: SURF.VAULT, mat: 'prop' });
-    this.addBox(-19, 10.1, 19, 3.4, 1.6, 3.4, { surf: SURF.VAULT, mat: 'prop' });
-    [3.4, 9].forEach(y => this._anchor(-10.6, y - 2, 19));
-  },
 
   /* 中层环：围绕十字路口的一圈 y=6 连廊。
      §3.3 要求每层至少两条可连续循环的路线 —— 这是中层的主环，
      四条边分别接到四个街区，因此也是三层之间的换乘站。 */
-  _buildMidRing() {
-    const y = 6, w = 3.2;
-    const seg = [
-      [0, -9.5, 19.5, w], [0, 9.5, 19.5, w], [-9.5, 0, w, 19.5], [9.5, 0, w, 19.5]
-    ];
-    seg.forEach(([x, z, sx, sz]) => {
-      this.addBox(x, y - 0.15, z, sx, 0.3, sz, { surf: SURF.DECK, mat: 'deck' });
-      /* 两侧矮栏：既是可翻越标识，也是跳下街面的出口 */
-      if (sx > sz) {
-        this.addBox(x, y + 0.45, z - sz / 2 + 0.15, sx, 0.9, 0.3, { surf: SURF.VAULT, mat: 'deck' });
-        this.addBox(x, y + 0.45, z + sz / 2 - 0.15, sx, 0.9, 0.3, { surf: SURF.VAULT, mat: 'deck' });
-      } else {
-        this.addBox(x - sx / 2 + 0.15, y + 0.45, z, 0.3, 0.9, sz, { surf: SURF.VAULT, mat: 'deck' });
-        this.addBox(x + sx / 2 - 0.15, y + 0.45, z, 0.3, 0.9, sz, { surf: SURF.VAULT, mat: 'deck' });
-      }
-    });
-    /* 四个角柱：把环连成闭合回路，同时是可墙跑面 */
-    [[-9.5, -9.5], [9.5, -9.5], [-9.5, 9.5], [9.5, 9.5]].forEach(([x, z]) => {
-      this.addBox(x, y - 0.15, z, w, 0.3, w, { surf: SURF.DECK, mat: 'deck' });
-      this.addBox(x, 3, z, 1.0, 6, 1.0, { surf: SURF.WALLRUN, mat: 'deck' });
-      this._band(x + 0.55, 0.1, 1.0, z, 6);
-    });
-  },
 
   /* 灯带 / 锚点：只做视觉，不参与碰撞 —— 判定仍看 surf 标签 */
-  _band(x, sx, sz, z, h) {
-    this.addBox(x, h / 2, z, sx, h * 0.86, sz, { noCollide: true, mat: 'band', surf: SURF.DECOR });
-  },
-  _anchor(x, y, z) {
-    for (let i = 0; i < 3; i++) {
-      this.addBox(x, y + i * 0.7, z, 0.5, 0.12, 0.5, { noCollide: true, mat: 'device', surf: SURF.DECOR });
-    }
-    this.climbAnchors = this.climbAnchors || [];
-    this.climbAnchors.push({ x: x, y: y, z: z });
-  },
 
   /* 快速装置：滑索与跳板。全局统一为“靠近自动吸附”，不增加新按键（§2.2） */
-  _buildDevices() {
-    const zip = (ax, ay, az, bx, by, bz, name) => {
-      this.devices.push({ kind: 'zip', a: { x: ax, y: ay, z: az }, b: { x: bx, y: by, z: bz }, name: name });
-      /* 钢索本体在材质就绪后补挂（_mountZips），这里只登记数据 */
-      (this._zipPend || (this._zipPend = [])).push({ ax, ay, az, bx, by, bz });
-    };
-    /* 屋顶层的下行链：停机坪 → 停车楼 → 吊车 → 商场屋顶，构成屋顶回路 */
-    zip(19, 18.6, 13.6, 19, 15.6, -9.6, '停机坪→停车楼');
-    zip(13.0, 15.4, -19, -13.6, 12.4, -19, '停车楼→脚手架');
-    zip(-19.5, 17.4, -10.0, -19, 9.8, 12.0, '吊臂→商场屋顶');
-    zip(-11.0, 9.6, 19, 9.2, 6.4, 19, '商场屋顶→中层环');
-
-    /* 跳板：把街面重新送回中层，保证屋顶不是单向路 */
-    [[0, -2.4, 0], [-2.4, 0, 0], [13.5, 5.5, 0], [-5.5, -13.5, 0]].forEach(([x, z]) => {
-      this.devices.push({ kind: 'pad', x: x, y: 0.25, z: z });
-      this.addBox(x, 0.12, z, 2.2, 0.24, 2.2, { surf: SURF.DECK, mat: 'device' });
-    });
-    /* 商场屋顶与停车楼各放一块，制造二段起跳 */
-    [[-19, 9.45, 24.5], [15.5, 15.35, -14]].forEach(([x, y, z]) => {
-      this.devices.push({ kind: 'pad', x: x, y: y + 0.15, z: z });
-      this.addBox(x, y + 0.12, z, 2.2, 0.24, 2.2, { surf: SURF.DECK, mat: 'device' });
-    });
-  },
 
   /* 事件可切换几何：预设状态切换，不做真实物理破坏（§3.4） */
-  _buildDynamics() {
-    /* 吊车旋转后的第二个吊臂位置：楼间新桥 */
-    this.addBox(-11.5, 17.2, -19.5, 20, 0.4, 1.8, { surf: SURF.DECK, mat: 'build', dyn: 'craneB' });
-    /* 广告牌倒塌后的登楼斜坡 */
-    for (let i = 0; i < 12; i++) {
-      const k = i / 12;
-      this.addBox(lerp(-2.5, -9.0, k), lerp(0.3, 6.0, k) / 2, lerp(16, 21, k),
-        2.6, lerp(0.3, 6.0, k), 2.2, { surf: SURF.DECK, mat: 'mall', dyn: 'billboard' });
-    }
-    /* 外墙坍塌后打开的攀爬路线 */
-    for (let i = 0; i < 6; i++) {
-      this.addBox(10.4, 1.2 + i * 2.0, 22 + (i % 2) * 1.4, 1.8, 0.5, 1.8,
-        { surf: SURF.DECK, mat: 'hospital', dyn: 'facade' });
-    }
-    /* 巴士爆炸后的封路残骸：高到不可翻越，真的改变路线 */
-    this.addBox(-6.0, 2.4, -16.5, 4.6, 4.8, 10.5, { surf: SURF.SOLID, mat: 'prop', dyn: 'wreck' });
-    /* 电力恢复后启用的升降平台 */
-    this.addBox(-26.5, 5.85, -6.0, 3.0, 0.3, 3.0, { surf: SURF.DECK, mat: 'device', dyn: 'power' });
-    this.addBox(-26.5, 2.85, -6.0, 3.0, 0.3, 3.0, { surf: SURF.DECK, mat: 'device', dyn: 'power' });
-
-    /* 全部默认关闭：事件触发时才接通 */
-    ['craneB', 'billboard', 'facade', 'wreck', 'power'].forEach(id => this.setDynamic(id, false));
-  },
 
   setDynamic(id, on) {
     const d = this.dynamics[id];
@@ -657,96 +413,6 @@ const CITY = {
     return l;
   },
 
-  _buildNav() {
-    /* 街道层：十字路口四臂 + 四个街区外沿 */
-    this._region('st_cross', 'street', -8, 8, -8, 8, 0);
-    this._region('st_n', 'street', -8, 8, -34, -8, 0);
-    this._region('st_s', 'street', -8, 8, 8, 34, 0);
-    this._region('st_w', 'street', -34, -8, -8, 8, 0);
-    this._region('st_e', 'street', 8, 34, -8, 8, 0);
-    this._region('st_ne', 'street', 8, 34, -34, -8, 0);
-    this._region('st_nw', 'street', -34, -8, -34, -8, 0);
-    this._region('st_se', 'street', 8, 34, 8, 34, 0);
-    this._region('st_sw', 'street', -34, -8, 8, 34, 0);
-
-    /* 中层 */
-    this._region('mid_ring_n', 'mid', -11, 11, -11.2, -7.8, 6);
-    this._region('mid_ring_s', 'mid', -11, 11, 7.8, 11.2, 6);
-    this._region('mid_ring_w', 'mid', -11.2, -7.8, -11, 11, 6);
-    this._region('mid_ring_e', 'mid', 7.8, 11.2, -11, 11, 6);
-    this._region('mid_park1', 'mid', 9, 24, -29, -9, 5);
-    this._region('mid_scaff1', 'mid', -25.5, -12.5, -14.5, -11.9, 4);
-    this._region('mid_scaff2', 'mid', -25.5, -12.5, -14.5, -11.9, 8);
-    this._region('mid_balc1', 'mid', 9.5, 28.5, 12.5, 25.5, 6);
-    this._region('mid_mallroof', 'mid', -27, -11, 11, 27, 9.3);
-    this._region('mid_awning', 'mid', -24, -9, 9, 25, 3.4);
-
-    /* 屋顶层 */
-    this._region('roof_park', 'roof', 9, 29, -29, -9, 15);
-    this._region('roof_heli', 'roof', 13.5, 24.5, 13.5, 24.5, 18.3);
-    this._region('roof_crane', 'roof', -21, -18, -29, -10, 17.4);
-    this._region('roof_scaff3', 'roof', -25.5, -12.5, -14.5, -11.9, 12);
-    this._region('roof_scaff4', 'roof', -25.5, -12.5, -14.5, -11.9, 16);
-    this._region('roof_balc2', 'roof', 9.5, 28.5, 12.5, 25.5, 11);
-
-    const P = (x, y, z) => ({ x: x, y: y, z: z });
-    /* --- 三层之间的连接点（§3.3 要求 ≥6，这里 14 条，且每条标注允许的敌人类型） --- */
-    /* 停车楼坡道：所有敌人都能走 */
-    this._link('st_ne', 'mid_park1', 'stairs', P(26, 0.4, -10.5), P(26, 5, -27.5), { dur: 2.6 });
-    this._link('mid_park1', 'roof_park', 'stairs', P(26, 5.2, -27.5), P(26, 15, -10.5), { dur: 2.6 });
-    /* 医院消防梯 */
-    this._link('st_se', 'mid_balc1', 'stairs', P(11.5, 0.4, 27.5), P(11.5, 6, 12.5), { dur: 2.4 });
-    this._link('mid_balc1', 'roof_balc2', 'stairs', P(13.9, 6.2, 12.5), P(13.9, 11, 25.5), { dur: 2.4 });
-    this._link('roof_balc2', 'roof_heli', 'climb', P(11.0, 11, 19), P(13.6, 18.3, 19),
-      { allow: ['climber', 'leaper'], dur: 2.8 });
-    /* 脚手架攀爬链：只有攀爬怪与跳跃怪能上 */
-    this._link('st_nw', 'mid_scaff1', 'climb', P(-13.2, 0, -13.2), P(-14.5, 4, -13.2),
-      { allow: ['climber', 'leaper'], dur: 1.9 });
-    this._link('mid_scaff1', 'mid_scaff2', 'climb', P(-14.5, 4, -13.2), P(-14.5, 8, -13.2),
-      { allow: ['climber'], dur: 1.8 });
-    this._link('mid_scaff2', 'roof_scaff3', 'climb', P(-14.5, 8, -13.2), P(-14.5, 12, -13.2),
-      { allow: ['climber'], dur: 1.8 });
-    this._link('roof_scaff3', 'roof_scaff4', 'climb', P(-14.5, 12, -13.2), P(-14.5, 16, -13.2),
-      { allow: ['climber'], dur: 1.8 });
-    this._link('roof_scaff4', 'roof_crane', 'jump', P(-16, 16, -13.2), P(-19.5, 17.4, -14),
-      { allow: ['climber', 'leaper'], dur: 1.0 });
-    /* 商场：雨棚 → 屋顶 */
-    this._link('st_sw', 'mid_awning', 'climb', P(-10.6, 0, 19), P(-10.6, 3.4, 19),
-      { allow: ['climber', 'leaper', 'grunt'], dur: 1.5 });
-    this._link('mid_awning', 'mid_mallroof', 'climb', P(-10.6, 3.4, 19), P(-11.5, 9.3, 19),
-      { allow: ['climber', 'leaper'], dur: 2.0 });
-    /* 中层环：集装箱与雨棚上环 */
-    this._link('st_cross', 'mid_ring_n', 'climb', P(-9.2, 0, -9.2), P(-9.5, 6, -9.5),
-      { allow: ['climber', 'leaper'], dur: 2.1 });
-    this._link('st_e', 'mid_ring_e', 'climb', P(9.5, 0, 3.0), P(9.5, 6, 3.0),
-      { allow: ['climber', 'leaper'], dur: 2.1 });
-    /* 中层环内部与街区互通 */
-    this._link('mid_ring_e', 'mid_park1', 'jump', P(9.5, 6, -10.5), P(11, 5, -10.5), { dur: 0.9 });
-    this._link('mid_ring_e', 'mid_balc1', 'jump', P(9.5, 6, 10.5), P(11, 6, 12.6), { dur: 0.9 });
-    this._link('mid_ring_w', 'mid_scaff1', 'jump', P(-9.5, 6, -10.5), P(-12.5, 4, -13.0), { dur: 1.1 });
-    this._link('mid_ring_s', 'mid_mallroof', 'jump', P(-9.5, 6, 9.5), P(-11.5, 9.3, 12), { dur: 1.2 });
-    /* 屋顶 → 街面的坠落边（所有敌人都能走，没有坠落伤害） */
-    [['roof_park', 'st_ne', P(19, 15, -9.5), P(19, 0, -6.5)],
-     ['roof_heli', 'st_se', P(19, 18.3, 13.6), P(19, 0, 8.0)],
-     ['mid_mallroof', 'st_sw', P(-19, 9.3, 11.2), P(-19, 0, 7.5)],
-     ['mid_ring_n', 'st_cross', P(0, 6, -9.5), P(0, 0, -6.0)],
-     ['mid_ring_s', 'st_cross', P(0, 6, 9.5), P(0, 0, 6.0)],
-     ['roof_crane', 'st_nw', P(-19.5, 17.4, -12), P(-19.5, 0, -8.0)]
-    ].forEach(([a, b, pa, pb]) => this._link(a, b, 'drop', pa, pb, { dur: 1.1 }));
-    /* 滑索：屋顶专用高速边 */
-    this.devices.filter(d => d.kind === 'zip').forEach((d, i) => {
-      const ra = this.regionAt(d.a.x, d.a.y, d.a.z), rb = this.regionAt(d.b.x, d.b.y, d.b.z);
-      if (ra && rb) this._link(ra.id, rb.id, 'zip', d.a, d.b, { allow: ['leaper'], dur: 1.6, device: i });
-    });
-
-    this._autoAdjacency();
-    this._mirrorLinks();
-
-    const byId = {};
-    this.regions.forEach(r => { byId[r.id] = r; });
-    this.byId = byId;
-    this.links.forEach(l => { const r = byId[l.from]; if (r) r.links.push(l); });
-  },
 
   /* 同层相邻区域之间不需要任何特殊动作，直接走过去即可（§5.2：
      普通地面移动继续沿用二维逻辑）。但导航图必须把这件事表达出来，
@@ -807,26 +473,6 @@ const CITY = {
   },
 
   /* 分层刷怪点：全部预先验证可站立与可达，避免生成在下不来的装饰屋顶（§5.3） */
-  _buildSpawnPoints() {
-    const add = (x, z, y, layer, cover) => {
-      const sy = this.dropTo(x, z, y + 0.6, 0.5);
-      if (!this.standable(x, z, sy + 0.2, 0.5)) return;
-      this.spawnPoints.push({ x: x, y: sy, z: z, layer: layer, cover: cover || 'open' });
-    };
-    /* 街道：巷口、车辆与商铺遮挡后 */
-    [[-13, -6], [13, 6], [-6, -22], [6, 22], [-22, 6], [22, -6], [-30, -2], [30, 2],
-     [-2, -30], [2, 30], [-16, 16], [16, -16], [-25, -14], [25, 14], [-14, 25], [14, -25]]
-      .forEach(([x, z]) => add(x, z, 1.0, 'street', 'alley'));
-    /* 中层：窗口、脚手架、破墙与楼梯间 */
-    [[-14.5, -13.2, 4], [-14.5, -13.2, 8], [11.5, -13, 5], [20, -13, 5], [11.5, 19, 6],
-     [26, 19, 6], [-19, 19, 9.3], [-23, 15, 11.6], [-9.5, -3, 6], [9.5, 3, 6],
-     [0, -9.5, 6], [0, 9.5, 6], [-13, 19, 3.4]]
-      .forEach(([x, z, y]) => add(x, z, y + 0.5, 'mid', 'window'));
-    /* 屋顶：屋顶门、通风口与相邻建筑边缘 */
-    [[14, -13, 15], [24, -25, 15], [24.5, 14.5, 20.6], [15, 23, 18.3], [-19.5, -25, 17.4],
-     [-14.5, -13.2, 12], [-14.5, -13.2, 16], [23, 22, 18.3]]
-      .forEach(([x, z, y]) => add(x, z, y + 0.5, 'roof', 'vent'));
-  },
 
   /* 附近的可用装置（§2.2 近距离自动吸附，全局统一） */
   nearestDevice(pos, kind, maxDist) {

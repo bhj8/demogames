@@ -36,7 +36,7 @@ const MAPEV = {
   ],
 
   init() {
-    this.enabled = MODE.mapEvents;
+    this.enabled = TUNE.FEATURES.dynamicMapEvents;
     this.executing = false;
     this.fired = [];
     this.queue = null;
@@ -123,7 +123,7 @@ const MAPEV = {
     (ev.on || []).forEach(id => CITY.setDynamic(id, true));
     /* §9 所有动态几何改变后同步更新碰撞、导航与落点验证 */
     NAV.invalidate();
-    CITY._buildSpawnPoints && (CITY.spawnPoints.length = 0, CITY._buildSpawnPoints());
+    CITY.spawnPoints.length = 0; CITYSCALE.buildSpawnPoints(CITY);
 
     if (ev.hazard) this._gas();
 

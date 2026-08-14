@@ -330,7 +330,6 @@ _modcheck.html?only=run&build=old  # 旧 Build 的同一局
 ### 复跑
 
 ```bash
-node testsim.js            # 原有逻辑校验（触发链 / 三选一 / 节奏 / 种子）
 node testsim_evo.js 10000  # 统一进化：节奏、品质、保底、候选合法性
 chrome --headless=new --enable-unsafe-swiftshader --virtual-time-budget=60000        --dump-dom _citycheck.html    # 立体城市几何与导航审计
 chrome --headless=new --enable-unsafe-swiftshader --virtual-time-budget=90000        --dump-dom _smoke.html        # 完整 12 分钟集成冒烟（加 ?map=flat 测回退）
@@ -365,7 +364,7 @@ _smoke.html         无头集成冒烟测试（开发用）
 _citycheck.html     立体城市几何与导航审计（开发用，todo3 时期）
 _scalecheck.html    城市尺度与比例审计（开发用，todo4）
 _modcheck.html      可组合模块的实现侧验收（开发用，todo5）
-testsim_evo.js      统一进化的无渲染模拟（10,000 局）
+testsim_evo.js      统一进化的无渲染模拟（10,000 局：节奏 / 品质 / 保底 / 候选合法性）
 ```
 
 共同变异**全部通过事件总线订阅实现**（§33），没有硬编码进枪械或敌人主循环；新增一种变异只需在 `tune.js` 加数据 + 在 `combat.js` 加一个订阅。

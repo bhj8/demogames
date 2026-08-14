@@ -35,10 +35,8 @@ b{color:#7ef0a8}i{color:#ff8a4a;font-style:normal}u{color:#ffd24a;text-decoratio
 <script src="js/movement.js"></script>
 <script src="js/nav3d.js"></script>
 <script src="js/map-events.js"></script>
-<script src="js/build-synergy.js"></script>
 <script src="js/weapon-modules.js"></script>
 <script src="js/attack-graph.js"></script>
-<script src="js/evolution-pool.js"></script>
 <script src="js/module-pool.js"></script>
 <script src="js/evolution-director.js"></script>
 <script src="js/map-build.js"></script>
@@ -192,19 +190,17 @@ function fullRun() {
     if (G.over) break;
   }
   G.player.gun.held = false;
-  /* ?build=old 时构筑长在 SYN 那边 —— 回归跑要能同样报出来，
-     否则「旧 Build 还能不能玩」这件事根本没被测到。 */
   const r = {
     seed: BOOT.seed, t: +G.time.toFixed(0), picks: picks,
-    mods: WMOD.enabled ? WMOD.own.slice() : G.mutations.slice(),
-    branches: WMOD.enabled ? WMOD.branches.length : SYN.build.epicFusions.length,
-    rules: WMOD.enabled ? WMOD.rules.length : SYN.build.legendaryRules.length,
+    mods: WMOD.own.slice(),
+    branches: WMOD.branches.length,
+    rules: WMOD.rules.length,
     kills: G.stats.kills, err: G._loopErrCount || 0,
     derived: AG.gBudget.derived, rejected: AG.gBudget.rejected, depth: AG.gBudget.maxDepth,
     ms: Math.round(performance.now() - t0)
   };
   r.line = G.time.toFixed(0) + 's 选择' + picks + '次 模块[' +
-    r.mods.map(m => (TUNE.MODULES[m] || MUT[m]).name).join('+') + '] 分支' + r.branches + ' 规则' + r.rules +
+    r.mods.map(m => TUNE.MODULES[m].name).join('+') + '] 分支' + r.branches + ' 规则' + r.rules +
     ' 击杀' + r.kills + ' 派生' + r.derived + ' 深度' + r.depth + ' 触顶' + r.rejected +
     ' 逻辑异常' + r.err + ' (' + r.ms + 'ms)';
   return r;
@@ -228,7 +224,7 @@ function interactions(base, ma, mb, mab) {
 addEventListener('load', () => setTimeout(() => {
   if (window.__err.length) { document.title = 'RESULT>>BOOT_ERR:' + window.__err.join(';') + '<<END'; return; }
   stubRender();
-  say('<b>todo5 §12 实现侧验收</b>  build=' + (WMOD.enabled ? 'composableBuildV2' : 'OLD'));
+  say('<b>可组合武器模块 · 实现侧验收</b>');
 
   /* ======================================================= 12 分钟整局 */
   /* boot() 不是可重入的（它会重建 renderer / scene / 池子），
@@ -245,7 +241,7 @@ addEventListener('load', () => setTimeout(() => {
   ok(r.mods.length >= 2, '只长出 ' + r.mods.length + ' 个模块');
   ok(r.depth <= TUNE.GENEALOGY.maxDepth, '深度失控 ' + r.depth);
   ok(window.__err.length === 0, '出现运行时异常：' + window.__err.join(';'));
-  say('  本局武器：' + r.mods.map(m => (TUNE.MODULES[m] || MUT[m]).name).join('+') +
+  say('  本局武器：' + r.mods.map(m => TUNE.MODULES[m].name).join('+') +
       '  （§12.4「连续两局不应长成完全相同的武器」需要多个种子对比，见 runner 汇总）');
 
 
@@ -253,7 +249,7 @@ addEventListener('load', () => setTimeout(() => {
     /* runner 用它跑额外种子：只要整局结果，跳过前面那些重复的审计 */
     document.getElementById('out').innerHTML = LOG.join('\n');
     document.title = 'RESULT>>' + (FAIL === 0 ? 'RUNOK' : 'FAIL:' + FAIL) +
-      ' build=' + (WMOD.enabled?'v2':'old') + ' map=' + MAP_MODE + ' t=' + r.t + ' kills=' + r.kills + ' mods=' + r.mods.slice().sort().join('+') + ' picks=' + r.picks + '<<END';
+      ' t=' + r.t + ' kills=' + r.kills + ' mods=' + r.mods.slice().sort().join('+') + ' picks=' + r.picks + '<<END';
     return;
   }
 

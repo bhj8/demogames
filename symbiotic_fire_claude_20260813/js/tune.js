@@ -9,7 +9,6 @@ const TUNE = {
   RUN_SECONDS: 720,               // 12:00
   BOSS_AT: 720,
   MIDBOSS_AT: 365,                // 06:05 —— 变异卡先出，Boss 后到
-  MUTATION_TIMES: [45, 180, 360, 540],
 
   /* --- 玩家 3C §11.2 --- */
   PLAYER: {
@@ -264,61 +263,43 @@ const MUTATIONS = [
   {
     id: 'blast', name: '爆裂', en: 'Detonation',
     color: 0xff8a1e, css: '#ff8a1e',
-    you: '击杀会引爆尸体',
     horde: '爆裂尸死亡后爆炸',
-    detail: '击杀时以尸体为中心爆炸，半径 3.2m，造成单发基础伤害的 80%。最多连续引爆 2 代。',
     hordeDetail: '爆裂尸死亡后闪烁 0.8 秒再爆炸，半径 3m，只伤害玩家。',
-    player: { radius: 3.2, dmgRatio: 0.80 },
     enemy: { fuse: 0.8, radius: 3.0, dmg: 22 }
   },
   {
     id: 'fission', name: '分裂', en: 'Fission',
     color: 0xb060ff, css: '#b060ff',
-    you: '子弹命中后分裂×2',
     horde: '裂变尸死亡后生出幼体',
-    detail: '主弹首次命中后向附近目标分出 2 枚子弹，伤害为主弹的 45%。分裂弹不能再分裂。',
     hordeDetail: '裂变尸死亡后生成 2 只幼体，生命为母体的 20%，不掉经验，不再分裂。',
-    player: { count: 2, dmgRatio: 0.45, searchRange: 16 },
     enemy: { count: 2, hpRatio: 0.20 }
   },
   {
     id: 'overclock', name: '超频', en: 'Overclock',
     color: 0xff3355, css: '#ff3355',
-    you: '持续射击会越来越快',
     horde: '超频尸移动和攻击更快',
-    detail: '持续按住射击 2 秒达到上限，射速最高提高 45%。停火 0.6 秒后开始衰减，换弹保留一半进度。',
     hordeDetail: '超频尸移速 +45%、攻击间隔 -25%，但最大生命 -20%。',
-    player: { rampTime: 2.0, maxBonus: 0.45, holdGrace: 0.6, decayRate: 0.55, reloadKeep: 0.5 },
     enemy: { speedMult: 1.45, atkMult: 0.75, hpMult: 0.80 }
   },
   {
     id: 'ossify', name: '骨化', en: 'Ossification',
     color: 0xf0f4ff, css: '#e8eeff',
-    you: '子弹获得额外贯穿',
     horde: '骨甲尸正面有三层骨板',
-    detail: '所有子弹贯穿 +2。每贯穿一个敌人，下一次命中伤害 +10%，最多 +30%。',
     hordeDetail: '骨甲尸正面命中会优先击碎一层骨板并抵消该次伤害，三层碎尽才暴露。背后与头部可绕过。',
-    player: { pierce: 2, rampPerPierce: 0.10, rampMax: 0.30 },
     enemy: { plates: 3, frontDot: 0.25 }
   },
   {
     id: 'conduct', name: '电导', en: 'Conduction',
     color: 0x35e0ff, css: '#35e0ff',
-    you: '连续命中释放连锁闪电',
     horde: '电尸死亡后留下电场',
-    detail: '每累计 6 次命中触发一次连锁闪电，最多跳 3 个目标，每跳造成单发基础伤害的 55%。',
     hordeDetail: '电尸死亡后地面预警 0.7 秒，随后生成半径 2.8m、持续 2.5 秒的电场。',
-    player: { hits: 6, jumps: 3, dmgRatio: 0.55, jumpRange: 12 },
     enemy: { telegraph: 0.7, radius: 2.8, duration: 2.5, tick: 0.5, dmg: 9 }
   },
   {
     id: 'giant', name: '巨化', en: 'Gigantism',
     color: 0xffd21e, css: '#ffd21e',
-    you: '子弹变大并强化击退',
     horde: '巨尸更强但经验更多',
-    detail: '子弹体积 +60%、击退 +50%、基础伤害 +15%。射速不变。',
     hordeDetail: '巨尸体型 2.1 倍、生命 3 倍、伤害 +50%、移速 -35%，掉落经验 3.5 倍。',
-    player: { sizeMult: 1.6, knockMult: 1.5, dmgMult: 1.15 },
     enemy: { scale: 2.1, hpMult: 3.0, dmgMult: 1.5, speedMult: 0.65, xpMult: 3.5, weight: 0.5 }
   }
 ];
@@ -330,32 +311,27 @@ MUTATIONS.forEach(m => { MUT[m.id] = m; });
    19 个普通改装 §23
    kind: fire | chain | life   ——  §24 的三选一生成规则要用
    ========================================================================== */
+/* ============================================================================
+   通用改装
+   只保留【不属于 todo5 §1/§8 禁用原子】且有真实战斗消费者的项。
+   被剔除的：大口径(伤害%)、轻量枪机(射速%)、稳定框架(散布%)、
+   双联枪管(并发弹丸 —— 那是齐射模块的职责)、处决弹头、催化增幅、
+   扩散培养(范围% —— 已改写成爆裂的 n_blast_radius 节点)、连锁许可(改成传奇规则)。
+   ========================================================================== */
 const MODS = [
-  /* --- 基础火力 --- */
-  { id: 'caliber',   kind: 'fire', name: '大口径',   text: '子弹伤害提高',       detail: '伤害 +25%',                       max: 3 },
-  { id: 'bolt',      kind: 'fire', name: '轻量枪机', text: '射速提高',           detail: '射速 +18%',                       max: 3 },
   { id: 'mag',       kind: 'fire', name: '扩容弹匣', text: '弹匣容量提高',       detail: '弹匣 +40%',                       max: 2 },
   { id: 'reload',    kind: 'fire', name: '快速装填', text: '换弹速度提高',       detail: '换弹时间 -25%',                   max: 2 },
-  { id: 'stable',    kind: 'fire', name: '稳定框架', text: '散布与后坐降低',     detail: '散布 -25%，后坐 -20%',            max: 2 },
   { id: 'optic',     kind: 'fire', name: '瞄准模块', text: '弱点伤害提高',       detail: '弱点倍率 +0.5',                   max: 2 },
-  { id: 'twin',      kind: 'fire', name: '双联枪管', text: '每次额外发射一枚子弹', detail: '弹丸 +1，单弹伤害 ×0.72',        max: 1 },
-  { id: 'execute',   kind: 'fire', name: '处决弹头', text: '对濒死目标增伤',     detail: '对 30% 生命以下目标 +40%',        max: 1 },
-
-  /* --- 触发链 --- */
-  { id: 'catalyst',  kind: 'chain', name: '催化增幅', text: '共同变异伤害提高',   detail: '变异伤害 +25%',                   max: 2 },
-  { id: 'spread',    kind: 'chain', name: '扩散培养', text: '爆炸、电场与链选范围提高', detail: '范围 +20%',                 max: 2 },
-  { id: 'feedback',  kind: 'chain', name: '神经回授', text: '触发共同变异后返还弹药', detail: '每次有效触发返还 1 发，每秒最多 4 发', max: 1, req: 1 },
-  { id: 'hunter',    kind: 'chain', name: '猎群算法', text: '分裂与闪电优先寻找满血目标', detail: '同时使搜索距离 +25%',      max: 1 },
+  { id: 'feedback',  kind: 'chain', name: '神经回授', text: '触发派生效果后返还弹药', detail: '每次有效触发返还 1 发，每秒最多 4 发', max: 1 },
+  { id: 'hunter',    kind: 'chain', name: '猎群算法', text: '分裂与弹射优先寻找满血目标', detail: '同时使搜索距离 +25%',      max: 1 },
   { id: 'aftershock',kind: 'chain', name: '余震',     text: '击退目标撞到其他敌人会造成伤害', detail: '单发基础伤害的 50%',    max: 1 },
-  { id: 'cascade',   kind: 'chain', name: '连锁许可', text: '次级效果可以再触发一次其他变异', detail: '受全局触发深度限制',    max: 1, req: 2, rare: true },
-
-  /* --- 生存与节奏 --- */
   { id: 'stim',      kind: 'life', name: '强心剂',   text: '移动速度提高',       detail: '移速 +12%',                       max: 2 },
   { id: 'dashcd',    kind: 'life', name: '应激冲刺', text: '冲刺更快恢复',       detail: '冷却 -20%',                       max: 2 },
   { id: 'trauma',    kind: 'life', name: '创伤修复', text: '每累计击杀恢复生命', detail: '每 30 杀恢复 2% 最大生命',        max: 2 },
   { id: 'armor',     kind: 'life', name: '皮下护甲', text: '最大生命提高',       detail: '最大生命 +20% 并等额治疗',        max: 2 },
   { id: 'magnet',    kind: 'life', name: '磁性采集', text: '经验吸附范围提高',   detail: '吸附范围 +50%',                   max: 2 }
 ];
+
 
 const MODMAP = {};
 MODS.forEach(m => { MODMAP[m.id] = m; });
@@ -504,17 +480,11 @@ TIMELINE.sort((a, b) => a.t - b.t);
    全部集中在这里。todo3 §1 明确要求：新增移动、地图与构筑数值不得散落在 game.js。
    ========================================================================== */
 
-/* --- 功能开关 §1 ---
-   任一开关关闭时，对应系统退回 todo/todo2 的既有实现。
-   ?map=flat 会把全部 todo3 开关一次性关掉，回到平面版本。 */
+/* --- 功能开关 ---
+   只保留【真的会被关掉】的那一个。todo3 的六个开关、todo4 的三个地图入口、
+   todo5 的新旧 Build 开关都已删除：分支不是安全网，只是双份维护成本。 */
 TUNE.FEATURES = {
-  verticalMovement: true,    // Y 轴、跳跃、攀爬、墙跑、空中冲刺
-  verticalEnemies: true,     // 敌人分层寻路、攀爬与立体刷新
-  dynamicMapEvents: true,    // 地图结构事件
-  unifiedEvolution: true,    // 统一进化、品质抽取与候选生成
-  buildSynergy: true,        // 基础反应、连接、融合与终局规则
-  mapBuildInfluence: true,   // 地图能力卡与风险行为对下一抽的影响
-  hordeEvolution: true       // 玩家选择对变体、融合精英与 Boss 的映射
+  dynamicMapEvents: false    // 地图结构事件：静态地图验收通过前保持关闭（todo4 §8）
 };
 
 /* --- 玩家机动 §2.3 ---
@@ -690,7 +660,6 @@ TUNE.EFFECT_BUDGET = {
    不允许出现调参用的魔法数字。
    ========================================================================== */
 
-TUNE.FEATURES.composableBuildV2 = true;   // todo5 §10：新系统独立开关，?build=old 回退
 
 /* --- §6.3 硬上限：这些必须从第一天存在，数值可调、存在性不可调 --- */
 TUNE.GENEALOGY = {

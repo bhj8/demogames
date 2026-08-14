@@ -15,7 +15,7 @@ const NAV = {
   _pathCache: null, _cacheTick: 0,
 
   init() {
-    this.enabled = CITY.enabled && MODE.vertEnemy;
+    this.enabled = CITY.enabled;
     this._pathCache = new Map();
     this.camp = { t: 0, x: 0, z: 0, stage: 0, method: '-' };
     this.stats = { spawnRejected: 0, rejectReason: {}, navFail: 0, traversals: 0, shotOffWall: 0 };
@@ -65,7 +65,7 @@ const NAV = {
 
   /* ------------------------------------------------- 分层刷怪点选择 §5.3 */
   /* 目标数量按玩家高度与邻近层动态分配；所有刷新点必须在视线外或被环境遮挡，
-     且已在 CITY._buildSpawnPoints 里验证过可站立与可达。 */
+     且已在 CITYSCALE.buildSpawnPoints 里验证过可站立与可达。 */
   pickSpawn(forceFront, layerWant) {
     if (!CITY.spawnPoints.length) return null;
     const p = G.player, S = TUNE.SPAWN, V = TUNE.VERTICAL_ENEMY;

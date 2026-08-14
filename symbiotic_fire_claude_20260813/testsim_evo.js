@@ -1,7 +1,8 @@
 /* ============================================================================
-   统一进化的无渲染模拟（todo3 §10 阶段 D 收尾 / §11.3）
-   只加载 tune / core / build-synergy / evolution-pool / evolution-director，
-   其余一律桩掉 —— 这里验证的是节奏与概率，不是渲染。
+   统一进化的无渲染模拟：10,000 局的节奏、品质分布、保底与候选合法性。
+   只加载 tune / core / weapon-modules / attack-graph / module-pool / evolution-director，
+   其余一律桩掉 —— 这里验证的是概率与保底，不是渲染，也不是战斗。
+   单局的机制正确性由 _modcheck.html 负责，两者不重叠。
 
    跑法：node testsim_evo.js [局数]
    ========================================================================== */
@@ -41,14 +42,16 @@ load('core.js');
 
 /* 战斗层与渲染层的桩：只保留统一进化真正会碰到的入口 */
 vm.runInContext(`
-  var MODE = { city: true, vertMove: true, vertEnemy: true, mapEvents: true, evolution: true };
   var CITY = { enabled: true, layerOf: () => 'street', regionAt: () => null, links: [], byId: {} };
   var NAV = { enabled: false, invalidate(){}, camp:{stage:0} };
   var MAPEV = { executing: false };
   var MOVE = { pose: { state: 'ground', grounded: true }, st: {}, stats: { linkUse:{} } };
   var R = { setGunOrgan(){}, ring(){}, puff(){}, zones:{get:()=>({mesh:{position:{set(){},copy(){}},scale:{setScalar(){}},material:{color:{setHex(){}},opacity:0},visible:false},rim:{position:{copy(){}},scale:{setScalar(){}},material:{color:{setHex(){}},opacity:0},visible:false}})} };
   /* Audio2 直接用 core.js 的真身：ready=false，所有方法自然是空操作 */
-  var WEAPON = { on(){}, setOrgan(){}, pose:{ads:0}, climb:0 };
+  /* WEAPON 的桩必须带上 moduleFx —— §10 的卡牌审计要拿它核对反馈通道，
+     少了它所有模块卡都会被判「无反馈」而不进池，卡池会空得悄无声息。 */
+  var WEAPON = { on(){}, setOrgan(){}, pose:{ads:0}, climb:0, ready:false, addTracer(){},
+    moduleFx: { volley:1, blast:1, pierce:1, split:1, heavy:1, overclock:1, ricochet:1, momentum:1 } };
   var V3g = new THREE.Vector3();
 
   var G = {
@@ -56,7 +59,11 @@ vm.runInContext(`
     bus: new Bus(), player: { level: 1, pos: new THREE.Vector3(), maxHp:120, hp:120, gun:{} },
     mods: {}, mutations: [], mutationSet: {}, variantPool: [],
     enemies: { live: [] }, xp: [], hazards: [], pendings: [],
-    stats: {}, derived: {}, conductCounter: 0, overclock: 0,
+    /* G.stats 必须和真身一致：§10 的审计要拿卡牌的 attribution 去 G.stats 里核对，
+       桩成空对象会让所有「归因到 G.stats 字段」的卡（规则/条件分支/通用改装）
+       全部被判无归因而不进池 —— 卡池会凭空少掉二十来张，且悄无声息。 */
+    stats: { kills:0, shots:0, hits:0, procs:0, dmgDealt:0, dmgTaken:0, blasts:0, bolts:0, splits:0 },
+    derived: {},
     xpRate: 0, xpFrame: 0, tutorialQueue: [],
     airdrop: null, bossAlive: null, bossSpawnAt: -999,
     shakeAdd(){}, dmgScale(){return 1;},
@@ -65,35 +72,37 @@ vm.runInContext(`
   function lvl(id){ return G.mods[id]||0; }
   function hasMut(id){ return !!G.mutationSet[id]; }
   function recompute(){
-    var d = { damage:12, pierce:0, mutRadius:1, mutDamage:1, bulletScale:1, magazine:30,
-              moveSpeed:6.2, dashCooldown:2.1, maxDepth:2, infiniteMag:false };
-    if (typeof SYN !== 'undefined' && SYN.build) SYN.applyDerived(d);
+    /* 字段要覆盖 WMOD.applyDerived 会读写的全部项：少一个就会算出 NaN
+       （applyDerived 出口的有限性防线会报出来，那正是它存在的意义）。 */
+    var d = { damage:12, fireInterval:1/9, magazine:30, reloadTime:1.55, knockback:3.2,
+              weaponHeavy:1, bulletScale:1, pellets:1, pierce:0, spreadBase:0.9, spreadBloom:2.4,
+              weakpointMult:2.5, mutRadius:1, mutDamage:1, moveSpeed:6.2, dashCooldown:2.1,
+              maxDepth:2, infiniteMag:false };
+    d.genDerived = 14; d.genEvents = 22; d.genDepth = 3; d.genHits = 3;
+    G.derived = d;
+    if (typeof WMOD !== 'undefined' && WMOD.own) WMOD.applyDerived(d);
     G.derived = d; return d;
   }
   function emitBuildChanged(){}
-  function modAvailable(m){
-    if ((G.mods[m.id]||0) >= m.max) return false;
-    if (m.req && G.mutations.length < m.req) return false;
-    return true;
-  }
   function pickChainTarget(){ return null; }
   function spawnBullet(){ return null; }
   function areaDamage(){ }
   function fmtTime(s){ return String(Math.round(s)); }
 `, ctx);
 
-load('build-synergy.js');
+load('weapon-modules.js');
+load('attack-graph.js');
 load('horde-evolution.js');
 load('map-build.js');
-load('evolution-pool.js');
+load('module-pool.js');
 load('evolution-director.js');
 
 /* tune.js / core.js 里的 TUNE、RNG 等都是 const —— 在 vm 里，顶层 const 不会挂到
    contextified object 上。所以在同一个上下文里跑一小段桥接脚本，把它们用 var 导出来。 */
 vm.runInContext(`
-  var __x = { RNG: RNG, TUNE: TUNE, SYN: SYN, EVO: EVO, EVOPOOL: EVOPOOL, HORDE: HORDE,
-              MAPBUILD: MAPBUILD, G: G, recompute: recompute,
-              BASE_IDS: BASE_IDS, COMBO_MAP: COMBO_MAP, comboKey: comboKey };
+  var __x = { RNG: RNG, TUNE: TUNE, EVO: EVO, MODPOOL: MODPOOL, HORDE: HORDE,
+              MAPBUILD: MAPBUILD, G: G, recompute: recompute, WMOD: WMOD, AG: AG,
+              MODULE_IDS: MODULE_IDS, REACTION: REACTION, PAIR_EFFECTS: PAIR_EFFECTS };
 `, ctx);
 const C = ctx.__x;
 
@@ -108,8 +117,8 @@ function runOnce(seed, strength) {
   C.G.player.level = 1;
   C.G.xpRate = C.TUNE.PACING.bootstrapXp / C.TUNE.PACING.firstLevelAt;
   C.G._pending = null;
-  C.SYN.init(); C.HORDE.init(); C.MAPBUILD.init();
-  C.EVOPOOL.init(); C.EVO.init();
+  C.WMOD.init(); C.AG.init(); C.HORDE.init(); C.MAPBUILD.init();
+  C.MODPOOL.init(); C.EVO.init();
   C.recompute();
 
   const dt = 1 / 12;                       // 12Hz 足够，节奏判定不依赖帧率
@@ -139,7 +148,7 @@ function runOnce(seed, strength) {
         if (c.quality !== p.q) rec.bad.push('mixq:' + c.id + '!=' + p.q);
         if (ids[c.id]) rec.bad.push('dup:' + c.id);
         ids[c.id] = 1;
-        if (!c.requires(C.SYN.build)) rec.bad.push('req:' + c.id);
+        if (!c.requires()) rec.bad.push('req:' + c.id);
       });
       rec.qualities.push(p.q);
       rec.times.push(C.G.time);
@@ -149,7 +158,7 @@ function runOnce(seed, strength) {
       p.pick(pick.id);
     }
   }
-  rec.build = C.SYN.build;
+  rec.build = { modules: C.WMOD.own.slice(), branches: C.WMOD.branches.slice() };
   rec.log = C.EVO.log;
   return rec;
 }
@@ -254,17 +263,18 @@ console.log('  整体高品质率 ' + pct(agg.q.epic + agg.q.legend, agg.total) 
 console.log('\n【候选合法性】§7.5');
 console.log('  违规条目  ' + (agg.bad.length ? agg.bad.join(' ') : '0（品质一致、无重复、前置全部满足）'));
 
-/* 任意两种基础变异都必须有自动反应、稀有连接与史诗融合 */
+/* 任意两个模块都必须在矩阵里有评级，并且有登记的实现条目 */
 let missing = [];
-for (let i = 0; i < C.BASE_IDS.length; i++)
-  for (let j = i + 1; j < C.BASE_IDS.length; j++) {
-    const k = C.comboKey(C.BASE_IDS[i], C.BASE_IDS[j]);
-    if (!C.COMBO_MAP[k]) missing.push(k + ':combo');
-    if (!C.EVOPOOL.byId['link_' + k]) missing.push(k + ':link');
-    if (!C.EVOPOOL.byId['fusion_' + k]) missing.push(k + ':fusion');
+for (let i = 0; i < C.MODULE_IDS.length; i++)
+  for (let j = i + 1; j < C.MODULE_IDS.length; j++) {
+    const a = C.MODULE_IDS[i], b = C.MODULE_IDS[j];
+    const k = a < b ? a + '+' + b : b + '+' + a;
+    if (!C.REACTION[a] || !C.REACTION[a][b]) missing.push(k + ':tier');
+    const impl = C.PAIR_EFFECTS[k];
+    if (!impl || !impl.length) missing.push(k + ':impl');
   }
-console.log('\n【化学反应覆盖】§7.7');
-console.log('  15 组组合 / 连接 / 融合  ' + (missing.length ? '缺 ' + missing.join(' ') : '全部齐备'));
+console.log('\n【组合覆盖】28 对');
+console.log('  评级与实现登记  ' + (missing.length ? '缺 ' + missing.join(' ') : '全部齐备'));
 
 const fail =
   agg.minGapViolation + agg.afterCutoff + agg.streakViolation +

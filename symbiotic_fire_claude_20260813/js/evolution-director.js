@@ -11,13 +11,11 @@
 'use strict';
 
 const EVO = {
-  enabled: false,
   draw: null,
   progress: 0, need: 0, overflow: 0,
   log: [],
 
   init() {
-    this.enabled = TUNE.FEATURES.unifiedEvolution;
     this.draw = {
       evolutionIndex: 0,          // 已完成的进化次数
       lastChoiceTime: 0,          // 上一次选择【关闭】的时刻
@@ -69,7 +67,6 @@ const EVO = {
   /* 经验入口：等级与“弹一次选择”彻底解耦（§4.2）。
      溢出不会连弹多张界面，只会进入下一段进化进度。 */
   addProgress(v) {
-    if (!this.enabled) return false;
     this.progress += v;
     return true;
   },
@@ -81,7 +78,7 @@ const EVO = {
     if (G.bossAlive && G.time - (G.bossSpawnAt || -999) < TUNE.AIRDROP.bossGrace) return 'boss入场';
     if (G.airdrop && G.airdrop.state === 'falling') return '空投坠落';
     if (typeof MAPEV !== 'undefined' && MAPEV.executing) return '地图事件';
-    if (MODE.vertMove && MOVE.st) {
+    if (MOVE.st) {
       const s = MOVE.pose.state;
       if (s === 'mantle' || s === 'vault' || s === 'wallclimb' || s === 'wallrun' || s === 'zip') return '攀爬中';
       if (!MOVE.pose.grounded) return '滞空中';
@@ -99,7 +96,7 @@ const EVO = {
 
   /* ------------------------------------------------------------ 主循环 */
   update(dt) {
-    if (!this.enabled || G.phase !== 'play') return;
+    if (G.phase !== 'play') return;
     const E = TUNE.EVOLUTION, d = this.draw;
 
     this.need = this.computeNeed();
@@ -203,13 +200,25 @@ const EVO = {
   },
 
   /* ------------------------------------------- §7.1 步骤 3～5：候选生成 */
-  /* todo5 §10：v2 打开时只换卡池，不动 §7.1 的抽取顺序与保底逻辑 */
-  pool() { return (typeof WMOD !== 'undefined' && WMOD.enabled) ? MODPOOL : EVOPOOL; },
-
   _open() {
     const d = this.draw;
-    const q = this.drawQuality(G.time);
-    const cards = this.pool().candidates(q, d);
+    let q = this.drawQuality(G.time);
+    /* 抽到的品质如果在当前构筑下凑不出三张，就换一个能凑出的品质：
+       优先向【更高】品质借（对玩家只会更好），实在没有才向下。
+       §7.5 的底线是「三张同品质」和「不偷偷混入低品质」，
+       所以这里换的是整次的品质，而不是把三张拆成两张。 */
+    if (!MODPOOL.viable(q, d)) {
+      const order = TUNE.RARITY.order, i = order.indexOf(q);
+      let alt = null;
+      for (let k = i + 1; k < order.length && !alt; k++) if (MODPOOL.viable(order[k], d)) alt = order[k];
+      for (let k = i - 1; k >= 0 && !alt; k--) if (MODPOOL.viable(order[k], d)) alt = order[k];
+      if (alt) {
+        this._lastDraw.substituted = q + '→' + alt;
+        this.substitutions = (this.substitutions || 0) + 1;
+        q = alt;
+      }
+    }
+    const cards = MODPOOL.candidates(q, d);
     if (!cards.length) {                      // 理论上不会发生，兜底不卡在 choose 相
       d.pending = null; d.lastChoiceTime = G.time; this.progress = 0;
       return;
@@ -231,14 +240,12 @@ const EVO = {
   /* -------------------------------------------- §7.1 步骤 6～7：应用 */
   pick(cardId) {
     const d = this.draw;
-    const card = this.pool().byId[cardId];
+    const card = MODPOOL.byId[cardId];
     if (!card) return;
     const others = d.pending.cards.filter(c => c.id !== cardId).map(c => c.id);
 
     card.apply();
-    SYN.build.taken[cardId] = (SYN.build.taken[cardId] || 0) + 1;
-    if (typeof WMOD !== 'undefined' && WMOD.enabled)
-      WMOD.taken[cardId] = (WMOD.taken[cardId] || 0) + 1;
+    WMOD.taken[cardId] = (WMOD.taken[cardId] || 0) + 1;
 
     /* 保底计数：只统计品质，不做任何反向压制（§7.4） */
     const q = d.pending.quality;
@@ -246,7 +253,7 @@ const EVO = {
     if (q === 'epic' || q === 'legend') d.hasEpic = true;
 
     /* 地图修正用后清除，避免长期权重失控（§6.4） */
-    if (TUNE.FEATURES.mapBuildInfluence && typeof MAPBUILD !== 'undefined') MAPBUILD.consume();
+    MAPBUILD.consume();
     d.mapQualityMod = 0; d.mapTagBias = null;
 
     d.evolutionIndex++;

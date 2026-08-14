@@ -115,111 +115,33 @@ const R = {
     g.oct = new T.OctahedronGeometry(0.5, 0);
   },
 
-  /* ---------------------------------------------------------------- 竞技场 */
+  /* ---------------------------------------------------------------- 城市 */
   _buildArena() {
-    /* todo3：立体城市由 citymap.js 构建。旧平面竞技场原样保留，
-       ?map=flat 时仍然是它在跑 —— 这是回滚路径，不允许被删掉。 */
-    if (typeof MODE !== 'undefined' && MODE.city) {
-      this.obstacles = [];
-      this.arenaHalf = TUNE.VERTICAL_MAP.half;
-      /* 城市尺度地图要看到远景天际线，雾必须推得更远（§2.1）。
-         同时补光：原来的亮度是按 56m 竞技场调的，放进 220m 城市后
-         建筑大体块会糊成一片黑，玩家根本读不出体量与层级（§2.2）。 */
-      this.scene.fog = new T.Fog(0x18202c, MODE.scale ? 130 : 55, MODE.scale ? 520 : 165);
-      if (MODE.scale) {
-        this.scene.background = new T.Color(0x18202c);
-        this.camera.far = 1000; this.camera.updateProjectionMatrix();
-        this.hemi.intensity = 1.25;
-        this.hemi.color.setHex(0x9fb4d4); this.hemi.groundColor.setHex(0x2e3540);
-        this.sun.intensity = 1.15;
-        this.sun.position.set(120, 190, -90);
-        this.lamp.distance = 34; this.lamp.intensity = 0.55;
-      }
-      CITY.build(this.scene, MAP_MODE);
-      this.arenaHalf = CITY.half;
-      return;
-    }
-    const H = this.arenaHalf;
-    const floorMat = new T.MeshLambertMaterial({ color: 0x232a34 });
-    const floor = new T.Mesh(new T.PlaneGeometry(H * 2, H * 2), floorMat);
-    floor.rotation.x = -Math.PI / 2;
-    this.scene.add(floor);
-
-    /* 低饱和地面网格，帮助判断距离与走位 §9 */
-    const grid = new T.GridHelper(H * 2, 36, 0x2c3a4a, 0x222a34);
-    grid.position.y = 0.012;
-    grid.material.opacity = 0.55; grid.material.transparent = true;
-    this.scene.add(grid);
-
-    const wallMat = new T.MeshLambertMaterial({ color: 0x232a34 });
-    const trimMat = new T.MeshBasicMaterial({ color: 0x3f5468 });
-    const wh = 7;
-    for (let i = 0; i < 4; i++) {
-      const w = new T.Mesh(this.geo.box, wallMat);
-      const a = i * Math.PI / 2;
-      w.position.set(Math.sin(a) * H, wh / 2, Math.cos(a) * H);
-      w.scale.set(i % 2 ? 1.2 : H * 2, wh, i % 2 ? H * 2 : 1.2);
-      this.scene.add(w);
-      const t = new T.Mesh(this.geo.box, trimMat);
-      t.position.set(Math.sin(a) * (H - 0.7), 0.06, Math.cos(a) * (H - 0.7));
-      t.scale.set(i % 2 ? 0.16 : H * 2 - 1.4, 0.12, i % 2 ? H * 2 - 1.4 : 0.16);
-      this.scene.add(t);
-    }
-
-    /* 掩体：给走位一点拓扑，但不能挡住尸潮的可读性 —— 全部矮于视线。
-       中心必须留空：玩家出生点在原点。 */
+    /* 只有一张地图：城市尺度。旧的 56m 平面竞技场与 todo3 的 70m 立体地图
+       都已删除 —— 保留它们只会让每次改动都要同时维护三套光照、雾和碰撞。 */
     this.obstacles = [];
-    const pillarMat = new T.MeshLambertMaterial({ color: 0x2a323d });
-    const layout = [
-      [-10.5, -10.5, 2.5, 2.6], [10.5, -10.5, 2.5, 2.6],
-      [-10.5, 10.5, 2.5, 2.6], [10.5, 10.5, 2.5, 2.6],
-      [-19, 0, 1.9, 2.2], [19, 0, 1.9, 2.2], [0, -19, 1.9, 2.2], [0, 19, 1.9, 2.2]
-    ];
-    layout.forEach(([x, z, r, h]) => {
-      const m = new T.Mesh(this.geo.cyl, pillarMat);
-      m.position.set(x, h / 2, z); m.scale.set(r * 2, h, r * 2);
-      this.scene.add(m);
-      const cap = new T.Mesh(this.geo.cyl, trimMat);
-      cap.position.set(x, h + 0.06, z); cap.scale.set(r * 2.06, 0.12, r * 2.06);
-      this.scene.add(cap);
-      this.obstacles.push({ x: x, z: z, r: r, h: h });
-    });
-
-    /* 远处轮廓，给"灾难现场"一点氛围但不产生可读性噪音 */
-    const skyMat = new T.MeshLambertMaterial({ color: 0x151a22 });
-    for (let i = 0; i < 26; i++) {
-      const a = (i / 26) * Math.PI * 2, d = 46 + (i % 5) * 9;
-      const b = new T.Mesh(this.geo.box, skyMat);
-      const h = 10 + (i * 7 % 26);
-      b.position.set(Math.cos(a) * d, h / 2, Math.sin(a) * d);
-      b.scale.set(7 + (i % 4) * 3, h, 7 + (i % 3) * 3);
-      this.scene.add(b);
-    }
+    this.arenaHalf = TUNE.VERTICAL_MAP.half;
+    /* 城市尺度要看到远景天际线，雾推远；同时补光 ——
+       原亮度是按 56m 竞技场调的，放进 220m 城市后大体块会糊成一片黑（todo4 §2.2）。 */
+    this.scene.fog = new T.Fog(0x18202c, 130, 520);
+    this.scene.background = new T.Color(0x18202c);
+    this.camera.far = 1000; this.camera.updateProjectionMatrix();
+    this.hemi.intensity = 1.25;
+    this.hemi.color.setHex(0x9fb4d4); this.hemi.groundColor.setHex(0x2e3540);
+    this.sun.intensity = 1.15;
+    this.sun.position.set(120, 190, -90);
+    this.lamp.distance = 34; this.lamp.intensity = 0.55;
+    CITY.build(this.scene);
+    this.arenaHalf = CITY.half;
   },
 
-  /* 竞技场碰撞：把点推出墙和柱子。
-     立体城市下转交 citymap.js 做圆柱 vs AABB 的水平推出（垂直由调用方处理）。 */
+  /* 碰撞：转交 citymap.js 做圆柱 vs AABB 的水平推出（垂直由调用方处理）。 */
   collide(p, radius, yBot, yTop) {
-    if (CITY.enabled) {
-      p.x = clamp(p.x, -(CITY.halfX - 1.2 - radius), CITY.halfX - 1.2 - radius);
-      p.z = clamp(p.z, -(CITY.halfZ - 1.2 - radius), CITY.halfZ - 1.2 - radius);
-      const b = yBot === undefined ? p.y + 0.12 : yBot;
-      const t = yTop === undefined ? p.y + 1.7 : yTop;
-      CITY.depenetrate(p, radius, b, t, null);
-      return;
-    }
-    const H = this.arenaHalf - 1.0 - radius;
-    p.x = clamp(p.x, -H, H); p.z = clamp(p.z, -H, H);
-    for (let i = 0; i < this.obstacles.length; i++) {
-      const o = this.obstacles[i];
-      const dx = p.x - o.x, dz = p.z - o.z;
-      const rr = o.r + radius;
-      const d2 = dx * dx + dz * dz;
-      if (d2 < rr * rr && d2 > 1e-6) {
-        const d = Math.sqrt(d2);
-        p.x = o.x + dx / d * rr; p.z = o.z + dz / d * rr;
-      }
-    }
+    p.x = clamp(p.x, -(CITY.halfX - 1.2 - radius), CITY.halfX - 1.2 - radius);
+    p.z = clamp(p.z, -(CITY.halfZ - 1.2 - radius), CITY.halfZ - 1.2 - radius);
+    const b = yBot === undefined ? p.y + 0.12 : yBot;
+    const t = yTop === undefined ? p.y + 1.7 : yTop;
+    CITY.depenetrate(p, radius, b, t, null);
   },
 
   /* ------------------------------------------------------------ 敌人模型 */

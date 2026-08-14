@@ -42,13 +42,13 @@ const AG = {
   _registerConsumers() {
     const c = {};
     [
-      'volley.pellets', 'volley.pattern', 'volley.wall',
-      'blast.radius', 'blast.core', 'blast.ring', 'blast.terminal',
-      'pierce.count', 'pierce.decay', 'pierce.over',
-      'split.count', 'split.coef', 'split.home', 'split.wave',
+      'volley.pellets', 'volley.pattern', 'volley.wall', 'volley.ammo',
+      'blast.radius', 'blast.core', 'blast.ring', 'blast.terminal', 'blast.budget',
+      'pierce.count', 'pierce.decay', 'pierce.over', 'pierce.width',
+      'split.count', 'split.coef', 'split.home', 'split.wave', 'split.scale',
       'heavy.rate', 'heavy.knock', 'heavy.siege', 'heavy.body',
-      'overclock.ramp', 'overclock.mag', 'overclock.redline', 'overclock.cadence',
-      'ricochet.count', 'ricochet.decay', 'ricochet.lash',
+      'overclock.ramp', 'overclock.mag', 'overclock.redline', 'overclock.cadence', 'overclock.hold',
+      'ricochet.count', 'ricochet.decay', 'ricochet.lash', 'ricochet.range',
       'momentum.window', 'momentum.gain', 'momentum.core', 'momentum.round',
       'cond.weak', 'cond.reload', 'cond.kill',
       'rule.depth', 'rule.derive', 'rule.blast', 'rule.hit', 'rule.mag',
