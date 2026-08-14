@@ -628,3 +628,17 @@ function fmtTime(s) {
   const m = Math.floor(s / 60), r = Math.floor(s % 60);
   return m + ':' + (r < 10 ? '0' : '') + r;
 }
+
+/* 世界方向 → 屏幕方位角。0 = 正前方，正值 = 右侧，单位弧度。
+   给所有屏幕方向标（伤害来源、威胁扇区、空投/医疗指示）用同一个函数。
+
+   这里之前在三个地方各写了一遍 `atan2(dx,dz) - (yaw + PI)`，三处**符号全反**：
+   玩家朝 -Z（yaw=0）时，正右方 (+X) 算出来是 -90°，而 CSS rotate() 正值是
+   顺时针，于是右边的威胁指到了左边。三份拷贝一起错，正是因为它被抄了三遍 ——
+   所以这次收成一个函数，而不是原地改三个减号。 */
+function screenBearing(dx, dz, yaw) {
+  let a = (yaw + Math.PI) - Math.atan2(dx, dz);
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}

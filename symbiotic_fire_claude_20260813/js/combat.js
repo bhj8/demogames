@@ -705,13 +705,7 @@ function hurtPlayer(amount, fromPos, kind) {
 
   /* 方向指示：把伤害来源投到屏幕平面 */
   let ang = 0;
-  if (fromPos) {
-    const dx = fromPos.x - p.pos.x, dz = fromPos.z - p.pos.z;
-    const world = Math.atan2(dx, dz);
-    ang = world - (p.yaw + Math.PI);
-    while (ang > Math.PI) ang -= Math.PI * 2;
-    while (ang < -Math.PI) ang += Math.PI * 2;
-  }
+  if (fromPos) ang = screenBearing(fromPos.x - p.pos.x, fromPos.z - p.pos.z, p.yaw);
   G.ui.damageFrom(ang, DMG_COLOR[kind] || '#ff4d5e');
 
   if (p.hp <= 0) { p.hp = 0; G.lose(); }

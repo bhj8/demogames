@@ -1535,10 +1535,7 @@ const UI = {
       if (e.dead) continue;
       const dx = e.pos.x - p.pos.x, dz = e.pos.z - p.pos.z;
       const dist = Math.hypot(dx, dz);
-      const world = Math.atan2(dx, dz);
-      let rel = world - (p.yaw + Math.PI);
-      while (rel > Math.PI) rel -= Math.PI * 2;
-      while (rel < -Math.PI) rel += Math.PI * 2;
+      const rel = screenBearing(dx, dz, p.yaw);
 
       /* 接近速度 → 预计接触时间 */
       const closing = Math.max(0.1, e.speed);
@@ -1620,9 +1617,7 @@ const UI = {
     const put = (el, obj, show) => {
       if (!obj || !show) { el.style.opacity = 0; return; }
       const dx = obj.x - p.pos.x, dz = obj.z - p.pos.z;
-      let rel = Math.atan2(dx, dz) - (p.yaw + Math.PI);
-      while (rel > Math.PI) rel -= Math.PI * 2;
-      while (rel < -Math.PI) rel += Math.PI * 2;
+      const rel = screenBearing(dx, dz, p.yaw);
       if (Math.abs(rel) < hHalf) { el.style.opacity = 0; return; }   // 进入视野后只留世界光柱
       el.style.opacity = 1;
       el.style.transform = 'translate(-50%,-50%) rotate(' + (rel * 180 / Math.PI) + 'deg)';

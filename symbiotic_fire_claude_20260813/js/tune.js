@@ -560,7 +560,9 @@ TUNE.MOVEMENT = {
   slideHeight: 0.95,
 
   zipSpeed: 18.0,
-  zipSnapDist: 2.8,
+  /* 上索吸附半径。2.8m 在 46m 的屋顶上等于一个隐形小点，跑过去很难对上；
+     4.2m 配合两端的立柱，才是「看见柱子跑过去就能上」。 */
+  zipSnapDist: 4.2,
   padImpulse: 14.5,
   padRearm: 0.9,             // 跳板再装填：站在板上不允许被无限弹起
 
