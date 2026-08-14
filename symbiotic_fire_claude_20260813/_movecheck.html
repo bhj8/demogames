@@ -67,7 +67,9 @@ function place(x, z, yaw) {
   const p = G.player;
   p.pos.set(x, 0, z); p.vel.set(0, 0, 0);
   p.dashCd = 0; p.dashT = 0; p.dashIFrame = 0;   // 冷却会跨测试残留，必须清
-  p.yaw = yaw === undefined ? Math.PI / 2 : yaw;   // +X
+  /* yaw=-π/2 时 KeyW 才是 +X（findOpenLane 清的正是 +X 方向）。
+     写成 +π/2 会让玩家朝 -X 跑，撞上背后的楼，量出来是 0。 */
+  p.yaw = yaw === undefined ? -Math.PI / 2 : yaw;
   p.pitch = 0;
   const st = MOVE.st;
   st.state = 'ground'; st.grounded = true; st.dashT = 0; st.slideT = 0;
@@ -261,10 +263,17 @@ addEventListener('load', () => setTimeout(() => {
   p = place(lane.x, lane.z);
   step(45, { KeyW: true });
   step(6, { KeyW: true, ControlLeft: true });
-  MOVE.onJump(); step(240, {});                     // 松开所有键，纯滞空 4 秒
+  /* 动量衰减是一条【规则】，不该由玩家碰巧落在哪来判定 ——
+     上一版让玩家跳出去再等，结果换个测试点就落在坡道上一直滑，量出来忽高忽低。
+     这里直接把动量顶到上限、速度清零，看规则本身会不会把它放掉。 */
+  place(lane.x, lane.z);
+  MOVE.st.mom = M().momentumCap;
+  const need = (M().momentumCap - TUNE.PLAYER.moveSpeed) / M().momentumDecay;   // 理论所需秒数
+  step(Math.ceil((need + 1) * 60), {});
   const decayed = MOVE.st.mom;
-  say('  松手滞空 4s 后动量 ' + decayed.toFixed(1) + ' m/s');
-  ok(decayed < TUNE.PLAYER.moveSpeed, '动量在空中不衰减 —— 会变成永久加速');
+  say('  动量顶到 ' + M().momentumCap + '，无输入 ' + (need + 1).toFixed(1) +
+      's（理论需 ' + need.toFixed(1) + 's）→ ' + decayed.toFixed(1) + ' m/s');
+  ok(decayed <= TUNE.PLAYER.moveSpeed + 0.1, '动量不按 momentumDecay 衰减 —— 会变成永久加速');
 
   /* ---------------- 12 分钟整局不回归 ---------------- */
   say('');

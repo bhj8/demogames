@@ -109,13 +109,14 @@ function audit() {
   const S = CITYSCALE.S, m = CITYSCALE.measure();
   const ok = (name, pass, extra) => L.push((pass ? 'PASS ' : 'FAIL ') + name + (extra !== undefined ? ' = ' + extra : ''));
 
-  L.push('=== todo4 阶段 A：城市尺度灰盒 ===');
+  L.push('=== 城市尺度 + 战斗单元（TODO.md M2）===');
   L.push('可玩范围 ' + m.playable + '   大体块 ' + m.blocks + '（可玩 ' + m.playableBlocks + '）');
 
   /* --- §2.1 尺度 --- */
   ok('可玩范围≈220×180', S.halfX * 2 === 220 && S.halfZ * 2 === 180, m.playable);
-  ok('主干道 26~30m', S.mainRoad >= 26 && S.mainRoad <= 30, S.mainRoad + 'm');
-  ok('次级街道 16~20m', S.crossRoad >= 16 && S.crossRoad <= 20, S.crossRoad + 'm');
+  /* todo6 §2.2 覆盖 todo4：只留一条 22~28m 主干道，战斗街道压到 10~16m */
+  ok('主干道 22~28m（唯一的大场面空间）', S.mainRoad >= 22 && S.mainRoad <= 28, S.mainRoad + 'm');
+  ok('战斗街道 10~16m', S.crossRoad >= 10 && S.crossRoad <= 16, S.crossRoad + 'm');
   ok('人行道 4~5m', S.walk >= 4 && S.walk <= 5, S.walk + 'm');
   ok('低层 5~7m', S.shopH >= 5 && S.shopH <= 7, S.shopH + 'm');
   ok('停车楼 14~20m', S.garageH >= 14 && S.garageH <= 20, S.garageH + 'm');
@@ -167,8 +168,47 @@ function audit() {
   ok('有意义的碰撞体≤70', solid.length <= 70, solid.length + ' 个（目标约 50）');
   ok('无小于 3×3m 的碎碰撞体', tiny.length === 0, tiny.length + ' 个');
   ok('大体块 6~8', m.blocks >= 6 && m.blocks <= 12, m.blocks);
+
+  /* --- M2 / todo6 §2.1：战斗单元尺度 --- */
+  const zones = {};
+  CITYSCALE.blocks.forEach(b => {
+    if (!b.zone) return;
+    const z = zones[b.zone] || (zones[b.zone] = { x0: 1e9, x1: -1e9, z0: 1e9, z1: -1e9 });
+    z.x0 = Math.min(z.x0, b.x0); z.x1 = Math.max(z.x1, b.x1);
+    z.z0 = Math.min(z.z0, b.z0); z.z1 = Math.max(z.z1, b.z1);
+  });
+  const zk = Object.keys(zones);
+  const sizes = zk.map(k => {
+    const z = zones[k];
+    return { k: k, w: z.x1 - z.x0, d: z.z1 - z.z0 };
+  });
+  ok('战斗单元 3~4 个', zk.length >= 3 && zk.length <= 4, zk.length + ' 个');
+  ok('每个单元 35~50m', sizes.every(s2 => Math.max(s2.w, s2.d) >= 30 && Math.max(s2.w, s2.d) <= 52),
+     sizes.map(s2 => s2.k + ' ' + fmt(s2.w) + '×' + fmt(s2.d)).join('  '));
+
+  /* 同一单元内相邻可玩体块的间距：一次明确动作要够得着（6~10m） */
+  const gaps = [];
+  zk.forEach(k => {
+    const bs = CITYSCALE.blocks.filter(b => b.zone === k);
+    for (let i = 0; i < bs.length; i++)
+      for (let j = i + 1; j < bs.length; j++) {
+        const a = bs[i], b = bs[j];
+        const gx = Math.max(0, Math.max(a.x0 - b.x1, b.x0 - a.x1));
+        const gz = Math.max(0, Math.max(a.z0 - b.z1, b.z0 - a.z1));
+        const g = Math.max(gx, gz);
+        if (g > 0.5) gaps.push({ k: k, g: g });
+      }
+  });
+  ok('单元内体块间距 6~12m（一次动作够得着）',
+     gaps.length === 0 || gaps.every(x => x.g >= 6 && x.g <= 12),
+     gaps.map(x => x.k + ' ' + fmt(x.g) + 'm').join(' ') || '单体块单元');
   ok('真正可玩建筑（功能区）3~4', m.zones >= 3 && m.zones <= 4, m.zones + ' 个功能区 / ' + m.playableBlocks + ' 个盒子');
-  ok('阶段A无滑索/跳板', CITY.devices.length === 0, CITY.devices.length);
+  /* M2：宏观转场 2~3 条，每条 40~70m —— 不再是「阶段 A 一律为 0」 */
+  const zips = CITY.devices.filter(d => d.kind === 'zip');
+  const zipLen = zips.map(d => Math.hypot(d.b.x - d.a.x, d.b.y - d.a.y, d.b.z - d.a.z));
+  ok('宏观转场 2~3 条', zips.length >= 2 && zips.length <= 3, zips.length + ' 条');
+  ok('每条转场 40~70m', zipLen.every(v => v >= 40 && v <= 70),
+     zipLen.map(v => fmt(v) + 'm').join(' / '));
   ok('阶段A无动态几何组', Object.keys(CITY.dynamics).length === 0, Object.keys(CITY.dynamics).length);
 
   /* --- §6.2 坡道必须是真斜面，不能是可见台阶 --- */

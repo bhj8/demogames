@@ -17,9 +17,13 @@
 const CITYSCALE = {
   /* 首轮尺度（todo4 §2.1）。全部集中在这里，试玩后按「原值→改值→原因」修改。 */
   S: {
-    halfX: 110, halfZ: 90,          // 可玩范围 220×180m
-    mainRoad: 28,                   // 主干道走廊总宽（含两侧人行道）
-    crossRoad: 18,                  // 次级街道走廊总宽
+    halfX: 110, halfZ: 90,          // 可玩范围 220×180m（视觉尺度保留）
+    /* TODO.md M2 / todo6 §2.2：战斗街道压到 10~16m，
+       只留【一条】22~28m 的主干道当大场面空间。
+       原值 28 / 18 是 todo4 阶段 A 的值 —— 那时还没有「战斗单元」这个概念，
+       整张图被当成同一种可玩空间，于是到处都是宽街，机动跨不过去也没意义。 */
+    mainRoad: 26,                   // 主干道走廊总宽（唯一的大场面空间）
+    crossRoad: 14,                  // 次级街道 = 战斗街道
     walk: 4.5,                      // 单侧人行道
     alley: 8,                       // 小巷
     curb: 0.15,                     // 路沿高度（不参与碰撞，玩家直接跨过）
@@ -43,10 +47,12 @@ const CITYSCALE = {
 
     this._ground(C);
     this._roads(C);
-    this._northWest(C);              // 低层商街：翻越后长距离屋顶奔跑
-    this._northEast(C);              // 停车楼：一条宽大连续坡道
-    this._southWest(C);              // 办公塔 + 裙楼：长立面墙跑
-    this._southEast(C);              // 在建大楼：大楼板跨越
+    this._northWest(C);              // 单元 1 商街：翻越后长距离屋顶奔跑
+    this._northEast(C);              // 单元 2 停车楼：一条宽大连续坡道
+    this._southWest(C);              // 单元 3 办公塔 + 裙楼：长立面墙跑
+    this._southEast(C);              // 单元 4 在建大楼：大楼板跨越
+    this._ledges(C);                 // M2：把一次性大高差切成 4~8m 的换层段
+    this._transfers(C);              // M2：2~3 条宏观转场（40~70m）
     this._fillers(C);                // 只负责围合街道与遮挡刷新
     this._boundary(C);               // 街区封锁 / 废墟，不做贴脸围墙
     this._skyline(C);                // 远景，不可碰撞
@@ -132,8 +138,11 @@ const CITYSCALE = {
      且屋顶之间最多连续跨越一两次，绝不做长串碎平台。 */
   _northWest(C) {
     const S = this.S;
-    this._building(C, 'shopA', '商街西段', -100, -58, -46, -16, S.shopH, 'shop', { playable: true, zone: 'shops' });
-    this._building(C, 'shopB', '商街东段', -50, -9, -46, -16, S.shopH, 'shop', { playable: true, zone: 'shops' });
+    /* 单元 1：约 46×30m。两段屋顶各 ~20m，中间 8m 巷 ——
+       8m 正好是一次冲刺（6.1m）加一点余量够不着、但滑铲跳能过的距离，
+       所以「跨巷」是一个需要动量的决定，而不是走过去。 */
+    this._building(C, 'shopA', '商街西段', -78, -58, -46, -16, S.shopH, 'shop', { playable: true, zone: 'shops' });
+    this._building(C, 'shopB', '商街东段', -50, -32, -46, -16, S.shopH, 'shop', { playable: true, zone: 'shops' });
   },
 
   /* -------------------------- 东北：停车楼（可玩：一条宽大连续坡道） ---- */
@@ -143,13 +152,14 @@ const CITYSCALE = {
     const S = this.S;
     /* 楼体主动让出西侧 14m 作为坡道槽 —— 坡道绝不能嵌在实心楼体内部，
        否则玩家站上坡面就会被水平推出去。 */
-    this._building(C, 'garage', '停车楼', 30, 88, -72, -16, S.garageH, 'garage',
+    /* 单元 2：约 46×46m（原来 58×56，跨一趟要十几秒还全是空行程） */
+    this._building(C, 'garage', '停车楼', 32, 78, -62, -16, S.garageH, 'garage',
       { playable: true, zone: 'garage' });
     /* 一条宽 14m、长 58m 的连续坡道，从街口直上顶层。
        真斜面，不是台阶盒 —— §6.2 明确禁止可见的坡道碰撞台阶。 */
-    C.addSlope(23, -43, 14, 58, 0.1, S.garageH, 'z', { mat: 'garage' });
+    C.addSlope(25, -39, 14, 46, 0.1, S.garageH, 'z', { mat: 'garage' });
     /* 顶层楼板：坡道尽头就是可跑的大平面，顶面与坡道顶端齐平，不留台阶 */
-    C.addBox(52, S.garageH - 0.25, -44, 72, 0.5, 56, { mat: 'garage', surf: SURF.DECK });
+    C.addBox(55, S.garageH - 0.25, -39, 46, 0.5, 46, { mat: 'garage', surf: SURF.DECK });
   },
 
   /* ------------------ 西南：办公塔 + 裙楼（可玩：长立面横向墙跑） ------ */
@@ -157,9 +167,11 @@ const CITYSCALE = {
      裙楼给出一条 90m 的连续立面，是全图最长的一面墙。 */
   _southWest(C) {
     const S = this.S;
-    this._building(C, 'podium', '办公裙楼', -100, -9, 16, 30, S.podiumH, 'office',
+    /* 单元 3：约 46×48m。裙楼立面 46m —— 一次跑墙 14.9m，
+       所以一面墙够跑三段并中途蹬墙换向，而不是「跑完还剩 76m 空墙」。 */
+    this._building(C, 'podium', '办公裙楼', -78, -32, 16, 30, S.podiumH, 'office',
       { playable: true, surf: SURF.WALLRUN, zone: 'office' });
-    this._building(C, 'tower', '办公塔', -72, -30, 38, 80, S.towerH, 'office', { playable: true, zone: 'office' });
+    this._building(C, 'tower', '办公塔', -70, -40, 38, 64, S.towerH, 'office', { playable: true, zone: 'office' });
   },
 
   /* ----------------------- 东南：在建大楼（可玩：大楼板跨越） ---------- */
@@ -170,18 +182,61 @@ const CITYSCALE = {
     /* 在建大楼是「框架 + 大楼板」，不是实心盒：
        实心盒里塞楼板会让玩家站在楼板上却被楼体推开。
        同时这也才像一栋没封顶的楼 —— 远处一眼就能认出轮廓（§3.1）。 */
-    const x0 = 16, x1 = 78, z0 = 16, z1 = 70;
+    const x0 = 32, x1 = 78, z0 = 16, z1 = 62;   // 单元 4：约 46×46m
     [[x0 + 4, z0 + 4], [x1 - 4, z0 + 4], [x0 + 4, z1 - 4], [x1 - 4, z1 - 4]].forEach(([cx, cz]) => {
       C.addBox(cx, S.siteH / 2, cz, 5, S.siteH, 5, { mat: 'site', surf: SURF.WALLRUN });
     });
     /* 核心筒：给建筑一个实体重心，也是唯一的实心部分 */
     C.addBox((x0 + x1) / 2, S.siteH / 2, (z0 + z1) / 2, 16, S.siteH, 16, { mat: 'site', surf: SURF.SOLID });
-    /* 两层完整大楼板 —— §3.2 要求删掉密集脚手架，只保留少量完整楼板 */
-    [12.0, 21.0].forEach(y => {
+    /* 楼板改成三层，段差 7.5m —— todo6 §2.2 要求常用垂直换层 4~8m 一段。
+       原来两层间隔 9m 又只有两段，等于「要么在地面要么在天上」。
+       仍然是【少量完整大楼板】，不是回到 todo3 的密集脚手架。 */
+    [7.5, 15.0, 22.5].forEach(y => {
       C.addBox((x0 + x1) / 2, y, (z0 + z1) / 2, x1 - x0, 0.6, z1 - z0, { mat: 'site', surf: SURF.DECK });
     });
-    this.blocks.push({ id: 'site', name: '在建大楼', x0: x0, x1: x1, z0: z0, z1: z1,
+    this.blocks.push({ id: 'site', name: '在建大楼', x0: x0, x1: x1, z0: z0, z1: z1, playableBlock: true,
       h: S.siteH, playable: true, zone: 'site' });
+  },
+
+  /* ==========================================================================
+     M2 / todo6 §2.2：把一次性的大高差切成 4~8m 一段的换层。
+     36m 的塔楼原本只有「地面」和「顶」两个状态，玩家要么上不去要么一次爬完；
+     露台让「上塔」变成三次可判断的动作，而不是一次赌博。
+     这些是【建筑本身的露台与裙边】，不是贴在墙上的小平台（§0.1 的纪律）。
+     ========================================================================== */
+  _ledges(C) {
+    const S = this.S;
+    /* 办公塔西侧露台：9m（裙楼顶）→ 16 → 23 → 30 → 36（塔顶） */
+    [16, 23, 30].forEach((y, i) => {
+      C.addBox(-72 - 1.5, y, 51, 7, 0.5, 26 - i * 4, { mat: 'office', surf: SURF.DECK });
+    });
+    /* 停车楼东侧检修平台：把 15m 顶层与街面之间补一段 */
+    C.addBox(80, 7.5, -39, 6, 0.5, 30, { mat: 'garage', surf: SURF.DECK });
+    /* 商街雨棚：2.8m —— 街面到 6m 屋顶的中间一步，翻越即可 */
+    [[-68, -14.2], [-41, -14.2]].forEach(([x, z]) => {
+      C.addBox(x, 2.8, z, 18, 0.4, 3.6, { mat: 'shop', surf: SURF.DECK });
+    });
+  },
+
+  /* ==========================================================================
+     M2 / todo6 §5：宏观转场设施，2~3 条，跨越 40~70m。
+     每条都必须把玩家【送进一个新的战斗状态】，不能只是跳过一段无聊的路，
+     也不能变成永久安全区 —— 所以三条的终点都是开阔的战斗面，不是死角屋顶。
+     ========================================================================== */
+  _transfers(C) {
+    const S = this.S;
+    const zip = (ax, ay, az, bx, by, bz, note) => {
+      C.devices.push({ kind: 'zip', a: { x: ax, y: ay, z: az }, b: { x: bx, y: by, z: bz }, note: note });
+      (C._zipPend || (C._zipPend = [])).push({ ax: ax, ay: ay, az: az, bx: bx, by: by, bz: bz });
+    };
+    /* 1 商街屋顶 → 中央广场东侧：落点直接进主干道的高密度战斗面 */
+    zip(-33, S.shopH + 0.6, -30, 14, 1.6, -6, 'shops→plaza');
+    /* 2 停车楼顶 → 在建大楼二层楼板：把两个单元的高层直接接起来 */
+    /* 起点退到停车楼顶的西北角、终点推到在建大楼的东南角，
+       否则两个单元靠得近、直线只有 38m，够不到 40~70m 的宏观转场区间。 */
+    zip(40, S.garageH + 0.6, -30, 66, 15.6, 24, 'garage→site');
+    /* 3 办公塔露台 → 商街屋顶：全图唯一一条跨越主干道的高空线 */
+    zip(-71, 30.6, 40, -60, S.shopH + 0.6, -20, 'tower→shops');
   },
 
   /* --------------------------- 围合街区：只负责形成城市峡谷与遮挡 ------ */

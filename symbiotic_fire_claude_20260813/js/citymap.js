@@ -50,6 +50,7 @@ const CITY = {
        几何由 city-scale.js 注册 —— 两者的分工不变，只是不再有第二种布局。 */
     CITYSCALE.build(this);
     this._flushParts();
+    this._mountZips();
     this.reindex();
     CITYSCALE.buildNav(this);
     CITYSCALE.buildSpawnPoints(this);
