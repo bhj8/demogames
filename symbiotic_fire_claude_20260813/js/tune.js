@@ -682,3 +682,180 @@ TUNE.EFFECT_BUDGET = {
   spawnCapZone: 28,
   soundConcurrent: 6         // 同一连锁的同时发声上限
 };
+
+/* ============================================================================
+   todo5 —— 可组合武器模块
+   §6.3「所有具体比例进入集中配置，不散落在战斗代码」：
+   下面这一整段就是那个集中配置。attack-graph.js / weapon-modules.js 里
+   不允许出现调参用的魔法数字。
+   ========================================================================== */
+
+TUNE.FEATURES.composableBuildV2 = true;   // todo5 §10：新系统独立开关，?build=old 回退
+
+/* --- §6.3 硬上限：这些必须从第一天存在，数值可调、存在性不可调 --- */
+TUNE.GENEALOGY = {
+  derivedPerRoot: 14,        // 单根攻击最大派生弹数量
+  eventsPerRoot: 22,         // 单根攻击最大效果事件数
+  maxDepth: 3,               // 最大递归深度
+  hitsPerTargetPerRoot: 3,   // 同一目标单根攻击的重复命中上限
+  perFrame: 64,              // 单帧全局效果预算
+  perSecond: 340,            // 每秒全局效果预算
+  projectileCap: 260,        // 场上弹丸总量（含派生）
+  blastPerRoot: 1.0,         // 单根攻击的统一爆炸预算（§4.1：不是每颗一份）
+  blastRadiusFloor: 0.42,    // 分摊后的半径下限倍率，低于此不值得画
+  blastRadiusCeil: 1.30,
+  soundPerBlastWindow: 2,    // §11 同一时间窗内最多几次完整爆炸音
+  blastSoundWindow: 0.11
+};
+
+/* --- §1 底层原子的基线（不作为卡牌暴露）--- */
+TUNE.ATOMS = {
+  ammoPerShot: 1,
+  volleySpreadDeg: 3.6,      // 齐射自身的图案角，与散布无关
+  splitSearch: 15,
+  ricochetSearch: 14,
+  terminalRange: 46          // 贯穿弹没打到人时，终点爆破的最远兑现距离
+};
+
+/* --- §2 八个玩家可见模块。数值全部是灰盒建议值 --- */
+TUNE.MODULES = {
+  volley: {
+    name: '齐射', en: 'Volley', css: '#ffc24a', color: 0xffc24a,
+    effect: '一次发射多颗子弹',
+    cost: '同时消耗对应数量的弹药',
+    pellets: 2,              // 并发弹丸 +2
+    ammo: 2,                 // 单次耗弹 +2
+    dmgPerPellet: 0.62,      // 单弹衰减，但总量上升
+    fanDeg: 3.6
+  },
+  blast: {
+    name: '爆裂', en: 'Detonation', css: '#ff8a1e', color: 0xff8a1e,
+    effect: '命中产生范围爆炸',
+    cost: '每次攻击额外消耗弹药',
+    radius: 3.5,
+    dmgRatio: 0.78,
+    ammo: 1,
+    bossDirect: 1.0,         // §2.2 对 Boss 保留直击 + 爆炸双份价值
+    ringInner: 0.45          // 空心爆破分支用
+  },
+  pierce: {
+    name: '穿透', en: 'Pierce', css: '#e8eeff', color: 0xf0f4ff,
+    effect: '子弹贯穿目标，并把已获得的效果带到后排',
+    cost: '后排命中逐次衰减',
+    count: 3,
+    dmgDecay: 0.82,          // 每贯穿一次的伤害继承
+    payloadDecay: 0.72,      // 载荷（爆裂等）的继承
+    rampPerHit: 0.12,        // 过穿增幅分支用
+    rampMax: 0.48
+  },
+  split: {
+    name: '分裂', en: 'Fission', css: '#b060ff', color: 0xb060ff,
+    effect: '主弹命中后生成次级弹',
+    cost: '次级弹只继承部分能力',
+    count: 2,
+    dmgCoef: 0.45,
+    payloadCoef: 0.50,
+    pierceInherit: 0.35,     // §5 次级弹继承低倍率穿透
+    scale: 0.78,
+    waveHits: 4,             // §5 分裂×超频：合并成周期性分裂波，禁止逐弹爆炸
+    waveCount: 4,
+    heavyFewer: 1            // §5 分裂×重型：少量、清晰、冲击强
+  },
+  heavy: {
+    name: '重型', en: 'Heavy', css: '#ff5f3c', color: 0xff5f3c,
+    effect: '弹体、伤害与击退大幅提高',
+    cost: '射速明显下降',
+    dmg: 1.90,
+    scale: 1.80,
+    knock: 2.20,
+    rate: 1.75,              // fireInterval 乘数，>1 = 更慢
+    ammo: 1,
+    weaponHeavy: 0.55,       // 枪模后坐 / 枪声 / 抛壳的加重量
+    blastScale: 1.35,        // §5 爆裂×重型：更大更强但更慢
+    siegeLen: 13             // 攻城分支的震波线长
+  },
+  overclock: {
+    name: '超频', en: 'Overclock', css: '#ff3355', color: 0xff3355,
+    effect: '弹匣与射速提高，持续射击继续升速',
+    cost: '停火后升速会衰减',
+    mag: 1.50,
+    rate: 0.86,              // 基础射速直接变快
+    rampTime: 2.2,
+    rampMax: 0.45,
+    holdGrace: 0.55,
+    decay: 0.50,
+    reloadKeep: 0.5,
+    heavyRampMult: 1.85,     // §4.5 重型×超频：夺回速度的幅度
+    heavyRampTime: 1.45,     // 升速过程更长，让「逐步升成重炮」可读
+    bounceRampAt: 0.70,      // §5 超频×弹射：持续命中提高弹射次数
+    redlineMax: 0.80         // 红线分支的上限
+  },
+  ricochet: {
+    name: '弹射', en: 'Ricochet', css: '#4fe0a8', color: 0x4fe0a8,
+    effect: '子弹结束当前命中后折向另一个目标',
+    cost: '每次折向都会衰减',
+    count: 2,
+    dmgDecay: 0.72,
+    payloadDecay: 0.62,
+    pierceInherit: 0.50,     // §4.4 弹射后继承较低贯穿，避免无限折线
+    search: 14,
+    minTurnDeg: 12           // 转折必须看得出来
+  },
+  momentum: {
+    name: '动势', en: 'Momentum', css: '#7ec8ff', color: 0x7ec8ff,
+    effect: '高速移动积蓄动势，强化下一轮射击',
+    cost: '需要先跑起来',
+    releaseAt: 0.34,         // 低于此不进入强化轮
+    gainDash: 0.42, gainSlide: 0.30, gainWallrun: 0.55, gainAirDash: 0.38,
+    gainFallPerM: 0.055, gainSpeed: 0.16,   // 单纯高速奔跑也慢慢攒
+    decay: 0.18,             // 落地静止后每秒衰减
+    /* 「下一轮」的定义随构筑变化（§2.8）。
+       §3 的复核条款：动势如果最终只是「移动后伤害 +X%」就该降级 ——
+       所以强化轮的【规模】必须跟着动势强度走，而不是恒定一发。 */
+    roundShots: 2,           // 默认底座：两发起步，再按强度追加
+    roundExtra: 2,           // 满动势时额外追加的发数
+    roundHeavy: 1,           // 重型：强化「下一次强冲击」，就是一发
+    roundVolley: 1,          // 齐射：强化整次齐射
+    roundStreamT: 1.15,      // 超频：强化一段短时枪流
+    dmg: 1.95, scale: 0.75, knock: 1.25, blastR: 0.48,
+    pierceAt: 0.50, splitAt: 0.60, bounceAt: 0.60,
+    bounceAtFull: 0.90,      // §5 弹射×动势：满动势再多给一次折向
+    bounceKeep: 0.20,        // 以及更低的衰减 —— 「或」的两半都做
+    /* 动能炮（§4.6）的两个系数不在这里 —— 它们属于 TUNE.MODULE_PAIRS，
+       那是关键组合的唯一出处。同一个数写两个地方，改了不生效的那次
+       就是这么来的（§6.3 要求集中配置，重复即等于没有集中）。 */
+    ammoBack: 0.22           // 动能核心分支：动势兑换弹药
+  }
+};
+
+/* §2 每局最多 3 个基础模块；C(8,3)=56 种底座 */
+TUNE.MODULE_BUILD = {
+  maxModules: 3,
+  minByDraw: 4,              // §7.1 第 4 次选择结束前至少 2 个
+  minModules: 2,
+  originFirst: true          // §7.1 第一次固定三张不同基础模块
+};
+
+/* §4.5 / §4.1 等六组关键反应里需要专门代码的部分，参数放这里 */
+TUNE.MODULE_PAIRS = {
+  'heavy+overclock': { rampMult: 1.85, rampTime: 1.45 },
+  'blast+volley':    { budgetPerExtra: 0.22 },
+  'blast+pierce':    { terminal: true, tickRatio: 0.0 },
+  'pierce+ricochet': { pierceInherit: 0.50 },
+  'blast+split':     { payload: 0.50 },
+  /* §4.6 动能炮：重型的强化轮只有一发（「下一次强冲击」），
+     所以那一发必须是真正的尖峰。1.60 只够抵掉「多发变一发」的损失，
+     合起来就和两个模块各打各的一样 —— §4.5 点名反对的那种相互抵消。 */
+  'heavy+momentum':  { dmg: 3.00, scale: 1.45 }
+};
+
+/* --- todo5 §9 超频尸：加速过程必须可见，并存在失速窗口 ---
+   「更快的普通丧尸」不构成共同变异 —— 玩家要能看出它在蓄速，
+   也要等得到一个可以反打的空档。三段循环的时长都可调。 */
+TUNE.HORDE_OVERCLOCK = {
+  rampTime: 1.5,             // 蓄速：速度与自发光一起爬升
+  runTime: 2.2,              // 全速冲刺
+  stallTime: 1.4,            // 失速窗口：明显变慢、发光熄灭
+  peakMult: 1.75,            // 峰值相对自身基础速度
+  stallMult: 0.35
+};

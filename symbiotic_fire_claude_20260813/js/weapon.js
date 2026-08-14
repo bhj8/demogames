@@ -42,6 +42,23 @@ const WEAPON = {
   stats: { shots: 0, shells: 0, tracers: 0 },
 
   /* ==========================================================================
+     todo5 §11：每个模块必须拥有独立、可合并的反馈层。
+     这张表是【登记表，不是文案】—— MODPOOL.audit() 会用它核对
+     「这张卡有没有反馈路径」，所以每一项后面都注明由谁真的画/响出来。
+     缺一项，对应卡牌不进随机池。
+     ========================================================================== */
+  moduleFx: {
+    volley: 'muzzle+多条枪线（_onShot flashOuter2 / game.js fire 多曳光）',
+    blast: '爆点+冲击波+合并音效（AG._blastFx）',
+    pierce: '连续命中音阶+纵向尾迹（_onShot boltSpeed / addTracer 长枪线）',
+    split: '父弹→子弹的出生粒子（AG._spawnSplit R.puff）',
+    heavy: '枪模后坐+巨响+粗枪线（_onShot heavy 通道）',
+    overclock: '升速音层+枪口密度+血管发光（update veinMat / boltSpeed）',
+    ricochet: '折线曳光（AG._bounce addTracer）',
+    momentum: '移动蓄能与释放提示（update coilMat + game.js fire momentum 分支）'
+  },
+
+  /* ==========================================================================
      构建骨架 §2 —— 每个部件都要能被事件单独驱动，
      不能再靠"移动整把枪"假装完成所有机械动作。
      ========================================================================== */
@@ -295,7 +312,9 @@ const WEAPON = {
 
   _onShot(d) {
     const W = TUNE.WEAPON_FX;
-    const heavy = d.heavy || 1;                 // 大口径 / 巨化让单发更重
+    /* todo5 §4.6：动势释放必须有区别于普通重型弹的视听轮廓 ——
+       所以它直接加进「单发多重」这条通道，而不是另开一个特效。 */
+    const heavy = (d.heavy || 1) * (1 + (d.momentum || 0) * 0.55);
 
     /* 两条通道：快速冲击 + 慢累积 */
     this.kickZ.push(W.shotKickZ * heavy);

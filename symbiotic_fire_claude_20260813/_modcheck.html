@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>html,body{margin:0;background:#0d1117;color:#dbe7f0;font:12px/1.6 monospace}
+#out{padding:14px;white-space:pre-wrap}
+#gl{position:fixed;left:-4000px;top:0;width:640px;height:360px}
+b{color:#7ef0a8}i{color:#ff8a4a;font-style:normal}u{color:#ffd24a;text-decoration:none}
+</style></head>
+<body>
+<canvas id="gl"></canvas>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="vignette"></div>
+<div id="hurtflash"></div><div id="healflash"></div><div id="dmgdirs"></div><div id="threats"></div>
+<div id="clock"></div><div id="xpfill"></div><div id="lvlnum"></div>
+<div id="slots"></div><div id="bosswrap"></div><div id="bossname"></div><div id="bossfill"></div>
+<div id="toast"></div><div id="hint"></div><div id="hpfill"></div><div id="hpnum"></div>
+<div id="ammo"></div><div id="ammobar"></div><div id="dashfill"></div>
+<div id="cards"></div><div id="nextdraw"></div>
+<div id="reloadwrap"><div id="reloadbar"></div></div>
+<div id="hitmark"><i></i><i></i></div><div id="dmgnums"></div>
+<div id="shieldvig"></div><div id="shieldflash"></div><div id="floattext"></div><div id="buffbar"></div>
+<svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="menu"></div><div id="pause"></div><div id="results"></div>
+<button id="start"></button><div id="seedlabel"></div><button id="resume"></button>
+<div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
+<div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>window.__err=[];window.onerror=(m,s,l)=>{window.__err.push(m+' @'+(s||'').split('/').pop()+':'+l);};</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/city-scale.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/build-synergy.js"></script>
+<script src="js/weapon-modules.js"></script>
+<script src="js/attack-graph.js"></script>
+<script src="js/evolution-pool.js"></script>
+<script src="js/module-pool.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   todo5 §12 第一轮验收的【实现侧】部分。
+
+   这里能证明的：模块真的接上了战斗、组合真的互相作用、预算上限真的守得住、
+   卡牌真的有消费者和归因。
+   这里【不能】证明的：好不好玩、十秒内认不认得出新形态、玩家会不会追某个组合。
+   那些是 §12.1/§12.2/§12.4 明确要求的人工试玩，脚本不许代替。
+   ========================================================================== */
+const LOG = [];
+const say = s => LOG.push(s);
+let FAIL = 0, WARN = 0;
+const ok = (cond, msg) => { if (!cond) { FAIL++; say('  <i>FAIL</i> ' + msg); } return cond; };
+const warn = (cond, msg) => { if (!cond) { WARN++; say('  <u>WARN</u> ' + msg); } return cond; };
+
+function stubRender() { R.render = () => {}; window.requestAnimationFrame = () => 0; }
+
+/* --------------------------------------------------------------------------
+   固定靶场：玩家原地朝 -Z，前方三排共 18 只高血量丧尸。
+   高血量是刻意的 —— 一期八个模块没有一个是击杀驱动的（§2.2 特意把爆裂从
+   击杀改成命中），所以让敌人不死可以把「机制本身」和「击杀连锁」彻底分开量。
+   -------------------------------------------------------------------------- */
+function buildRange() {
+  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+  G.enemies.compact();
+  G.bullets.live.slice().forEach(b => G.bullets.release(b));
+  G.bullets.compact();
+  G.hazards.length = 0; G.pendings.length = 0;
+
+  const p = G.player;
+  p.pos.set(0, 0, 30); p.vel.set(0, 0, 0); p.yaw = 0; p.pitch = 0;
+  p.hp = p.maxHp = 99999;
+  /* 相机与游戏里保持同一套摆法：rotation 清零后 yaw=0 就是朝 -Z，
+     所以靶子必须放在更小的 z 上。摆错 180° 会得到「一枪不中」的假数据。 */
+  R.camera.position.set(0, 1.68, 30);
+  R.camera.rotation.set(0, 0, 0);
+  R.camera.rotateY(0);
+  R.camera.updateWorldMatrix(true, false);
+
+  /* 必须有一列正对准星（x=0）：五排叠在同一条枪线上，贯穿才有队列可穿；
+     两侧再各两列，给分裂、弹射和爆裂留出「附近还有别人」的空间。
+     没有 x=0 这一列的话，单弹构筑会一枪不中，量出来全是零。
+     排数要比最大贯穿次数多 —— 只放 3 排的话，「贯穿 +1」这类节点和
+     动势的贯穿加成没有第 4 个目标可穿，会被误判成「没有交互」。 */
+  for (let row = 0; row < 5; row++)
+    for (let col = 0; col < 5; col++) {
+      const e = G.enemies.get();
+      configureEnemy(e, ENEMIES.grunt, { x: (col - 2) * 2.2, y: 0, z: 30 - 12 - row * 5.5 },
+        { grace: 0 });
+      e.hp = e.maxHp = 1e7;            // 不死靶：量机制，不量击杀
+      e.speed = 0; e.vel.set(0, 0, 0);
+      e.spawnGrace = 999;
+    }
+  G.hash.clear();
+  G.enemies.live.forEach(e => G.hash.insert(e, e.pos.x, e.pos.z));
+}
+
+/* 一次测量：持械 SEC 秒，期间每 1.2 秒发一次冲刺事件（模拟玩家在动）。
+   返回一组可观察指标 —— 全部来自游戏自己的统计，不是测试脚本另算一遍。 */
+const SEC = 6.0, DT = 1 / 60;
+function measure(mods, nodes) {
+  RNG.init(20260814);
+  WMOD.init(); AG.init();
+  G.stats.blasts = 0; G.stats.splits = 0; G.stats.dmgDealt = 0; G.stats.hits = 0; G.stats.shots = 0;
+  (mods || []).forEach(m => WMOD.grant(m));
+  (nodes || []).forEach(n => WMOD.grantNode(n));
+  recompute();
+  buildRange();
+
+  const p = G.player, g = p.gun;
+  g.ammo = G.derived.magazine; g.reloadT = 0; g.fireT = 0; g.held = true;
+  DebugPanel.noSpread = true;
+  G.phase = 'play';
+
+  /* 移动事件要模拟【真实的城市跑动】而不是只按冲刺：todo4 的地图给了玩家
+     冲刺 / 滑铲 / 墙跑三种连续动作，动势本来就是设计来接这条链的（§2.8）。
+     只喂单一动作会把动势的强度永远压在最低档，量出来必然是「+X% 伤害」。 */
+  const MOVES = ['dash', 'slide', 'wallrun'];
+  let t = 0, dashT = 0, moveI = 0, shots = 0, ammoUsed = 0;
+  while (t < SEC) {
+    t += DT; dashT += DT;
+    if (dashT >= 0.75) {
+      dashT = 0;
+      const mv = MOVES[moveI++ % MOVES.length];
+      G.bus.emit(mv, mv === 'dash' ? { airborne: false } : {});
+    }
+    WMOD.tick(DT, { firing: g.ammo > 0 && g.reloadT <= 0, speed: 9.5 });
+    AG.tick(DT);
+
+    if (g.reloadT > 0) {
+      g.reloadT -= DT;
+      if (g.reloadT <= 0) { g.reloadT = 0; g.ammo = G.derived.magazine; G.bus.emit('reloadDone', {}); }
+    } else {
+      g.fireT -= DT;
+      const heatLock = WMOD.hasRule('r_mag') && WMOD.overheated > 0;
+      if (!heatLock) {
+        if (!G.derived.infiniteMag && g.ammo <= 0) { g.reloadT = G.derived.reloadTime; }
+        else if (g.fireT <= 0) {
+          const before = g.ammo;
+          fire(); shots++; ammoUsed += Math.max(0, before - g.ammo);
+          g.fireT = effectiveFireInterval();
+        }
+      }
+    }
+    /* 靶子不动，但空间哈希每帧要重建，命中查询才有效 */
+    G.hash.clear();
+    G.enemies.live.forEach(e => { if (!e.dead && !e._dead) G.hash.insert(e, e.pos.x, e.pos.z); });
+    updateBullets(DT);
+    G.bullets.compact();
+  }
+  g.held = false;
+
+  const s = WMOD.stats;
+  return {
+    shots: shots, ammo: ammoUsed,
+    dmg: Math.round(G.stats.dmgDealt), hits: G.stats.hits,
+    blast: s.blast.trigger, split: s.split.trigger,
+    pierce: s.pierce.trigger, bounce: s.ricochet.trigger,
+    mom: s.momentum.trigger, heavy: s.heavy.trigger,
+    targets: s.blast.targets + s.pierce.targets + s.ricochet.targets,
+    derived: AG.gBudget.derived, events: AG.gBudget.events,
+    depth: AG.gBudget.maxDepth, rejected: AG.gBudget.rejected
+  };
+}
+
+/* 12 分钟整局：用页面自己那一次 boot() 的世界跑，不再重复 boot()。 */
+function fullRun() {
+  G.phase = 'play';
+  DebugPanel.god = true;               // 量系统，不量难度
+  let t = 0, picks = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < 60 * 60 * 12 + 900; i++) {
+    /* 必须真的一直在开枪并且转身找目标 —— 否则没有击杀就没有经验，
+       12 分钟只会弹出两次选择，等于什么都没测到。 */
+    G.player.gun.held = true;
+    G.player.yaw += 0.55 * 0.0167;
+    t += 16.7; frame(t);
+    let gd = 0;
+    while (G.phase === 'choose' && gd++ < 40) {
+      const c = document.querySelector('#cards .card');
+      if (!c || !c.onclick) break;
+      c.onclick(); picks++;
+    }
+    if (G.over) break;
+  }
+  G.player.gun.held = false;
+  /* ?build=old 时构筑长在 SYN 那边 —— 回归跑要能同样报出来，
+     否则「旧 Build 还能不能玩」这件事根本没被测到。 */
+  const r = {
+    seed: BOOT.seed, t: +G.time.toFixed(0), picks: picks,
+    mods: WMOD.enabled ? WMOD.own.slice() : G.mutations.slice(),
+    branches: WMOD.enabled ? WMOD.branches.length : SYN.build.epicFusions.length,
+    rules: WMOD.enabled ? WMOD.rules.length : SYN.build.legendaryRules.length,
+    kills: G.stats.kills, err: G._loopErrCount || 0,
+    derived: AG.gBudget.derived, rejected: AG.gBudget.rejected, depth: AG.gBudget.maxDepth,
+    ms: Math.round(performance.now() - t0)
+  };
+  r.line = G.time.toFixed(0) + 's 选择' + picks + '次 模块[' +
+    r.mods.map(m => (TUNE.MODULES[m] || MUT[m]).name).join('+') + '] 分支' + r.branches + ' 规则' + r.rules +
+    ' 击杀' + r.kills + ' 派生' + r.derived + ' 深度' + r.depth + ' 触顶' + r.rejected +
+    ' 逻辑异常' + r.err + ' (' + r.ms + 'ms)';
+  return r;
+}
+
+/* 交互检测：把「A 和 B 各自的增量」加起来，看组合是否明显偏离。
+   偏离 = 真的互相作用；完全等于 = 两个效果各打各的（§5 要求降为 B）。 */
+const AXES = ['shots', 'ammo', 'dmg', 'hits', 'blast', 'split', 'pierce', 'bounce', 'mom', 'targets', 'derived', 'depth'];
+function interactions(base, ma, mb, mab) {
+  const out = [];
+  AXES.forEach(k => {
+    const expect = ma[k] + mb[k] - base[k];
+    const actual = mab[k];
+    const scale = Math.max(1, Math.abs(expect));
+    const rel = (actual - expect) / scale;
+    if (Math.abs(rel) > 0.15) out.push(k + (rel > 0 ? '+' : '') + (rel * 100).toFixed(0) + '%');
+  });
+  return out;
+}
+
+addEventListener('load', () => setTimeout(() => {
+  if (window.__err.length) { document.title = 'RESULT>>BOOT_ERR:' + window.__err.join(';') + '<<END'; return; }
+  stubRender();
+  say('<b>todo5 §12 实现侧验收</b>  build=' + (WMOD.enabled ? 'composableBuildV2' : 'OLD'));
+
+  /* ======================================================= 12 分钟整局 */
+  /* boot() 不是可重入的（它会重建 renderer / scene / 池子），
+     所以一次页面加载只跑一局 —— 多种子由 runner 用 ?seed= 分别加载。
+     之前在同一页里连调三次 boot()，第 2、3 局其实没有真的重新开局：
+     击杀数三局完全相同就是那个假象留下的指纹。 */
+  say('');
+  say('<b>[§12.4 实现侧] 12 分钟整局（seed ' + BOOT.seed + '）：无阻塞 bug / 无失控 / 有构筑长出来</b>');
+  const r = fullRun();
+  say('  ' + r.line);
+  ok(r.err === 0, '出现 ' + r.err + ' 次主循环逻辑异常');
+  ok(r.t >= 700, '没跑满 12 分钟（' + r.t + 's）');
+  ok(r.picks >= 8, '12 分钟只弹出 ' + r.picks + ' 次选择');
+  ok(r.mods.length >= 2, '只长出 ' + r.mods.length + ' 个模块');
+  ok(r.depth <= TUNE.GENEALOGY.maxDepth, '深度失控 ' + r.depth);
+  ok(window.__err.length === 0, '出现运行时异常：' + window.__err.join(';'));
+  say('  本局武器：' + r.mods.map(m => (TUNE.MODULES[m] || MUT[m]).name).join('+') +
+      '  （§12.4「连续两局不应长成完全相同的武器」需要多个种子对比，见 runner 汇总）');
+
+
+  if (QS.get('only') === 'run') {
+    /* runner 用它跑额外种子：只要整局结果，跳过前面那些重复的审计 */
+    document.getElementById('out').innerHTML = LOG.join('\n');
+    document.title = 'RESULT>>' + (FAIL === 0 ? 'RUNOK' : 'FAIL:' + FAIL) +
+      ' build=' + (WMOD.enabled?'v2':'old') + ' map=' + MAP_MODE + ' t=' + r.t + ' kills=' + r.kills + ' mods=' + r.mods.slice().sort().join('+') + ' picks=' + r.picks + '<<END';
+    return;
+  }
+
+  /* ================================================================= §10 卡池审计 */
+  say('');
+  say('<b>[§10] card → apply → combat consumer → feedback → attribution</b>');
+  const rep = MODPOOL.auditReport;
+  say('  卡池 ' + (rep.pass.length + rep.fail.length) + ' 张，通过 ' + rep.pass.length +
+      '，拒绝 ' + rep.fail.length);
+  ok(rep.fail.length === 0, '有卡未通过审计：' +
+    rep.fail.map(f => f.id + '[' + f.missing.join(',') + ']').join(' '));
+  ok(MODPOOL.cards.length === rep.pass.length, '被拒绝的卡必须不在随机池里');
+  /* §13：绝不能出现只有文案、没有战斗消费者的卡 */
+  const noConsumer = MODPOOL.cards.filter(c => !AG.hasConsumer(c.consumer));
+  ok(noConsumer.length === 0, '池中存在无消费者的卡：' + noConsumer.map(c => c.id).join(' '));
+
+  /* 每个品质都必须凑得出三张，否则导演会卡在 choose 相 */
+  say('');
+  say('<b>[§7.1] 每个品质在各阶段都能凑出三张</b>');
+  [[[], 0], [['volley'], 3], [['volley', 'blast'], 6], [['volley', 'blast', 'pierce'], 10]].forEach(st => {
+    WMOD.init(); AG.init(); MODPOOL.init();
+    st[0].forEach(m => WMOD.grant(m));
+    /* 满 3 个模块时把三条形态分支也拿掉，逼出史诗池最空的情况 */
+    if (st[0].length >= 3) st[0].forEach(m => { const b = BRANCH_BY_MOD[m]; if (b) WMOD.grantBranch(b.id); });
+    TUNE.RARITY.order.forEach(q => {
+      const c = MODPOOL.candidates(q, { evolutionIndex: st[1] });
+      ok(c.length === 3, '模块' + st[0].length + '个/第' + st[1] + '抽 ' + q + ' 只有 ' + c.length + ' 张');
+    });
+  });
+  /* §7.1 第一次固定三张不同基础模块 */
+  WMOD.init(); AG.init(); MODPOOL.init();
+  const first = MODPOOL.candidates('common', { evolutionIndex: 0 });
+  ok(first.length === 3 && first.every(c => c.kind === 'module'), '第一次进化必须是三张基础模块');
+  ok(new Set(first.map(c => c.module)).size === 3, '第一次的三张必须是不同模块');
+  /* §7.1 满 3 个之后不再出现基础模块卡 */
+  WMOD.init(); AG.init();
+  ['volley', 'blast', 'pierce'].forEach(m => WMOD.grant(m));
+  const afterFull = TUNE.RARITY.order.map(q => MODPOOL.candidates(q, { evolutionIndex: 9 }))
+    .reduce((a, b) => a.concat(b), []);
+  ok(afterFull.every(c => c.kind !== 'module'), '已满 3 个模块后仍然出现了基础模块卡');
+
+  /* ============================================================ §12.1 单模块 */
+  say('');
+  say('<b>[§12.1] 单模块 —— 拿到后是否真的有事发生</b>');
+  const base = measure([]);
+  say('  基线（无模块）: ' + JSON.stringify(base));
+  const single = {};
+  MODULE_IDS.forEach(id => {
+    const m = measure([id]);
+    single[id] = m;
+    /* 每个模块必须至少改变一个可观察量，否则它就是一张文案卡 */
+    const diff = AXES.filter(k => Math.abs(m[k] - base[k]) > Math.max(0.5, Math.abs(base[k]) * 0.05));
+    say('  ' + TUNE.MODULES[id].name.padEnd(3) + ' ' + JSON.stringify(m));
+    ok(diff.length > 0, id + ' 相对基线没有任何可观察变化');
+    say('       改变了: ' + diff.join(' '));
+  });
+  /* 每个模块的归因必须非零 —— §12.1 第 5 条「结算数据是否与肉眼体验一致」 */
+  ok(single.blast.blast > 0, '爆裂没有产生任何爆炸');
+  ok(single.split.split > 0, '分裂没有产生任何次级弹');
+  ok(single.pierce.pierce > 0, '穿透没有产生任何贯穿');
+  ok(single.ricochet.bounce > 0, '弹射没有产生任何折向');
+  ok(single.momentum.mom > 0, '动势没有进入过强化轮');
+  ok(single.heavy.shots < base.shots, '重型没有降低射速');
+  ok(single.overclock.shots > base.shots, '超频没有提高射速');
+  ok(single.volley.ammo > base.ammo, '齐射没有加快弹匣消耗');
+
+  /* ========================================================= §12.2 28 对组合 */
+  say('');
+  say('<b>[§12.2] 28 对组合 —— 是不是「两个效果各打各的」</b>');
+  const rows = MODPOOL.pairMatrix();
+  let sCount = 0, noInteract = [];
+  rows.forEach(r => {
+    const mab = measure([r.a, r.b]);
+    const inter = interactions(base, single[r.a], single[r.b], mab);
+    const impl = r.effects.length;
+    const tag = r.tier === 'S' ? '<b>S</b>' : r.tier === 'A' ? 'A' : r.tier;
+    say('  ' + tag + ' ' + (TUNE.MODULES[r.a].name + '×' + TUNE.MODULES[r.b].name).padEnd(8) +
+        (r.name || '—').padEnd(7) + ' 实现' + impl + ' 交互轴[' + inter.join(' ') + ']');
+    if (r.tier === 'S') sCount++;
+    ok(impl > 0, r.key + ' 在 PAIR_EFFECTS 里没有登记任何实现');
+    if (!inter.length) noInteract.push(r.key + '(' + r.tier + ')');
+  });
+  ok(rows.length === 28, '双模块组合应为 28 对，实际 ' + rows.length);
+  /* 不追求 28 对全是 S，但绝不允许大量「两个效果各打各的」（§12.2 最后一条） */
+  say('  无交互轴的组合：' + (noInteract.join(' ') || '无'));
+  ok(noInteract.length <= 4, '有 ' + noInteract.length + ' 对完全没有交互，超过允许的少量');
+
+  /* §3 复核：每个模块至少 3 个 S —— 这是 §14 的完成条件之一 */
+  say('');
+  say('<b>[§3/§14] 每个模块的 S 数量复核</b>');
+  MODULE_IDS.forEach(id => {
+    const n = MODULE_IDS.filter(o => o !== id && REACTION[id][o] === 'S').length;
+    const line = '  ' + TUNE.MODULES[id].name.padEnd(3) + ' S=' + n;
+    if (n >= 3) say(line); else { say(line + '  <u>低于 §14 要求的 3</u>'); WARN++; }
+  });
+
+  /* ========================================================= §12.3 三模块 */
+  say('');
+  say('<b>[§12.3] 六组三模块 —— 三个模块是否同时参与最终攻击</b>');
+  [['volley', 'blast', 'heavy'], ['blast', 'split', 'momentum'], ['overclock', 'pierce', 'ricochet'],
+   ['heavy', 'pierce', 'momentum'], ['volley', 'split', 'ricochet'], ['blast', 'pierce', 'ricochet']]
+    .forEach(tri => {
+      const m = measure(tri);
+      const names = tri.map(x => TUNE.MODULES[x].name).join('+');
+      /* 「同时参与」的判据：每个模块要么有自己的触发计数，要么改变了根弹属性 */
+      const involved = tri.map(id => {
+        if (id === 'blast') return m.blast > 0;
+        if (id === 'split') return m.split > 0;
+        if (id === 'pierce') return m.pierce > 0;
+        if (id === 'ricochet') return m.bounce > 0;
+        if (id === 'momentum') return m.mom > 0;
+        if (id === 'heavy') return m.shots < base.shots;
+        if (id === 'overclock') return m.shots > base.shots;
+        if (id === 'volley') return m.ammo > base.ammo;
+        return false;
+      });
+      say('  ' + names.padEnd(11) + ' ' + JSON.stringify(m) +
+          ' 参与=' + involved.map(x => x ? '✓' : '✗').join(''));
+      ok(involved.every(x => x), names + ' 有模块没有参与最终攻击');
+      ok(m.rejected >= 0 && m.depth <= G.derived.genDepth, names + ' 突破了深度上限');
+    });
+
+  /* ======================================================= §6.3 硬上限 */
+  say('');
+  say('<b>[§6.3] 硬上限在最重的构筑下是否守得住</b>');
+  const worst = measure(['volley', 'split', 'blast'],
+    ['n_volley_pellet', 'n_volley_pellet', 'n_split_count', 'n_split_count', 'n_blast_radius']);
+  say('  最重构筑（齐射满+分裂满+爆裂）: ' + JSON.stringify(worst));
+  ok(worst.depth <= TUNE.GENEALOGY.maxDepth, '最大递归深度 ' + worst.depth + ' 超过上限');
+  ok(G.bullets.count <= TUNE.GENEALOGY.projectileCap, '弹丸数超过 projectileCap');
+  say('  预算触顶拒绝 ' + worst.rejected + ' 次 —— 触顶本身是正常的，失控才不正常');
+  /* 单根攻击的派生上限：直接构造一根攻击验证，不靠采样 */
+  (function () {
+    WMOD.init(); AG.init();
+    ['split', 'volley'].forEach(m => WMOD.grant(m));
+    WMOD.grantNode('n_split_count'); WMOD.grantNode('n_split_count');
+    recompute();
+    const root = AG.beginRoot(3);
+    let got = 0;
+    for (let i = 0; i < 200; i++) got += AG.allowDerived(AG.gene(root, { depth: 0 }), 1);
+    ok(got === G.derived.genDerived, '单根攻击派生上限失效：给出 ' + got + '，上限 ' + G.derived.genDerived);
+    const root2 = AG.beginRoot(1);
+    let ev = 0;
+    for (let i = 0; i < 500; i++) if (AG.allowEvent(AG.gene(root2, { depth: 0 }), 1)) ev++;
+    ok(ev <= G.derived.genEvents, '单根攻击事件上限失效：' + ev + ' > ' + G.derived.genEvents);
+    say('  单根派生上限 ' + G.derived.genDerived + ' ✓，单根事件上限 ' + G.derived.genEvents + ' ✓');
+  })();
+  /* 同目标重复命中上限 */
+  (function () {
+    WMOD.init(); AG.init(); recompute();
+    const root = AG.beginRoot(1), g = AG.gene(root, { depth: 0 });
+    const fake = { uid: 99991 };
+    let n = 0;
+    for (let i = 0; i < 20; i++) if (AG.gate(g, fake)) n++;
+    ok(n === G.derived.genHits, '同目标重复命中上限失效：' + n + ' ≠ ' + G.derived.genHits);
+    say('  同目标单根命中上限 ' + n + ' ✓');
+  })();
+
+  say('');
+  say(FAIL === 0 ? '<b>ALLPASS</b>（' + WARN + ' 条提醒）' : '<i>FAIL ' + FAIL + '</i>（' + WARN + ' 条提醒）');
+  say('人工试玩仍未完成：§12.1 的五问、§12.2 的十秒可辨认、§12.4 的十局体感 —— 脚本不能替代。');
+
+  document.getElementById('out').innerHTML = LOG.join('\n');
+  document.title = 'RESULT>>' + (FAIL === 0 ? 'ALLPASS' : 'FAIL:' + FAIL) +
+    ' warn=' + WARN + ' err=' + window.__err.length + '<<END';
+}, 80));
+</script></body></html>

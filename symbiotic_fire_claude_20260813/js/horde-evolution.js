@@ -39,6 +39,52 @@ const HORDE = {
     G.tutorialQueue.push({ t: TUNE.VARIANT.tutorialDelay, id: id });
   },
 
+  /* ==========================================================================
+     todo5 §9 尸群共同变异
+     玩家与尸群继续共享主题，但不强求同一个公式，也【不】为了对称硬造低质量敌人：
+       爆裂 → 爆裂尸（可利用也需规避的双向决策，已有实现）
+       分裂 → 裂变尸（普通死亡生幼体，弱点击杀破坏裂变核）
+       穿透 → 骨甲尸（正面骨板 + 侧后/弱点反制）
+       超频 → 超频尸（加速过程可见，存在失速窗口）
+       重型 → 巨尸（高价值高压目标，不是纯血量包）
+     §9 明确：齐射 / 弹射 / 动势【不要求】一期各自新增怪物，所以这里映射为 null，
+     复用既有变种而不是硬造第四、第五种敌人。
+     ========================================================================== */
+  MODULE_VARIANT: {
+    blast: 'blast', split: 'fission', pierce: 'ossify',
+    overclock: 'overclock', heavy: 'giant',
+    volley: null, ricochet: null, momentum: null
+  },
+
+  onModule(id) {
+    if (!this.state) return;
+    const v = this.MODULE_VARIANT[id];
+    if (!v) return;                     // §9 不为了对称硬造敌人
+    this.onBaseMutation(v);
+  },
+
+  /* 史诗形态分支：对应主题的融合精英进入后续波次（沿用 §7.9 的投放链路） */
+  onBranch(branchId) {
+    if (!this.state) return;
+    const br = BRANCH_MAP[branchId];
+    if (!br) return;
+    const v = this.MODULE_VARIANT[br.mod];
+    if (!v) return;
+    if (this.state.fusionElites.length >= this.caps.fusionElites) return;
+    /* 复用既有融合精英模板：用同主题的变体色，不新建一套敌人系统 */
+    const key = v + '+' + v;
+    this.state.moduleElites = this.state.moduleElites || [];
+    this.state.moduleElites.push({ variant: v, name: br.name });
+    G.ui.toast('尸潮出现了同主题精英：' + br.name + '体', MUT[v].css, true);
+  },
+
+  /* 传奇规则：普通尸潮不继承，只有终局 Boss 拿到一个终端能力（§7.9 不变） */
+  onRule(ruleId) {
+    if (!this.state) return;
+    this.state.bossTerminalRule = ruleId;
+    G.ui.toast('远处传来回应 —— 尸王正在学习这条规则', TUNE.RARITY.css.legend, true);
+  },
+
   /* --- 稀有连接：通常只强化玩家。少数允许一个轻量、可预警的精英动作 --- */
   eliteLinkWhitelist: ['blast+conduct', 'ossify+giant', 'overclock+giant'],
   onRareLink(key) {
@@ -106,8 +152,8 @@ const HORDE = {
     const id = this.state && this.state.bossTerminalRule;
     if (!id || !e.king) return;
     e.terminalRule = id;
-    G.ui.toast('尸王掌握了：' + (EVOPOOL.byId[id] ? EVOPOOL.byId[id].name : id),
-      TUNE.RARITY.css.legend, true);
+    const card = (typeof MODPOOL !== 'undefined' && MODPOOL.byId[id]) || EVOPOOL.byId[id];
+    G.ui.toast('尸王掌握了：' + (card ? card.name : id), TUNE.RARITY.css.legend, true);
   },
 
   describe() {

@@ -108,16 +108,22 @@ function recompute() {
   if (G.player && d.maxHp > oldMax) G.player.hp += (d.maxHp - oldMax);  // §23 等额治疗
   if (G.player) { G.player.maxHp = d.maxHp; G.player.hp = Math.min(G.player.hp, d.maxHp); }
 
-  /* todo3 §7.6：构筑化学反应的纯被动部分折进 derived，热路径不做查表 */
-  if (typeof SYN !== 'undefined' && SYN.build) SYN.applyDerived(d);
+  /* todo5 §6.3：可组合模块的折算是唯一的一次查表，热路径只读 G.derived。
+     两套 Build 互斥 —— v2 打开时 todo3 的连接 / 融合完全让位（§10 的隔离要求）。 */
+  if (typeof WMOD !== 'undefined' && WMOD.enabled) WMOD.applyDerived(d);
+  else if (typeof SYN !== 'undefined' && SYN.build) SYN.applyDerived(d);
 
   G.derived = d;
   return d;
 }
 
-/* 有效射速：叠加超频 §18 */
+/* 有效射速：todo5 里超频只改发射节奏（§6.1 第 7 条），不建平行伤害系统 */
 function effectiveFireInterval() {
   const d = G.derived;
+  if (typeof WMOD !== 'undefined' && WMOD.enabled) {
+    if (!WMOD.has('overclock')) return d.fireInterval;
+    return d.fireInterval / (1 + (d.ocRampMax || 0) * WMOD.oc.ramp);
+  }
   if (!hasMut('overclock')) return d.fireInterval;
   return d.fireInterval / (1 + MUT.overclock.player.maxBonus * G.overclock);
 }
@@ -206,6 +212,10 @@ function damageEnemy(e, amount, ctx, opts) {
 function killEnemy(e, ctx, opts) {
   if (e.dead) return;
   e.dead = true;
+  /* todo5 §9：尸群的死亡后果要能被玩家「利用或规避」，所以后果必须区分
+     这一杀是不是打中弱点打出来的。retireEnemy 发 enemyDeath 时已经拿不到 opts，
+     所以在死亡这一刻就把它记在敌人身上。 */
+  e.killedWeak = !!(opts && opts.weakpoint);
   G.stats.kills++;
 
   /* 空投进度：精英与 Boss 明显加速，普通怪只有很小的贡献 */
@@ -392,6 +402,20 @@ function installHordeMutations() {
 
     if (e.variant === 'blast') {
       const cfg = MUT.blast.enemy;
+      /* todo5 §9：爆裂尸必须是【双向决策】而不是单纯的惩罚 ——
+         弱点击破 → 当场炸向尸群，是玩家可以主动利用的清场手段；
+         普通击杀 → 仍然是延迟引信，只伤害玩家，需要规避。 */
+      if (e.killedWeak && TUNE.FEATURES.composableBuildV2) {
+        const r = cfg.radius * 1.15;
+        const ctx = makeAttack('hordeBlast', { canTriggerOnKill: false, splitUsed: true });
+        areaDamage(e.pos, r, cfg.dmg * 1.6 * G.dmgScale(), ctx, 'hordeBlast');
+        R.ring(e.pos, 0.3, r, MUT.blast.color, 0.42);
+        R.puff(V3.copy(e.pos).setY(e.pos.y + 0.9), 0.35, r * 0.8, 0xffd08a, 0.3);
+        Audio2.blast(e.pos, true);
+        G.shake(0.12, e.pos);
+        G.stats.hordeBlasts = (G.stats.hordeBlasts || 0) + 1;
+        return;
+      }
       /* §16 死亡后闪烁再爆炸，玩家有充分时间离开 */
       G.pendings.push({
         t: cfg.fuse, kind: 'enemyBlast',
@@ -409,6 +433,15 @@ function installHordeMutations() {
 
     } else if (e.variant === 'fission') {
       const cfg = MUT.fission.enemy;
+      /* todo5 §9：弱点击杀破坏裂变核 —— 幼体不再生成。
+         这给了玩家一个明确的「打哪里」的决策，而不是无差别地怕它死。 */
+      if (e.killedWeak && TUNE.FEATURES.composableBuildV2) {
+        R.puff(e.pos, 0.25, 1.4, 0xfff0b0, 0.28);
+        R.spark(e.pos, null, MUT.fission.color);
+        Audio2.weakConfirm(true);
+        G.stats.coresBroken = (G.stats.coresBroken || 0) + 1;
+        return;
+      }
       for (let i = 0; i < cfg.count; i++) {
         const a = (i / cfg.count) * Math.PI * 2 + RNG.spawn.range(0, 6.28);
         G.spawnMinion(e, Math.cos(a) * 1.1, Math.sin(a) * 1.1, cfg.hpRatio);
@@ -525,13 +558,21 @@ function makeBulletPool() {
   return new Pool(() => ({
     uid: ++_bulletUid,
     pos: new THREE.Vector3(), prev: new THREE.Vector3(), dir: new THREE.Vector3(),
-    speed: 0, dmg: 0, life: 0, pierce: 0, hitList: null, ctx: null, split: false, scale: 1
-  }), b => { b.ctx = null; b.hitList = null; });
+    speed: 0, dmg: 0, life: 0, pierce: 0, hitList: null, ctx: null, split: false, scale: 1,
+    /* todo5 §6.2：谱系节点挂在子弹上，池化复位时必须清干净 */
+    gene: null, baseDmg: 0, pierceHits: 0, bounceHits: 0,
+    pendingBlast: false, homing: 0, splitBudget: 0, volleyIndex: 0
+  }), b => {
+    b.ctx = null; b.hitList = null; b.gene = null;
+    b.pierceHits = 0; b.bounceHits = 0; b.pendingBlast = false;
+    b.homing = 0; b.splitBudget = 0; b.volleyIndex = 0; b.baseDmg = 0;
+  });
 }
 
 function spawnBullet(origin, dir, dmg, ctx, opts) {
   opts = opts || {};
-  if (G.bullets.count >= 300) return null;
+  const cap = (typeof TUNE.GENEALOGY !== 'undefined') ? TUNE.GENEALOGY.projectileCap : 300;
+  if (G.bullets.count >= cap) return null;
   const b = G.bullets.get();
   b.pos.copy(origin); b.prev.copy(origin);
   b.dir.copy(dir).normalize();
@@ -543,7 +584,11 @@ function spawnBullet(origin, dir, dmg, ctx, opts) {
   b.ctx = ctx;
   b.split = !!opts.split;
   b.scale = (opts.scale || 1) * G.derived.bulletScale;
-  b.pierceHits = 0;
+  b.pierceHits = 0; b.bounceHits = 0;
+  b.gene = opts.gene || null;
+  b.baseDmg = opts.gene ? dmg : 0;
+  b.pendingBlast = false; b.homing = 0;
+  b.splitBudget = G.derived.splitCount || 0;
   return b;
 }
 
@@ -600,6 +645,12 @@ function segCylinder(p0, p1, cx, cz, r, y0, y1) {
   return t;
 }
 
+/* 子弹退场的唯一出口：谱系里还欠一次终点结算的，在这里补上（todo5 §4.3） */
+function retireBullet(b) {
+  if (b.gene && typeof AG !== 'undefined') AG.onBulletEnd(b, b.pos);
+  G.bullets.release(b);
+}
+
 const _hitCand = [];
 function updateBullets(dt) {
   const list = G.bullets.live;
@@ -607,15 +658,26 @@ function updateBullets(dt) {
     const b = list[i];
     if (b._dead) continue;
     b.life -= dt;
-    if (b.life <= 0) { G.bullets.release(b); continue; }
+    /* todo5 §4.3：贯穿弹的「终点爆破」必须在子弹自然消失的那一刻兑现，
+       否则打空的那一发就静静消失，玩家永远看不到终点这个概念。 */
+    if (b.life <= 0) { retireBullet(b); continue; }
 
     b.prev.copy(b.pos);
+    /* 追踪裂片分支（§7.3 史诗）：只在有限时间内轻微修正方向，不做制导导弹 */
+    if (b.homing > 0) {
+      b.homing -= dt;
+      const t = pickChainTarget(b.pos.x, b.pos.z, 13, b.hitList ? null : null);
+      if (t) {
+        V3b.set(t.pos.x - b.pos.x, t.pos.y + t.height * 0.5 - b.pos.y, t.pos.z - b.pos.z).normalize();
+        b.dir.lerp(V3b, Math.min(1, 4.5 * dt)).normalize();
+      }
+    }
     b.pos.addScaledVector(b.dir, b.speed * dt);
 
     /* 出界或撞掩体 */
     if (Math.abs(b.pos.x) > R.arenaHalf || Math.abs(b.pos.z) > R.arenaHalf || b.pos.y < 0.02) {
       R.spark(b.pos, null, 0x9fb4c8);
-      G.bullets.release(b); continue;
+      retireBullet(b); continue;
     }
     let blocked = false;
     for (let o = 0; o < R.obstacles.length; o++) {
@@ -624,7 +686,7 @@ function updateBullets(dt) {
       const dx = b.pos.x - ob.x, dz = b.pos.z - ob.z;
       if (dx * dx + dz * dz < ob.r * ob.r) { blocked = true; break; }
     }
-    if (blocked) { R.spark(b.pos, null, 0x9fb4c8); G.bullets.release(b); continue; }
+    if (blocked) { R.spark(b.pos, null, 0x9fb4c8); retireBullet(b); continue; }
 
     /* 扫掠命中 */
     const midX = (b.pos.x + b.prev.x) * 0.5, midZ = (b.pos.z + b.prev.z) * 0.5;
@@ -681,6 +743,13 @@ function updateBullets(dt) {
 function resolveBulletHit(b, e, point, weak) {
   b.hitList.add(e.uid);
 
+  /* todo5 §6.3：同一目标在单根攻击里的重复命中上限。
+     不通过就当没打中 —— 子弹继续飞，但不再对这只敌人结算第 N+1 次。 */
+  if (b.gene && typeof AG !== 'undefined' && !AG.gate(b.gene, e)) {
+    R.spark(point, b.dir, 0x8fa4b8);
+    return;
+  }
+
   /* 骨板判定 §19：正面命中才吃骨板；背后与头部绕过 */
   const toHit = V3b.set(point.x - e.pos.x, 0, point.z - e.pos.z).normalize();
   const facing = V3.set(e.face.x, 0, e.face.z).normalize();
@@ -688,7 +757,7 @@ function resolveBulletHit(b, e, point, weak) {
 
   let dmg = b.dmg;
   if (weak) dmg *= G.derived.weakpointMult;
-  /* 骨化玩家侧：贯穿递增 §19 */
+  /* 骨化玩家侧：贯穿递增 §19（todo5 的贯穿递增改由 b_pierce_over 分支在 AG 里处理） */
   if (hasMut('ossify') && b.pierceHits > 0) {
     const p = MUT.ossify.player;
     dmg *= 1 + Math.min(p.rampMax, p.rampPerPierce * b.pierceHits);
@@ -727,7 +796,14 @@ function resolveBulletHit(b, e, point, weak) {
      打在骨板上也算一次命中（伤害被抵消，但确实命中了），所以无条件发出。 */
   G.bus.emit('hit', { enemy: e, ctx: b.ctx, point: point, dir: b.dir, weak: weak, dealt: dealt });
 
-  /* 贯穿 */
+  /* todo5 §6.1：贯穿 → 弹射 → 分裂 → 爆裂 的顺序全部在 AG.onHit 里，
+     是一个函数里的顺序语句，而不是若干个各自订阅、顺序靠优先级碰运气的回调。 */
+  if (b.gene && typeof AG !== 'undefined') {
+    if (!AG.onHit(b, e, point, weak, dealt)) G.bullets.release(b);
+    return;
+  }
+
+  /* 贯穿（todo/todo2/todo3 的旧路径，?build=old 时仍然走这里） */
   if (b.pierce > 0) {
     b.pierce--; b.pierceHits++;
   } else {

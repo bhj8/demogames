@@ -203,10 +203,13 @@ const EVO = {
   },
 
   /* ------------------------------------------- §7.1 步骤 3～5：候选生成 */
+  /* todo5 §10：v2 打开时只换卡池，不动 §7.1 的抽取顺序与保底逻辑 */
+  pool() { return (typeof WMOD !== 'undefined' && WMOD.enabled) ? MODPOOL : EVOPOOL; },
+
   _open() {
     const d = this.draw;
     const q = this.drawQuality(G.time);
-    const cards = EVOPOOL.candidates(q, d);
+    const cards = this.pool().candidates(q, d);
     if (!cards.length) {                      // 理论上不会发生，兜底不卡在 choose 相
       d.pending = null; d.lastChoiceTime = G.time; this.progress = 0;
       return;
@@ -228,12 +231,14 @@ const EVO = {
   /* -------------------------------------------- §7.1 步骤 6～7：应用 */
   pick(cardId) {
     const d = this.draw;
-    const card = EVOPOOL.byId[cardId];
+    const card = this.pool().byId[cardId];
     if (!card) return;
     const others = d.pending.cards.filter(c => c.id !== cardId).map(c => c.id);
 
     card.apply();
     SYN.build.taken[cardId] = (SYN.build.taken[cardId] || 0) + 1;
+    if (typeof WMOD !== 'undefined' && WMOD.enabled)
+      WMOD.taken[cardId] = (WMOD.taken[cardId] || 0) + 1;
 
     /* 保底计数：只统计品质，不做任何反向压制（§7.4） */
     const q = d.pending.quality;

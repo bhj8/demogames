@@ -44,6 +44,12 @@ if (!MODE.city) {
   TUNE.FEATURES.mapBuildInfluence = false;
 }
 if (QS.get('evolution') === 'off') TUNE.FEATURES.unifiedEvolution = false;
+/* todo5 §10：可组合武器模块的隔离与回退。
+     ?build=old —— 回到 todo3 的六变异 / 连接 / 融合，方便同场 A/B
+   两套 Build 互斥：v2 打开时 todo3 的 buildSynergy 完全让位，
+   不允许两套系统同时往同一根攻击上挂效果。 */
+if (QS.get('build') === 'old') TUNE.FEATURES.composableBuildV2 = false;
+if (TUNE.FEATURES.composableBuildV2) TUNE.FEATURES.buildSynergy = false;
 /* todo4 §8：静态地图通过验收前，新地图模式下动态事件保持关闭。
    §5：依赖旧几何的地图能力卡也先停用，等新地图静态空间成立后再接回。 */
 if (MAP_MODE === 'city-scale') {
@@ -303,6 +309,26 @@ function updateEnemies(dt) {
 
     let moveX = nx, moveZ = nz, speed = e.speed;
     e.stateT -= dt; e.cd -= dt; e.atkT -= dt;
+
+    /* todo5 §9：超频尸的加速过程必须【看得见】，并且存在失速窗口。
+       原实现只是把 speedMult 常驻乘上去，玩家既看不到它在加速，
+       也永远等不到一个可以反打的空档 —— 那只是一只更快的普通丧尸。
+       现在改成「蓄速 → 冲刺 → 失速」的循环，失速期明显变慢且发光熄灭。 */
+    if (e.variant === 'overclock' && TUNE.FEATURES.composableBuildV2 && !e.boss) {
+      const OC = TUNE.HORDE_OVERCLOCK;
+      e.ocT = (e.ocT || 0) + dt;
+      const cycle = OC.rampTime + OC.runTime + OC.stallTime;
+      const ph = e.ocT % cycle;
+      if (ph < OC.rampTime) e.ocK = ph / OC.rampTime;               // 蓄速：越来越快
+      else if (ph < OC.rampTime + OC.runTime) e.ocK = 1;            // 全速冲刺
+      else e.ocK = -1;                                              // 失速窗口
+      speed *= e.ocK < 0 ? OC.stallMult : (1 + (OC.peakMult - 1) * e.ocK);
+      /* 发光强度跟着速度走：这是玩家判断「现在能不能反打」的唯一依据 */
+      if (e.hurtFlash <= 0) {
+        e.bodyMat.emissive.setHex(MUT.overclock.color);
+        e.bodyMat.emissiveIntensity = e.ocK < 0 ? 0.02 : 0.10 + e.ocK * 0.55;
+      }
+    }
 
     /* --- 行为分支 --- */
     if (e.boss) {
@@ -1317,10 +1343,19 @@ function updatePlayer(dt) {
   /* 换弹推进：弹量在 magIn 恢复，但要到 reloadEnd 才允许射击 */
   if (g.reloadT > 0) {
     g.reloadT -= dt;
-    if (g.reloadT <= 0) { g.reloadT = 0; WEAPON.on('reloadEnd'); }
+    if (g.reloadT <= 0) { g.reloadT = 0; WEAPON.on('reloadEnd'); G.bus.emit('reloadDone', {}); }
   }
 
-  /* 超频 §18 */
+  /* todo5：模块状态机（超频升速 / 动势积蓄 / 过热）统一在这里推进。
+     §6.1 第 7 条 —— 超频只改发射节奏，所以它没有资格进入伤害结算链。 */
+  if (WMOD.enabled) {
+    WMOD.tick(dt, {
+      firing: g.held && g.ammo > 0 && g.reloadT <= 0,
+      speed: Math.hypot(p.vel.x, p.vel.z)
+    });
+  }
+
+  /* 超频 §18（旧 Build 路径） */
   if (hasMut('overclock')) {
     const oc = MUT.overclock.player;
     if (g.held && g.ammo > 0 && g.reloadT <= 0) {
@@ -1336,7 +1371,9 @@ function updatePlayer(dt) {
   /* 射击 §11.3 —— 弹匣打空后自动换弹，但先留一个可感知的空仓瞬间（todo2 §6.2） */
   g.fireT -= dt;
   g.dryT -= dt;
-  if (g.reloadT <= 0 && G.phase === 'play') {
+  /* 传奇「弹匣规则改写」：不再消耗弹匣，改为过热节奏 —— 过热期间强制停火 */
+  const heatLock = WMOD.enabled && WMOD.hasRule('r_mag') && WMOD.overheated > 0;
+  if (g.reloadT <= 0 && G.phase === 'play' && !heatLock) {
     if (!d.infiniteMag && g.ammo <= 0) {
       g.emptyT += dt;
       if (g.held && g.dryT <= 0) { WEAPON.on('empty'); g.dryT = 0.28; }
@@ -1391,8 +1428,12 @@ function updatePlayer(dt) {
     vel: p.vel,
     sprinting: p.dashT > 0,
     yawDelta: G.mouseDX, pitchDelta: G.mouseDY,
-    overclock: G.overclock,
-    conductCharge: hasMut('conduct') ? G.conductCounter / MUT.conduct.player.hits : 0,
+    /* todo5 §11：枪模上的两条发光通道改由模块驱动 ——
+       升速看得见（超频），蓄能看得见（动势）。 */
+    overclock: WMOD.enabled ? WMOD.oc.ramp : G.overclock,
+    conductCharge: WMOD.enabled
+      ? Math.max(WMOD.mom.charge, WMOD.mom.round > 0 ? 1 : 0)
+      : (hasMut('conduct') ? G.conductCounter / MUT.conduct.player.hits : 0),
     stableLevel: lvl('stable'),
     ammo: g.ammo, magazine: d.magazine, infiniteMag: d.infiniteMag,
     onMagIn: () => { g.ammo = d.magazine; g.magFilled = true; }
@@ -1409,7 +1450,12 @@ const YAW_PATTERN = [0.55, -0.35, 0.85, -0.7, 0.4, -0.9];
 
 function fire() {
   const p = G.player, g = p.gun, d = G.derived, W = TUNE.WEAPON_FX;
-  if (!d.infiniteMag) g.ammo--;
+  /* todo5：开火瞬间先决定「这一枪是否落在动势强化轮里」，
+     因为 §2.8 强化的是一整轮射击，不是某一颗难以感知的子弹。 */
+  if (WMOD.enabled) WMOD.onFire();
+  /* 单次耗弹是资源原子（§1.1）：齐射、爆裂、重型都会把它推高 */
+  const cost = WMOD.enabled ? d.ammoPerShot : 1;
+  if (!d.infiniteMag) g.ammo = Math.max(0, g.ammo - cost);
   G.stats.shots++;
   p.shotIndex++;
   g.bloom = Math.min(1, g.bloom + TUNE.GUN.bloomPerShot);
@@ -1427,29 +1473,68 @@ function fire() {
   /* 枪口位置：视觉上从枪管出，但弹道从准星出，避免"打不中我瞄的地方" */
   const muzzleWorld = origin.clone().addScaledVector(baseDir, 0.7);
 
-  for (let i = 0; i < d.pellets; i++) {
-    const dir = baseDir.clone();
-    const a = RNG.fx.range(0, Math.PI * 2), r = Math.sqrt(RNG.fx.next()) * spread;
-    const right = TV2.copy(dir).cross(UP).normalize();
-    const up2 = right.clone().cross(dir).normalize();
-    dir.addScaledVector(right, Math.cos(a) * r).addScaledVector(up2, Math.sin(a) * r).normalize();
-    const ctx = makeAttack('primary');
-    spawnBullet(muzzleWorld, dir, d.damage, ctx, {});
+  const right0 = TV2.copy(baseDir).cross(UP).normalize().clone();
+  const up0 = right0.clone().cross(baseDir).normalize();
+
+  /* --- §6.1 第 1～2 步：一次扳机 = 一个根攻击 = N 颗根弹 ---
+     整次齐射共享同一份派生预算、事件预算与统一爆炸预算，
+     这就是 §4.1「单次攻击有统一爆炸预算」在代码里的样子。 */
+  if (WMOD.enabled) {
+    const root = AG.beginRoot(d.pellets);
+    const fan = (d.volleyFan || 0) * Math.PI / 180;
+    for (let i = 0; i < d.pellets; i++) {
+      const dir = baseDir.clone();
+      /* 齐射图案是可读的扇形，不是把散布放大 N 倍（§2.1）*/
+      if (d.pellets > 1) {
+        const t = d.pellets === 1 ? 0 : (i / (d.pellets - 1) - 0.5) * 2;
+        dir.addScaledVector(right0, Math.sin(t * fan))
+           .addScaledVector(up0, Math.sin(t * fan * 0.28));
+      }
+      /* 散布仍然叠在图案之上，但幅度小得多 */
+      const a = RNG.fx.range(0, Math.PI * 2), r = Math.sqrt(RNG.fx.next()) * spread;
+      dir.addScaledVector(right0, Math.cos(a) * r).addScaledVector(up0, Math.sin(a) * r).normalize();
+      AG.rootBullet(root, muzzleWorld, dir, i);
+    }
+  } else {
+    for (let i = 0; i < d.pellets; i++) {
+      const dir = baseDir.clone();
+      const a = RNG.fx.range(0, Math.PI * 2), r = Math.sqrt(RNG.fx.next()) * spread;
+      dir.addScaledVector(right0, Math.cos(a) * r).addScaledVector(up0, Math.sin(a) * r).normalize();
+      const ctx = makeAttack('primary');
+      spawnBullet(muzzleWorld, dir, d.damage, ctx, {});
+    }
   }
 
   /* 曳光从真实枪口出发，但弹道仍从准星方向收敛 —— 避免"瞄哪打不到哪" */
   WEAPON.muzzleWorldPos(_muzzleW);
-  const tracerColor = hasMut('giant') ? 0xffe08a : 0xffd9a0;
-  WEAPON.addTracer(_muzzleW, baseDir, tracerColor, W.tracerLength * (hasMut('giant') ? 1.25 : 1));
-  if (d.pellets > 1) WEAPON.addTracer(_muzzleW, baseDir, tracerColor, W.tracerLength * 0.8);
+  /* §11 每个模块的枪线必须能分辨：重型粗、动势蓄能亮、齐射多条 */
+  let tracerColor = 0xffd9a0, tracerLen = W.tracerLength;
+  if (WMOD.enabled) {
+    if (d.momActive > 0.01) tracerColor = TUNE.MODULES.momentum.color;
+    else if (d.heavyOn) { tracerColor = TUNE.MODULES.heavy.color; tracerLen *= 1.3; }
+    else if (d.pellets > 1) tracerColor = TUNE.MODULES.volley.color;
+    const n = Math.min(3, d.pellets);
+    for (let i = 1; i < n; i++) WEAPON.addTracer(_muzzleW, baseDir, tracerColor, tracerLen * (0.8 - i * 0.1));
+  } else if (hasMut('giant')) { tracerColor = 0xffe08a; tracerLen *= 1.25; }
+  WEAPON.addTracer(_muzzleW, baseDir, tracerColor, tracerLen);
+  if (!WMOD.enabled && d.pellets > 1) WEAPON.addTracer(_muzzleW, baseDir, tracerColor, W.tracerLength * 0.8);
 
+  const ramp = WMOD.enabled ? WMOD.oc.ramp : G.overclock;
   const isLast = !d.infiniteMag && g.ammo <= 0;
   WEAPON.on('shot', {
-    isLastRound: isLast, pellets: d.pellets, overclock: G.overclock,
-    heavy: heavy, boltSpeed: 1 + G.overclock * 0.45
+    isLastRound: isLast, pellets: d.pellets, overclock: ramp,
+    heavy: heavy, boltSpeed: 1 + ramp * 0.45,
+    momentum: WMOD.enabled ? d.momActive : 0
   });
-  Audio2.shot(1 + G.overclock * 0.35, heavy);
+  Audio2.shot(1 + ramp * 0.35, heavy);
   if (isLast) Audio2.lastRound();
+
+  /* 动势强化轮的释放必须有区别于普通射击的视听轮廓（§4.6）*/
+  if (WMOD.enabled && d.momActive > 0.4) {
+    G.shake(0.05 + d.momActive * 0.05, null);
+    Audio2.blast(p.pos, false);
+  }
+  if (WMOD.enabled) WMOD.afterFire();
 
   /* 开火不震屏 —— 力量全部由枪模、机械部件、枪口光和声音承担 */
   G.bus.emit('fire', {});
@@ -1763,6 +1848,31 @@ const UI = {
   },
   mutationSlots() {
     this.slots.innerHTML = '';
+    /* todo5 §11：HUD 显示当前 1～3 个基础模块及其 S 级组合名称 */
+    if (WMOD.enabled) {
+      const max = TUNE.MODULE_BUILD.maxModules;
+      for (let i = 0; i < max; i++) {
+        const s = document.createElement('div');
+        s.className = 'slot';
+        const id = WMOD.own[i], M = id && TUNE.MODULES[id];
+        if (M) {
+          s.style.borderColor = M.css; s.style.color = M.css;
+          s.style.boxShadow = '0 0 12px ' + M.css + '44';
+          s.textContent = M.name[0];
+          s.title = M.name + '：' + M.effect;
+        } else { s.classList.add('empty'); s.textContent = '·'; }
+        this.slots.appendChild(s);
+      }
+      const combos = WMOD.pairs().filter(p => p.tier === 'S' && p.info);
+      if (combos.length) {
+        const tag = document.createElement('div');
+        tag.className = 'scombo';
+        tag.innerHTML = combos.map(p =>
+          '<i style="color:' + TUNE.MODULES[p.b].css + '">' + p.info.name + '</i>').join('');
+        this.slots.appendChild(tag);
+      }
+      return;
+    }
     for (let i = 0; i < 4; i++) {
       const s = document.createElement('div');
       s.className = 'slot';
@@ -1832,6 +1942,34 @@ const UI = {
      先揭示本次整体品质，再同时展开三张同品质卡；
      卡面不展示后台权重、复杂公式或长段 lore。
      ------------------------------------------------------------------ */
+  /* todo5 §7.2 卡面：最多四行 —— 名称 / 一句主效果 / 一句代价 / 动态 S 预览。
+     十几个底层原子参数一律不上主卡面，只进展开说明。 */
+  _moduleCardHtml(c, quality, RA) {
+    const col = c.css || RA.css[quality];
+    /* 动态预览只显示【真实成立】的 S 组合：
+       模块卡问「拿了它会形成什么」，其他卡直接写它深化的那一对。 */
+    let prev = '';
+    if (c.kind === 'module') {
+      const s = WMOD.previewS(c.module);
+      if (s.length) prev = s.map(x =>
+        '与你的【' + TUNE.MODULES[x.other].name + '】形成：<b>' + x.name + '</b>').join('<br>');
+    } else if (c.pairName) {
+      prev = '深化你的 <b>' + c.pairName + '</b>';
+    } else if (c.module && WMOD.has(c.module)) {
+      prev = '深化你的【' + TUNE.MODULES[c.module].name + '】';
+    }
+    const kindTag = { module: '基础模块', node: '深化节点', branch: '形态分支',
+      pair: '组合深化', rule: '规则改写', cond: '条件分支', mod: '通用改装' }[c.kind] || '';
+    return '<div class="qtag" style="color:' + RA.css[quality] + '">' + RA.name[quality] +
+        (kindTag ? ' · ' + kindTag : '') + '</div>' +
+      '<div class="cname" style="color:' + col + '">' + c.name +
+        (c.en ? '<span class="cen">' + c.en + '</span>' : '') + '</div>' +
+      '<div class="cline you"><span class="tag">效果</span>' + c.effect + '</div>' +
+      (c.cost && c.cost !== '—' ? '<div class="cline cost"><span class="tag kcost">代价</span>' + c.cost + '</div>' : '') +
+      (prev ? '<div class="crel spreview">' + prev + '</div>' : '') +
+      (c.detail ? '<div class="cdetail">' + c.detail + '</div>' : '');
+  },
+
   showEvolution(quality, cards, info, pick) {
     const RA = TUNE.RARITY;
     const wrap = this.cards;
@@ -1860,12 +1998,13 @@ const UI = {
       el.style.setProperty('--mc', c.css || RA.css[quality]);
       /* 先揭示品质再展开三张：用动画延迟表达，不占一帧逻辑 */
       el.style.animationDelay = (RA.revealTime + i * 0.05) + 's';
-      el.innerHTML =
-        '<div class="qtag" style="color:' + RA.css[quality] + '">' + RA.name[quality] + '</div>' +
-        '<div class="cname" style="color:' + (c.css || RA.css[quality]) + '">' + c.name + '</div>' +
-        '<div class="cline you"><span class="tag">你</span>' + c.text + '</div>' +
-        (c.horde ? '<div class="cline horde"><span class="tag">尸潮</span>' + c.horde + '</div>' : '') +
-        (c.relation ? '<div class="crel">' + c.relation + '</div>' : '');
+      el.innerHTML = (c.effect !== undefined)
+        ? this._moduleCardHtml(c, quality, RA)
+        : ('<div class="qtag" style="color:' + RA.css[quality] + '">' + RA.name[quality] + '</div>' +
+           '<div class="cname" style="color:' + (c.css || RA.css[quality]) + '">' + c.name + '</div>' +
+           '<div class="cline you"><span class="tag">你</span>' + c.text + '</div>' +
+           (c.horde ? '<div class="cline horde"><span class="tag">尸潮</span>' + c.horde + '</div>' : '') +
+           (c.relation ? '<div class="crel">' + c.relation + '</div>' : ''));
       el.onclick = () => pick(c.id);
       row.appendChild(el);
     });
@@ -1874,9 +2013,10 @@ const UI = {
     const foot = document.createElement('div');
     foot.className = 'cardfoot';
     /* 新手前两局提示一次，之后自动隐藏（§7.10） */
+    const desc = (WMOD.enabled ? WMOD.describe() : SYN.describe());
     foot.textContent = G.evoHintsLeft > 0
-      ? '本次三张同品质，选方向，不用比颜色'
-      : (SYN.describe()[1] || '');
+      ? (WMOD.enabled ? '每局最多 3 个基础模块 —— 选组合方向，不用比颜色' : '本次三张同品质，选方向，不用比颜色')
+      : (desc[1] || '');
     if (G.evoHintsLeft > 0) G.evoHintsLeft--;
     wrap.appendChild(foot);
 
@@ -2018,13 +2158,37 @@ function showResults(won) {
   if (G.stats.blasts) chain.push('爆裂 ×' + G.stats.blasts);
   if (G.stats.bolts) chain.push('闪电 ×' + G.stats.bolts);
 
+  /* todo5 §11：结算页分别统计各模块的触发次数、直接伤害、派生伤害、
+     命中目标数与弹药消耗 —— 归因必须能和肉眼体验对上（§12.1 第 5 条）。 */
+  let modBlock = '';
+  if (WMOD.enabled) {
+    const rows = WMOD.own.map(id => {
+      const s = WMOD.stats[id], M = TUNE.MODULES[id];
+      return '<tr><td style="color:' + M.css + '">' + M.name + '</td>' +
+        '<td>' + s.trigger + '</td><td>' + Math.round(s.direct) + '</td>' +
+        '<td>' + Math.round(s.derived) + '</td><td>' + s.targets + '</td>' +
+        '<td>' + s.ammo + '</td></tr>';
+    }).join('');
+    const combos = WMOD.pairs().filter(p => p.info).map(p =>
+      '<span class="rmod" style="border-color:' + TUNE.MODULES[p.b].css + '">' +
+      p.info.name + ' [' + p.tier + ']</span>').join('');
+    modBlock =
+      '<div class="rsec">本局武器模块</div>' +
+      '<div class="rmods">' + (combos || '<i>没有形成组合</i>') + '</div>' +
+      (rows ? '<table class="rmodtab"><tr><th>模块</th><th>触发</th><th>直接伤害</th>' +
+        '<th>派生伤害</th><th>命中目标</th><th>耗弹</th></tr>' + rows + '</table>' : '') +
+      '<div class="runseen">谱系预算：派生 ' + AG.gBudget.derived + ' · 事件 ' + AG.gBudget.events +
+        ' · 触顶拒绝 ' + AG.gBudget.rejected + ' · 最大深度 ' + AG.gBudget.maxDepth + '</div>';
+  }
+
   el.innerHTML =
     '<div class="rtitle" style="color:' + (won ? '#7ef0a8' : '#ff6a7a') + '">' +
     (won ? '撤离成功' : '你没能撑到撤离') + '</div>' +
     '<div class="rsub">存活 ' + fmtTime(Math.min(G.time, TUNE.RUN_SECONDS)) + ' · 击杀 ' + G.stats.kills +
     ' · 等级 ' + G.player.level + '</div>' +
-    '<div class="rsec">本局共同变异</div><div class="rmuts">' + (muts || '<i>无</i>') + '</div>' +
-    (unseen ? '<div class="runseen">本局未出现：' + unseen + '</div>' : '') +
+    (WMOD.enabled ? modBlock
+      : '<div class="rsec">本局共同变异</div><div class="rmuts">' + (muts || '<i>无</i>') + '</div>' +
+        (unseen ? '<div class="runseen">本局未出现：' + unseen + '</div>' : '')) +
     '<div class="rsec">触发链</div><div class="rchain">' + (chain.join(' · ') || '<i>未成型</i>') + '</div>' +
     '<div class="rsec">枪法</div><div class="rchain" style="color:#ffd24a">' +
       (aim.join(' · ') || '<i>本局没打中过弱点</i>') + '</div>' +
@@ -2380,9 +2544,20 @@ const DebugPanel = {
         (ld.mapMod ? ' <b style="color:#ff8a1e">地图+' + (ld.mapMod * 100).toFixed(0) + '%</b>' : '') +
         '<br>连败普通 <b>' + d.commonStreak + '</b> 已出史诗 <b>' + (d.hasEpic ? 'Y' : 'N') + '</b>' +
         ' 下一抽修正 <b>' + (typeof MAPBUILD !== 'undefined' ? MAPBUILD.statusText() : '-') + '</b>' +
-        '<br>' + SYN.describe().join('<br>') +
-        '<br>预算 用<b>' + SYN.budget.spent + '</b>/s 帧<b>' + SYN.budget.frame + '</b>' +
-        ' 拒绝<b>' + SYN.budget.rejected + '</b> 最大深度<b>' + SYN.budget.maxDepth + '</b>' +
+        '<br>' + (WMOD.enabled ? WMOD.describe() : SYN.describe()).join('<br>') +
+        (WMOD.enabled
+          ? '<br>谱系预算 <b>' + AG.debugLine() + '</b>' +
+            '<br>超频 <b>' + WMOD.oc.ramp.toFixed(2) + '</b>' +
+            ' 动势 <b>' + WMOD.mom.charge.toFixed(2) + '</b>' +
+            ' 强化轮 <b style="color:#7ec8ff">' + (WMOD.mom.round > 0
+              ? WMOD.mom.strength.toFixed(2) + '(发' + WMOD.mom.shots + '/' + WMOD.mom.timer.toFixed(2) + 's)' : '-') + '</b>' +
+            ' 耗弹/发 <b>' + G.derived.ammoPerShot + '</b>' +
+            ' 弹丸 <b>' + G.derived.pellets + '</b>' +
+            ' 贯穿 <b>' + G.derived.pierce + '</b> 弹射 <b>' + G.derived.bounce + '</b>' +
+            '<br>卡池 <b>' + MODPOOL.cards.length + '</b> 审计拒绝 <b style="color:' +
+              (MODPOOL.rejected.length ? '#ff6a7a' : '#7ef0a8') + '">' + MODPOOL.rejected.length + '</b>'
+          : '<br>预算 用<b>' + SYN.budget.spent + '</b>/s 帧<b>' + SYN.budget.frame + '</b>' +
+            ' 拒绝<b>' + SYN.budget.rejected + '</b> 最大深度<b>' + SYN.budget.maxDepth + '</b>') +
         '<br>共同进化 <b>' + (typeof HORDE !== 'undefined' ? HORDE.describe() : '-') + '</b>';
     }
   }
@@ -2420,9 +2595,15 @@ function boot() {
 
   /* todo3 统一进化：构筑状态 → 卡池 → 导演，顺序不能反（卡池要读 SYN.build） */
   SYN.init();
+  /* todo5：模块状态 → 谱系/消费者登记 → 卡池审计 → 导演。
+     顺序同样不能反：MODPOOL.audit() 要读 AG.consumers 和 WEAPON.moduleFx，
+     所以必须在 WEAPON.build() 和 AG.init() 之后。 */
+  WMOD.init();
+  AG.init();
   if (TUNE.FEATURES.hordeEvolution) HORDE.init();
   if (TUNE.FEATURES.mapBuildInfluence) MAPBUILD.init();
   EVOPOOL.init();
+  if (WMOD.enabled) MODPOOL.init();
   EVO.init();
   if (MODE.mapEvents) MAPEV.init();
 
@@ -2494,6 +2675,7 @@ function frame(now) {
       trackXpRate(dt);
       NAV.updateCamp(dt);
       SYN.tick(dt);
+      AG.tick(dt);
       EVO.update(dt);
       if (MODE.mapEvents && !DebugPanel.freezeEvents) MAPEV.update(dt);
       if (TUNE.FEATURES.hordeEvolution) HORDE.update(dt);
