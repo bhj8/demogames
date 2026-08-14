@@ -28,7 +28,10 @@ const MOVE = {
       zip: null, zipCd: 0, padCd: 0, wallLost: 0, dashWant: false,
       landT: 0, landImpact: 0,
       tilt: 0, crouch: 0,
-      lastGroundY: 0, airT: 0
+      lastGroundY: 0, airT: 0,
+      /* todo6 §4 连续动量：mom = 最近达到过的水平速度，空中按 momentumDecay 衰减。
+         chain = 本次离地后串起来的动作数，用于 Debug 与「连续机动」判据。 */
+      mom: 0, chain: 0, chainT: 0, chainDist: 0, chainFrom: new THREE.Vector3()
     };
     this.stats = {
       vault: 0, mantle: 0, wallRun: 0, wallClimb: 0, airDash: 0, slide: 0, zip: 0, pad: 0,
@@ -80,7 +83,7 @@ const MOVE = {
         st.dashCharge = M.airDashCharges;
         p.vel.copy(s.exit || TV.set(0, 0, 0));
       }
-      this._publish(p);
+      this._momentum(p, dt); this._publish(p);
       return;
     }
 
@@ -103,7 +106,7 @@ const MOVE = {
         st.zip = null; st.state = 'air'; st.grace = M.wallRunGrace;
         st.zipCd = 1.2;                            // 防止落点靠近起点时立刻二次吸附
       }
-      this._publish(p);
+      this._momentum(p, dt); this._publish(p);
       return;
     }
 
@@ -124,7 +127,7 @@ const MOVE = {
         p.dashCd = d.dashCooldown;
         p.dashT = st.dashT;                       // 兼容既有 HUD 与枪械 sprint 姿态
         Audio2.dash();
-        G.bus.emit('dash', { airborne: !st.grounded });
+        st.chain++; G.bus.emit('dash', { airborne: !st.grounded });
       }
     }
 
@@ -133,22 +136,28 @@ const MOVE = {
       const spd = Math.hypot(p.vel.x, p.vel.z);
       if (st.grounded && st.slideT <= 0 && st.state !== 'slide' && spd >= M.slideMinSpeed) {
         st.slideT = M.slideTime;
+        st.slideEntry = Math.min(M.momentumCap, Math.max(spd, st.mom) * M.slideKeep);
         st.slideDir.set(p.vel.x, 0, p.vel.z).normalize();
         this.stats.slide++;
-        G.bus.emit('slide', {});
+        st.chain++; G.bus.emit('slide', {});
       }
     }
 
     /* --- 速度积分 --- */
     if (st.dashT > 0) {
       st.dashT -= dt; p.dashT = st.dashT;
-      const sp = st.grounded ? TUNE.PLAYER.dashSpeed : M.airDashSpeed;
+      /* todo6 §4：空中冲刺是在已有动量上「追加/修正方向」，不是把速度覆盖成孤立值。
+         覆盖式写法会让「滑铲→跳→跑墙→空冲」这一串在最后一步掉速。 */
+      const base = st.grounded ? TUNE.PLAYER.dashSpeed : M.airDashSpeed;
+      const sp = st.grounded ? base : Math.min(M.momentumCap, Math.max(base, st.mom * M.dashKeep));
       p.vel.x = st.dashDir.x * sp; p.vel.z = st.dashDir.z * sp;
       p.vel.y = Math.max(p.vel.y, -2);            // 空中冲刺短暂抵消下坠，但不产生滞空
       st.state = 'dash';
     } else if (st.slideT > 0) {
       st.slideT -= dt;
-      const sp = lerp(M.slideSpeed * 0.55, M.slideSpeed, st.slideT / M.slideTime);
+      /* 高速落地接滑铲要保留明显速度（todo6 §4）：起速取「基准」与「继承动量」的大者 */
+      const top = Math.min(M.momentumCap, Math.max(M.slideSpeed, st.slideEntry || 0));
+      const sp = lerp(top * 0.55, top, st.slideT / M.slideTime);
       p.vel.x = st.slideDir.x * sp; p.vel.z = st.slideDir.z * sp;
       p.vel.y -= M.gravity * dt;
       st.state = 'slide';
@@ -163,16 +172,48 @@ const MOVE = {
       p.vel.y = Math.max(p.vel.y - M.wallRunGravity * dt, -3.5);
       /* 沿墙面切线推进，方向由进入时的运动决定 */
       const tx = -st.wallN.z * st.wallSide, tz = st.wallN.x * st.wallSide;
-      p.vel.x = tx * M.wallRunSpeed; p.vel.z = tz * M.wallRunSpeed;
-      if (st.wallRunT <= 0) { st.state = 'air'; st.wallCd = 0.35; st.grace = M.wallRunGrace; }
+      /* todo6 §4：进入跑墙不得把已有速度硬重置为固定低速 ——
+         带着 15m/s 冲上墙却被压回 8.6，是「五个独立技能」的典型症状。 */
+      const wrSp = Math.min(M.momentumCap, Math.max(M.wallRunSpeed, (st.wallEntry || 0)));
+      p.vel.x = tx * wrSp; p.vel.z = tz * wrSp;
+      if (st.wallRunT <= 0) {
+        /* 出口保留大部分动量，并给一点推力让「出口」这一下读得出来 */
+        st.mom = Math.min(M.momentumCap, wrSp * M.wallExitBoost);
+        st.state = 'air'; st.wallCd = 0.35; st.grace = M.wallRunGrace;
+      }
     } else {
       /* 常规地面 / 空中 */
       const accel = st.grounded ? TUNE.PLAYER.accel * 0.14 : TUNE.PLAYER.accel * 0.14 * M.airControl;
-      const tx = wish.x * wantSpeed, tz = wish.z * wantSpeed;
+      let tx = wish.x * wantSpeed, tz = wish.z * wantSpeed;
+      /* todo6 §4：空中的方向盘是输入，油门是动量。
+         原来这里把目标速度写死成 wantSpeed（走路速度），于是任何一次跳跃
+         都会在半空把连招攒起来的速度磨掉，动作链根本连不起来。 */
+      if (!st.grounded && st.mom > wantSpeed) {
+        const wl = Math.hypot(wish.x, wish.z);
+        if (wl > 0.01) { tx = wish.x / wl * st.mom; tz = wish.z / wl * st.mom; }
+        else {
+          const cs = Math.hypot(p.vel.x, p.vel.z) || 1;
+          tx = p.vel.x / cs * st.mom; tz = p.vel.z / cs * st.mom;
+        }
+      }
       p.vel.x = smooth(p.vel.x, tx, accel, dt);
       p.vel.z = smooth(p.vel.z, tz, accel, dt);
       if (st.grounded) {
-        p.vel.x *= Math.exp(-1.2 * dt); p.vel.z *= Math.exp(-1.2 * dt);
+        /* 摩擦只在【松开方向键】时生效。
+           原来是无条件每帧乘 exp(-1.2dt)，于是按住 W 的稳态速度只有 5.4 —— 
+           配置写 6.2 却跑不出 6.2，而滑铲的门槛是 6.0，
+           结果「跑起来再滑铲」这个最基本的起手永远触发不了。 */
+        if (wish.lengthSq() < 0.01) {
+          p.vel.x *= Math.exp(-TUNE.PLAYER.friction * 0.1 * dt);
+          p.vel.z *= Math.exp(-TUNE.PLAYER.friction * 0.1 * dt);
+        } else if (st.mom > wantSpeed) {
+          /* 落地后动量高于走路速度时，让它平滑回落，而不是一帧掉回去 */
+          const cs = Math.hypot(p.vel.x, p.vel.z);
+          if (cs > wantSpeed) {
+            const k = Math.max(wantSpeed, cs - M.momentumDecay * dt) / cs;
+            p.vel.x *= k; p.vel.z *= k;
+          }
+        }
         p.vel.y = Math.min(p.vel.y, 0);
       } else {
         p.vel.y -= M.gravity * dt;
@@ -191,9 +232,9 @@ const MOVE = {
       } else if (st.state === 'wallrun') {
         /* 蹬墙跳：离墙方向 + 上抬，是墙跑的正式出口 */
         p.vel.y = M.jumpSpeed * 0.95;
-        p.vel.x += st.wallN.x * 6.5; p.vel.z += st.wallN.z * 6.5;
+        p.vel.x += st.wallN.x * M.wallJumpOut; p.vel.z += st.wallN.z * M.wallJumpOut;
         st.state = 'air'; st.wallRunT = 0; st.wallCd = 0.3; st.jumpBuf = 0;
-        G.bus.emit('jump', { wall: true });
+        st.chain++; G.bus.emit('jump', { wall: true });
       }
     }
 
@@ -261,17 +302,19 @@ const MOVE = {
       if (KEY.Space && st.climbCd <= 0 && facing > 0.35 && st.state !== 'wallclimb') {
         st.state = 'wallclimb'; st.climbT = M.wallClimbTime;
         this.stats.wallClimb++;
-        G.bus.emit('wallclimb', {});
+        st.chain++; G.bus.emit('wallclimb', {});
       } else if (st.state !== 'wallclimb' && st.state !== 'wallrun' && st.wallCd <= 0) {
         const hs = Math.hypot(p.vel.x, p.vel.z);
         const along = Math.abs(p.vel.x * -wallTouch.nz + p.vel.z * wallTouch.nx);
         if (hs >= M.wallRunMinSpeed && along > hs * 0.45 && wish.lengthSq() > 0.01) {
           st.state = 'wallrun'; st.wallRunT = M.wallRunTime;
+          /* 进入跑墙时把当时的动量记下来，跑墙段按它推进（todo6 §4） */
+          st.wallEntry = Math.min(M.momentumCap, Math.max(hs, st.mom) * M.wallRunKeep);
           st.wallN.set(wallTouch.nx, 0, wallTouch.nz);
           st.wallSide = (p.vel.x * -wallTouch.nz + p.vel.z * wallTouch.nx) > 0 ? 1 : -1;
           p.vel.y = Math.max(p.vel.y, M.wallRunRise);
           this.stats.wallRun++;
-          G.bus.emit('wallrun', {});
+          st.chain++; G.bus.emit('wallrun', {});
         }
       }
     }
@@ -297,6 +340,7 @@ const MOVE = {
     const layer = CITY.layerOf(p.pos.y);
     this.stats.layerTime[layer] += dt;
 
+    this._momentum(p, dt);
     this._publish(p);
   },
 
@@ -395,9 +439,42 @@ const MOVE = {
     G.bus.emit('land', { impact: st.landImpact, fall: fallSpeed });
   },
 
+  /* ------------------------------------------------------------------
+     动量记账（todo6 §4）。放在每帧最后统一做，而不是散在各个状态分支里 ——
+     散着写就会出现「这个状态记得继承、那个状态忘了」的不一致，
+     那正是原来五个技能互相清零的根源。
+     ------------------------------------------------------------------ */
+  _momentum(p, dt) {
+    const M = TUNE.MOVEMENT, st = this.st;
+    const sp = Math.hypot(p.vel.x, p.vel.z);
+    /* 规则只有一条：动量向【当前速度】衰减，快起来立刻记住，慢下来慢慢忘。
+       之前写成「只在空中衰减」，于是一落地动量就被永久冻结在峰值上 ——
+       跑一次墙之后，接下来整局的空中速度都是那个峰值。 */
+    if (sp > st.mom) st.mom = sp;
+    else st.mom = Math.max(sp, st.mom - M.momentumDecay * dt);
+    st.mom = Math.min(st.mom, M.momentumCap);
+    /* 硬速度上限：动作叠加不得无限加速（todo6 §4 最后一条） */
+    if (sp > M.momentumCap) {
+      const k = M.momentumCap / sp;
+      p.vel.x *= k; p.vel.z *= k;
+    }
+    /* 连招统计：离地即开始，落地且慢下来才结束。供 Debug 与 _movecheck 使用。 */
+    if (!st.grounded) {
+      if (st.chainT <= 0) { st.chain = 0; st.chainFrom.copy(p.pos); }
+      st.chainT += dt;
+      st.chainDist = Math.hypot(p.pos.x - st.chainFrom.x, p.pos.z - st.chainFrom.z);
+    } else if (sp < TUNE.PLAYER.moveSpeed * 1.05 && st.slideT <= 0) {
+      st.chainT = 0;
+    }
+  },
+
   _publish(p) {
     const st = this.st, ps = this.pose;
     ps.state = st.state;
+    ps.mom = st.mom;
+    ps.chain = st.chain;
+    ps.chainT = st.chainT;
+    ps.chainDist = st.chainDist;
     ps.grounded = st.grounded;
     ps.airborne = !st.grounded;
     ps.speed = Math.hypot(p.vel.x, p.vel.z);

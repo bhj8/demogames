@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>html,body{margin:0;background:#0d1117;color:#dbe7f0;font:12px/1.6 monospace}
+#out{padding:14px;white-space:pre-wrap}
+#gl{position:fixed;left:-4000px;top:0;width:640px;height:360px}
+b{color:#7ef0a8}i{color:#ff8a4a;font-style:normal}u{color:#ffd24a;text-decoration:none}
+</style></head>
+<body>
+<canvas id="gl"></canvas>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="vignette"></div>
+<div id="hurtflash"></div><div id="healflash"></div><div id="dmgdirs"></div><div id="threats"></div>
+<div id="clock"></div><div id="xpfill"></div><div id="lvlnum"></div>
+<div id="slots"></div><div id="bosswrap"></div><div id="bossname"></div><div id="bossfill"></div>
+<div id="toast"></div><div id="hint"></div><div id="hpfill"></div><div id="hpnum"></div>
+<div id="ammo"></div><div id="ammobar"></div><div id="dashfill"></div>
+<div id="cards"></div><div id="nextdraw"></div>
+<div id="reloadwrap"><div id="reloadbar"></div></div>
+<div id="hitmark"><i></i><i></i></div><div id="dmgnums"></div>
+<div id="shieldvig"></div><div id="shieldflash"></div><div id="floattext"></div><div id="buffbar"></div>
+<svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="menu"></div><div id="pause"></div><div id="results"></div>
+<button id="start"></button><div id="seedlabel"></div><button id="resume"></button>
+<div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
+<div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>window.__err=[];window.onerror=(m,s,l)=>{window.__err.push(m+' @'+(s||'').split('/').pop()+':'+l);};</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/city-scale.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/weapon-modules.js"></script>
+<script src="js/attack-graph.js"></script>
+<script src="js/module-pool.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   TODO.md M1（todo6 §3 / §4）的实现侧验收：动作单位与连续动量。
+
+   量的是【位移】，不是配置里写的速度 —— 速度乘时长只是理论值，
+   真实位移会被碰撞、重力、摩擦和状态切换吃掉。
+   能证明的：每个动作跨多远、动作链能不能连起来、动量会不会失控。
+   不能证明的：手感好不好、是否"明显更流畅" —— todo6 §7 阶段 A 要真人看视频。
+   ========================================================================== */
+const LOG = []; const say = s => LOG.push(s);
+let FAIL = 0, WARN = 0;
+const ok = (c, m) => { if (!c) { FAIL++; say('  <i>FAIL</i> ' + m); } return c; };
+const warn = (c, m) => { if (!c) { WARN++; say('  <u>WARN</u> ' + m); } return c; };
+
+const DT = 1 / 60;
+const M = () => TUNE.MOVEMENT;
+
+/* 把玩家放到一段空旷直路上，朝 +X。城市里到处是楼，
+   量「一次动作跨多远」必须先保证前方没有东西挡着。 */
+function place(x, z, yaw) {
+  const p = G.player;
+  p.pos.set(x, 0, z); p.vel.set(0, 0, 0);
+  p.dashCd = 0; p.dashT = 0; p.dashIFrame = 0;   // 冷却会跨测试残留，必须清
+  p.yaw = yaw === undefined ? Math.PI / 2 : yaw;   // +X
+  p.pitch = 0;
+  const st = MOVE.st;
+  st.state = 'ground'; st.grounded = true; st.dashT = 0; st.slideT = 0;
+  st.wallRunT = 0; st.climbT = 0; st.mom = 0; st.chain = 0; st.chainT = 0;
+  st.dashCharge = M().airDashCharges; st.zip = null; st.scripted = null;
+  st.wallCd = 0; st.climbCd = 0; st.padCd = 0; st.zipCd = 0;
+  p.pos.y = CITY.dropTo(p.pos.x, p.pos.z, 3, p.radius);
+  for (const k in KEY) KEY[k] = false;
+  return p;
+}
+function step(n, keys) {
+  for (const k in (keys || {})) KEY[k] = keys[k];
+  for (let i = 0; i < n; i++) MOVE.update(DT, G.player);
+}
+function dist(a, b) { return Math.hypot(a.x - b.x, a.z - b.z); }
+
+/* 找一段前方 40m 没有障碍、且脚下是地面的空旷直路 */
+function findOpenLane() {
+  for (let z = -40; z <= 40; z += 4)
+    for (let x = -70; x <= 20; x += 5) {
+      const y0 = CITY.dropTo(x, z, 3, 0.5);
+      if (y0 === undefined || Math.abs(y0) > 0.6) continue;
+      let clear = true;
+      for (let d = 1; d <= 40; d += 1.5) {
+        if (CITY.segBlocked(x, 1.0, z, x + d, 1.0, z)) { clear = false; break; }
+      }
+      if (clear) return { x: x, z: z };
+    }
+  return null;
+}
+
+/* 找一面可跑墙的立面。
+   两个坑都踩过：
+   1. 只有被标记成 SURF.WALLRUN 的面才允许跑墙，随便挑高碰撞盒量出来恒为 0；
+   2. 立面可能沿 X 也可能沿 Z —— 城市里最长那面是 91m 的商街，沿 X。
+      只看 Z 方向的话会「一面墙都找不到」。
+   返回贴墙起跑点、沿墙跑的 yaw、贴墙用的按键，以及正对墙面的 yaw。 */
+function findWall() {
+  const p = G.player, pad = p.radius + 0.06;
+  let best = null;
+  const consider = (x, z, len, runYaw, hugKey, climbYaw) => {
+    if (len < 20) return;
+    const y = CITY.dropTo(x, z, 3, p.radius);
+    if (y === undefined || Math.abs(y) > 0.8) return;
+    if (!best || len > best.len)
+      best = { x: x, z: z, len: len, runYaw: runYaw, hugKey: hugKey, climbYaw: climbYaw };
+  };
+  CITY.solids.forEach(s => {
+    if (s.surf !== SURF.WALLRUN || !s.on) return;
+    if (s.y1 - s.y0 < 6) return;
+    const lx = s.x1 - s.x0, lz = s.z1 - s.z0;
+    const xc = (s.x0 + s.x1) / 2, zc = (s.z0 + s.z1) / 2;
+    /* 起跑点往「跑动方向的反面」退三成，留出加速与跑完的余量 */
+    consider(s.x0 - pad, zc - lz * 0.3, lz, Math.PI, 'KeyA', -Math.PI / 2);       // 西面，贴 +X
+    consider(s.x1 + pad, zc - lz * 0.3, lz, Math.PI, 'KeyD', Math.PI / 2);        // 东面，贴 -X
+    consider(xc - lx * 0.3, s.z0 - pad, lx, -Math.PI / 2, 'KeyD', Math.PI);       // 北面，贴 +Z
+    consider(xc - lx * 0.3, s.z1 + pad, lx, -Math.PI / 2, 'KeyA', 0);             // 南面，贴 -Z
+  });
+  return best;
+}
+
+addEventListener('load', () => setTimeout(() => {
+  if (window.__err.length) { document.title = 'RESULT>>BOOT_ERR:' + window.__err.join(';') + '<<END'; return; }
+  R.render = () => {}; window.requestAnimationFrame = () => 0;
+  G.phase = 'play'; DebugPanel.god = true;
+
+  say('<b>TODO.md M1 · 动作尺度与连续动量</b>');
+  const lane = findOpenLane();
+  if (!lane) { document.title = 'RESULT>>NO_OPEN_LANE<<END'; return; }
+  say('  测试直路 (' + lane.x + ', ' + lane.z + ')，前方 40m 无阻挡');
+  const _w = findWall();
+  say('  可跑墙立面 ' + (_w ? '(' + _w.x.toFixed(1) + ', ' + _w.z.toFixed(1) + ') 长 ' + _w.len.toFixed(0) + 'm 贴墙键 ' + _w.hugKey : '未找到'));
+  say('');
+
+  /* ---------------- 单个动作的实际位移 ---------------- */
+  say('<b>[§3] 单个动作跨多远（实测位移，不是配置里的速度×时长）</b>');
+  const R1 = {};
+
+  /* 地面冲刺：先跑起来再冲，和实战一致 */
+  let p = place(lane.x, lane.z);
+  step(30, { KeyW: true });
+  let a = p.pos.clone(); MOVE.onDash(); step(Math.ceil(TUNE.PLAYER.dashTime / DT) + 1, { KeyW: true });
+  R1.dash = dist(a, p.pos);
+
+  /* 空中冲刺：跳起来之后在空中冲 */
+  p = place(lane.x, lane.z);
+  step(30, { KeyW: true });
+  MOVE.onJump(); step(8, { KeyW: true });
+  a = p.pos.clone(); MOVE.onDash(); step(Math.ceil(M().airDashTime / DT) + 1, { KeyW: true });
+  R1.airDash = dist(a, p.pos);
+
+  /* 墙面攀升：正对墙面按住前进与跳。
+     贴墙距离必须小于 wallRunStickDist（0.85）——
+     站远 0.6m 看起来「差不多贴着」，实际就是完全没接触，量出来会是 0。 */
+  const wall = findWall();
+  if (wall) {
+    p = place(wall.x, wall.z, wall.climbYaw);     // KeyW → +X，正对墙面
+    step(20, { KeyW: true });
+    /* 登墙与跑墙都只在【离地】时判定（贴着地面推墙不算），所以必须先跳。
+       但「墙面攀升」量的是【登墙这一段】爬了多高，不能把起跳那 1m 算进去，
+       否则永远超标，还会误导人去调 wallClimbSpeed。 */
+    MOVE.onJump();
+    let cy0 = null, cy1 = null;
+    for (let i = 0; i < Math.ceil(M().wallClimbTime / DT) + 12; i++) {
+      step(1, { KeyW: true, Space: true });
+      if (MOVE.st.state === 'wallclimb') { if (cy0 === null) cy0 = p.pos.y; cy1 = p.pos.y; }
+    }
+    R1.climb = (cy0 === null) ? 0 : cy1 - cy0;
+  }
+
+  /* 跑墙：沿墙加速（KeyW→+Z），同时用 KeyA 往墙面方向贴 */
+  if (wall) {
+    p = place(wall.x, wall.z, wall.runYaw);
+    step(40, { KeyW: true });
+    const before = MOVE.stats.wallRun;
+    const hug = {}; hug.KeyW = true; hug[wall.hugKey] = true;
+    MOVE.onJump(); step(5, hug);                          // 起跳贴墙
+    a = p.pos.clone();
+    step(Math.ceil(M().wallRunTime / DT) + 6, hug);
+    R1.wallRun = MOVE.stats.wallRun > before ? dist(a, p.pos) : 0;
+  }
+
+  const T = [
+    ['地面冲刺', R1.dash, 5, 6.5],
+    ['空中冲刺', R1.airDash, 6, 8],
+    ['跑墙', R1.wallRun, 12, 18],
+    ['墙面攀升', R1.climb, 4, 6]
+  ];
+  T.forEach(([name, v, lo, hi]) => {
+    if (v === undefined) { say('  ' + name.padEnd(5) + ' —— 场景里没找到合适的墙，跳过'); WARN++; return; }
+    const good = v >= lo && v <= hi;
+    say('  ' + name.padEnd(5) + ' ' + v.toFixed(2) + 'm  目标 ' + lo + '~' + hi + 'm  ' + (good ? '✓' : '✗'));
+    if (!good) { FAIL++; }
+  });
+
+  /* ---------------- 连续动量 ---------------- */
+  say('');
+  say('<b>[§4] 连续动量：一串动作是不是一句话</b>');
+
+  /* 滑铲 → 跳：跳完之后水平速度还剩多少 */
+  p = place(lane.x, lane.z);
+  step(45, { KeyW: true });
+  step(6, { KeyW: true, ControlLeft: true });
+  const slideSp = Math.hypot(p.vel.x, p.vel.z);
+  MOVE.onJump(); step(14, { KeyW: true });
+  const afterJump = Math.hypot(p.vel.x, p.vel.z);
+  say('  滑铲速度 ' + slideSp.toFixed(1) + ' → 跳后 0.23s ' + afterJump.toFixed(1) + ' m/s' +
+      '（保留 ' + Math.round(afterJump / slideSp * 100) + '%）');
+  ok(afterJump >= slideSp * 0.80, '滑铲跳没有继承滑铲的水平速度（掉到 ' +
+     Math.round(afterJump / slideSp * 100) + '%）');
+
+  /* 空中不再把速度磨回走路速度 */
+  p = place(lane.x, lane.z);
+  step(45, { KeyW: true });
+  step(6, { KeyW: true, ControlLeft: true });
+  MOVE.onJump(); step(40, { KeyW: true });
+  const late = Math.hypot(p.vel.x, p.vel.z);
+  say('  跳后 0.67s 仍有 ' + late.toFixed(1) + ' m/s（走路速度 ' + TUNE.PLAYER.moveSpeed + '）');
+  ok(late > TUNE.PLAYER.moveSpeed * 1.15, '空中速度被磨回走路速度，动作链连不起来');
+
+  /* 完整动作链：滑铲 → 跳 → 跑墙 → 蹬墙 → 空冲 */
+  if (wall) {
+    p = place(wall.x, wall.z, wall.runYaw);
+    const from = p.pos.clone();
+    step(40, { KeyW: true });                        // 起速
+    step(6, { KeyW: true, ControlLeft: true });      // 滑铲
+    const hug2 = {}; hug2.KeyW = true; hug2[wall.hugKey] = true;
+    MOVE.onJump(); step(6, hug2);                    // 滑铲跳，贴向墙面
+    step(56, hug2);                                  // 跑墙
+    MOVE.onJump(); step(8, { KeyW: true });          // 蹬墙跳
+    MOVE.onDash(); step(20, { KeyW: true });         // 空冲
+    step(30, { KeyW: true });
+    R1.chain = dist(from, p.pos);
+    const good = R1.chain >= 25 && R1.chain <= 45;
+    say('  完整动作链总位移 ' + R1.chain.toFixed(1) + 'm  目标 25~35m  ' + (good ? '✓' : '✗'));
+    if (!good) { if (R1.chain < 25) FAIL++; else WARN++; }
+  }
+
+  /* 速度上限：反复冲刺不得无限加速 */
+  p = place(lane.x, lane.z);
+  let peak = 0;
+  for (let i = 0; i < 12; i++) {
+    MOVE.st.dashCharge = 9; MOVE.onDash();
+    step(14, { KeyW: true });
+    peak = Math.max(peak, Math.hypot(p.vel.x, p.vel.z));
+  }
+  say('  连续 12 次冲刺的峰值速度 ' + peak.toFixed(1) + ' m/s（上限 ' + M().momentumCap + '）');
+  ok(peak <= M().momentumCap + 0.5, '动作叠加突破了速度上限：' + peak.toFixed(1));
+
+  /* 动量必须会衰减，不能永久保持 */
+  p = place(lane.x, lane.z);
+  step(45, { KeyW: true });
+  step(6, { KeyW: true, ControlLeft: true });
+  MOVE.onJump(); step(240, {});                     // 松开所有键，纯滞空 4 秒
+  const decayed = MOVE.st.mom;
+  say('  松手滞空 4s 后动量 ' + decayed.toFixed(1) + ' m/s');
+  ok(decayed < TUNE.PLAYER.moveSpeed, '动量在空中不衰减 —— 会变成永久加速');
+
+  /* ---------------- 12 分钟整局不回归 ---------------- */
+  say('');
+  say('<b>[回归] 新机动下跑完整局</b>');
+  place(0, 30);
+  G.phase = 'play';
+  let t = 0, picks = 0;
+  for (let i = 0; i < 60 * 60 * 12 + 900; i++) {
+    G.player.gun.held = true;
+    G.player.yaw += 0.55 * 0.0167;
+    t += 16.7; frame(t);
+    let gd = 0;
+    while (G.phase === 'choose' && gd++ < 40) {
+      const c = document.querySelector('#cards .card');
+      if (!c || !c.onclick) break;
+      c.onclick(); picks++;
+    }
+    if (G.over) break;
+  }
+  say('  ' + G.time.toFixed(0) + 's 选择' + picks + '次 击杀' + G.stats.kills +
+      ' 逻辑异常' + (G._loopErrCount || 0) + ' 运行时异常' + window.__err.length);
+  ok((G._loopErrCount || 0) === 0, '主循环出现逻辑异常');
+  ok(window.__err.length === 0, '出现运行时异常：' + window.__err.join(';'));
+  ok(G.time >= 700, '没跑满 12 分钟');
+
+  say('');
+  say(FAIL === 0 ? '<b>ALLPASS</b>（' + WARN + ' 条提醒）' : '<i>FAIL ' + FAIL + '</i>（' + WARN + ' 条提醒）');
+  say('todo6 §7 阶段 A 要求的「录一段视频给 Bao 看是否明显更流畅」——脚本不能代替。');
+
+  document.getElementById('out').innerHTML = LOG.join('\n');
+  document.title = 'RESULT>>' + (FAIL === 0 ? 'ALLPASS' : 'FAIL:' + FAIL) +
+    ' warn=' + WARN + ' dash=' + (R1.dash || 0).toFixed(1) +
+    ' air=' + (R1.airDash || 0).toFixed(1) + ' wall=' + (R1.wallRun || 0).toFixed(1) +
+    ' climb=' + (R1.climb || 0).toFixed(1) + ' chain=' + (R1.chain || 0).toFixed(1) + '<<END';
+}, 80));
+</script></body></html>

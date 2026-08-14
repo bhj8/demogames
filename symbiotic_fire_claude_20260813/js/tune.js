@@ -18,8 +18,8 @@ const TUNE = {
     moveSpeed: 6.2,
     accel: 62,
     friction: 12,
-    dashSpeed: 21,
-    dashTime: 0.17,
+    dashSpeed: 23,
+    dashTime: 0.25,      // → 23 × 0.25 = 5.75m（TODO.md M1）
     dashCooldown: 2.1,
     dashIFrame: 0.26,
     hurtIFrame: 0.42,             // 全局受击无敌，防止怪堆瞬间融化玩家（可读性需要）
@@ -490,46 +490,66 @@ TUNE.FEATURES = {
 /* --- 玩家机动 §2.3 ---
    数值是首轮起点。手感目标比具体数值更重要：宽容、不断流、不要求像素级对边。 */
 TUNE.MOVEMENT = {
+  /* ============================================================
+     动作单位按 TODO.md M1（todo6 §3）的目标距离反推，不是拍脑袋：
+       地面冲刺 5~6.5m   = dashSpeed × PLAYER.dashTime
+       空中冲刺 6~8m     = airDashSpeed × airDashTime
+       跑墙 12~18m       = wallRunSpeed × wallRunTime
+       墙面攀升 4~6m     = wallClimbSpeed × wallClimbTime
+       完整动作链 25~35m = 滑铲 → 跳 → 跑墙 → 蹬墙 → 空冲
+     实测由 _movecheck.html 跑出来，改数值必须跟着重跑。
+     ============================================================ */
   gravity: 21,
-  jumpSpeed: 8.2,
-  coyoteTime: 0.12,
-  jumpBuffer: 0.15,
+  jumpSpeed: 8.6,
+  coyoteTime: 0.16,          // todo6 §3：输入宽容 120~180ms
+  jumpBuffer: 0.16,
   airControl: 0.42,          // 空中相对地面的加速度比例
   airDrag: 0.55,
 
-  vaultMaxHeight: 1.2,       // 自动翻越
-  stepHeight: 0.42,          // 低于此高度直接抬脚，不播翻越
-  vaultTime: 0.20,
-  mantleMaxHeight: 2.4,      // 抓边攀爬
-  mantleTime: 0.34,
-  mantleProbe: 0.85,         // 前向探测距离
+  /* --- 连续动量（todo6 §4）---
+     动量 = 「你最近达到过的水平速度」，在空中按 momentumDecay 衰减。
+     它让滑铲跳、跑墙出口、空中冲刺连成一句话，而不是五个互相清零的技能。 */
+  momentumDecay: 5.0,        // 空中每秒衰减多少 m/s（约 4 秒回到战斗移动速度）
+  momentumCap: 26,           // 硬上限：防止动作叠加无限加速
+  slideKeep: 1.15,           // 落地接滑铲时对动量的继承倍率
+  wallRunKeep: 1.0,          // 进入跑墙时对动量的继承倍率
+  dashKeep: 1.0,             // 空中冲刺在已有速度上取大，而不是覆盖成孤立值
+  wallExitBoost: 1.06,       // 出跑墙的轻微推力，保证「出口」读得出来
+
+  vaultMaxHeight: 1.3,       // 自动翻越
+  stepHeight: 0.45,          // 低于此高度直接抬脚，不播翻越
+  vaultTime: 0.18,
+  mantleMaxHeight: 2.6,      // 抓边攀爬
+  mantleTime: 0.30,
+  mantleProbe: 0.95,         // 前向探测距离
   headroom: 1.75,            // 落脚点上方所需净空，不足不允许爬进模型
 
-  wallClimbTime: 0.55,       // 垂直登墙持续
-  wallClimbSpeed: 5.4,
-  wallClimbCooldown: 0.5,
-  wallRunTime: 1.1,          // 横向墙跑上限
-  wallRunSpeed: 8.6,
-  wallRunGravity: 2.6,       // 墙跑期间的残余重力
-  wallRunRise: 1.5,          // 起步时的轻微上抬
-  wallRunStickDist: 0.75,
+  wallClimbTime: 0.80,       // 垂直登墙持续 → 6.4 × 0.80 ≈ 5.1m
+  wallClimbSpeed: 6.4,
+  wallClimbCooldown: 0.45,
+  wallRunTime: 1.20,         // 横向墙跑上限 → 12.5 × 1.20 = 15m
+  wallRunSpeed: 12.5,
+  wallRunGravity: 2.2,       // 墙跑期间的残余重力
+  wallRunRise: 1.6,          // 起步时的轻微上抬
+  wallRunStickDist: 0.85,
   wallRunMinSpeed: 3.2,
-  wallRunGrace: 0.16,        // 离墙输入宽限
-  wallRunCameraTilt: 0.13,   // §8.4 只允许轻微、方向确定的倾斜
+  wallRunGrace: 0.18,        // 离墙输入宽限
+  wallRunCameraTilt: 0.13,   // 只允许轻微、方向确定的倾斜
+  wallJumpOut: 7.4,          // 蹬墙跳的离墙分量
 
   airDashCharges: 1,         // 地面与空中共用一次，接触稳定地面后恢复
-  airDashTime: 0.19,
-  airDashSpeed: 23,
+  airDashTime: 0.27,         // → 26 × 0.27 ≈ 7.0m
+  airDashSpeed: 26,
 
-  slideMinSpeed: 6.0,
-  slideTime: 0.7,
-  slideSpeed: 11.5,
+  slideMinSpeed: 5.6,        // 略低于走路稳态速度，保证「跑起来就能滑」
+  slideTime: 0.75,
+  slideSpeed: 12.5,
   slideFriction: 5.5,
   slideHeight: 0.95,
 
-  zipSpeed: 15.5,
-  zipSnapDist: 2.6,
-  padImpulse: 13.5,
+  zipSpeed: 18.0,
+  zipSnapDist: 2.8,
+  padImpulse: 14.5,
   padRearm: 0.9,             // 跳板再装填：站在板上不允许被无限弹起
 
   landHardVel: 12,           // 以上算重着陆（只作用于枪模与短暂镜头压缩）
