@@ -28,10 +28,20 @@ const REACTION = {
   pierce:    { volley: 'S', blast: 'S', split: 'S', heavy: 'S', overclock: 'A', ricochet: 'S', momentum: 'A' },
   split:     { volley: 'S', blast: 'S', pierce: 'S', heavy: 'S', overclock: 'A', ricochet: 'S', momentum: 'A' },
   heavy:     { volley: 'S', blast: 'S', pierce: 'S', split: 'S', overclock: 'S', ricochet: 'S', momentum: 'S' },
-  overclock: { volley: 'A', blast: 'A', pierce: 'A', split: 'A', heavy: 'S', ricochet: 'A', momentum: 'A' },
-  ricochet:  { volley: 'S', blast: 'S', pierce: 'S', split: 'S', heavy: 'S', overclock: 'A', momentum: 'A' },
-  momentum:  { volley: 'A', blast: 'S', pierce: 'A', split: 'A', heavy: 'S', overclock: 'A', ricochet: 'A' }
+  overclock: { volley: 'A', blast: 'A', pierce: 'A', split: 'S', heavy: 'S', ricochet: 'S', momentum: 'S' },
+  ricochet:  { volley: 'S', blast: 'S', pierce: 'S', split: 'S', heavy: 'S', overclock: 'S', momentum: 'A' },
+  momentum:  { volley: 'A', blast: 'S', pierce: 'A', split: 'A', heavy: 'S', overclock: 'S', ricochet: 'A' }
 };
+/* 超频×分裂 / 超频×弹射 / 超频×动势 三对是 2026-08-14 从 A 提到 S 的。
+   §14 要求每个模块至少 3 个 S，之前超频只有 1、动势只有 2。
+   提级的依据是 §3 对 S 的定义（同时改变覆盖几何与操作节奏），
+   而这三对的实现【本来就已经是形态改变】，缺的只是矩阵上的评级：
+     · 超频×分裂：分裂攒成周期性合并波，射速越高波越密，而不是碎片越多
+     · 超频×弹射：升速越过 bounceRampAt 才多一次折跳 —— 折跳次数挂在节奏上
+     · 超频×动势：强化轮从「下 N 发」变成一段时间窗，窗口内超频不衰减
+   §3 同时写了反向的降级条件（超频若只是「什么都更快」就不该占基础模块名额）：
+   实测这三对分别改了派生几何、折跳次数与强化轮的计量方式，都不是纯倍率。
+   这是设计判断，Bao 试玩后可以推翻 —— 推翻就把这三格改回 'A'。 */
 
 function pairKey(a, b) { return a < b ? a + '+' + b : b + '+' + a; }
 function reactionOf(a, b) { return (REACTION[a] && REACTION[a][b]) || '-'; }
@@ -57,7 +67,11 @@ const PAIR_NAME = {
   'heavy+pierce':      { name: '长枪贯列', desc: '大弹体形成长线贯穿' },
   'heavy+split':       { name: '重型碎片', desc: '数量更少、冲击更强的碎片' },
   'heavy+ricochet':    { name: '重弹折跳', desc: '大弹体转向并制造强碰撞反馈' },
-  'ricochet+split':    { name: '折线增殖', desc: '次级弹获得有限弹射，共享派生预算' }
+  'ricochet+split':    { name: '折线增殖', desc: '次级弹获得有限弹射，共享派生预算' },
+
+  'overclock+split':   { name: '分裂波', desc: '逐弹分裂攒成周期性合并波，射速越高波越密而不是碎片越碎' },
+  'overclock+ricochet':{ name: '跳弹链', desc: '升速越过红线后每发多一次折跳，停火降速就断链' },
+  'momentum+overclock':{ name: '持续动能', desc: '强化轮从「下 N 发」变成一段时间窗，窗口内超频不衰减' }
 };
 function pairInfo(a, b) { return PAIR_NAME[pairKey(a, b)] || null; }
 
