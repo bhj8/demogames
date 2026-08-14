@@ -331,20 +331,37 @@ const CITYSCALE = {
      §7.2 要求从街口、巷口、车辆或建筑转角外出现，不允许在宽阔街道中心凭空生成。 */
   buildSpawnPoints(C) {
     const S = this.S;
-    const add = (x, z) => {
-      if (!C.standable(x, z, 1.0, 0.5)) return;
-      C.spawnPoints.push({ x: x, y: C.dropTo(x, z, 2.0, 0.5), z: z, layer: 'street', cover: 'corner' });
+    const add = (x, z, layer, cover) => {
+      const y = C.dropTo(x, z, 60, 0.5);
+      if (y === undefined || !C.standable(x, z, y + 0.4, 0.5)) return;
+      C.spawnPoints.push({ x: x, y: y, z: z, layer: layer || 'street', cover: cover || 'corner' });
     };
-    /* 建筑转角外侧 —— 玩家看不见的那一侧 */
+    /* --- 街面：建筑转角外侧（玩家看不见的那一侧）与巷口街口 --- */
     this.blocks.forEach(b => {
       if (b.h < 4) return;
       const pad = 3.2;
-      add(b.x0 - pad, b.z0 - pad); add(b.x1 + pad, b.z0 - pad);
-      add(b.x0 - pad, b.z1 + pad); add(b.x1 + pad, b.z1 + pad);
+      add(b.x0 - pad, b.z0 - pad, 'street'); add(b.x1 + pad, b.z0 - pad, 'street');
+      add(b.x0 - pad, b.z1 + pad, 'street'); add(b.x1 + pad, b.z1 + pad, 'street');
     });
-    /* 巷口与街口 */
     [[-54, -12], [-54, -48], [0, -52], [0, 52], [-62, 0], [62, 0], [12, -14], [-12, 14]]
-      .forEach(([x, z]) => add(x, z));
+      .forEach(([x, z]) => add(x, z, 'street'));
+
+    /* --- 中层与屋顶（TODO.md M3）---
+       阶段 A 只有街面刷怪点，于是玩家一上屋顶就彻底安全，
+       「登高改变战斗」直接退化成「登高躲开战斗」。
+       在每个可玩单元的顶面与露台上取点，让高处也有压力来源。
+       所有点都经过 standable 验证，不会生成在下不来的装饰面上。 */
+    const roof = (x, z, layer) => add(x, z, layer, 'roof');
+    /* 商街屋顶（6m）：两段各取两点 */
+    [[-72, -40], [-64, -22], [-44, -40], [-36, -22]].forEach(([x, z]) => roof(x, z, 'mid'));
+    /* 停车楼顶（15m）与检修平台（7.5m） */
+    [[40, -50], [68, -50], [40, -26], [68, -26]].forEach(([x, z]) => roof(x, z, 'roof'));
+    [[80, -50], [80, -28]].forEach(([x, z]) => roof(x, z, 'mid'));
+    /* 办公裙楼顶（9m）与塔楼露台 */
+    [[-70, 23], [-50, 23], [-36, 23]].forEach(([x, z]) => roof(x, z, 'mid'));
+    [[-73, 45], [-73, 55]].forEach(([x, z]) => roof(x, z, 'roof'));
+    /* 在建大楼三层楼板 */
+    [[40, 24], [68, 24], [40, 54], [68, 54]].forEach(([x, z]) => roof(x, z, 'roof'));
   },
 
   /* ---------------------------------------------------- 审计用测量 */

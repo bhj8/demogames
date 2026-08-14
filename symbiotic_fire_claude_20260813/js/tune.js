@@ -568,6 +568,21 @@ TUNE.VERTICAL_MAP = {
 };
 
 /* --- 立体敌人 §5 --- */
+/* --- TODO.md M3/M5：分层风险收益与跨单元压力 ---
+   屋顶必须是「捷径与角度」，不是「安全的农场」。所以：
+   地面击杀经验最高，高处击杀打折；玩家高速跨越单元时，
+   目标单元前方补压力，旧尸潮里留一部分继续追。 */
+TUNE.LAYER_PLAY = {
+  xpStreet: 1.0,             // 地面击杀：全额
+  xpMid: 0.78,               // 中层
+  xpRoof: 0.62,              // 屋顶：捷径的代价
+  transferDist: 26,          // 多快算「跨了一个单元」
+  transferWindow: 3.0,       // 在这个时间内跨过去才算高速转场
+  transferAhead: 4,          // 目标单元前方补多少压力
+  transferChase: 0.45,       // 旧尸潮里有多大比例继续追
+  roofPressureBias: 0.55     // 玩家在高处时，刷怪点偏向同层的额外权重
+};
+
 TUNE.VERTICAL_ENEMY = {
   climbSpeed: 2.6,
   climbTelegraph: 0.7,       // 抓墙预警

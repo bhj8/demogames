@@ -275,10 +275,56 @@ addEventListener('load', () => setTimeout(() => {
       's（理论需 ' + need.toFixed(1) + 's）→ ' + decayed.toFixed(1) + ' m/s');
   ok(decayed <= TUNE.PLAYER.moveSpeed + 0.1, '动量不按 momentumDecay 衰减 —— 会变成永久加速');
 
+  /* ---------------- M3/M5：高处不是安全区 ---------------- */
+  say('');
+  say('<b>[M3/M5] 登高之后战斗是否跟上来</b>');
+  const byLayer = {};
+  CITY.spawnPoints.forEach(sp => byLayer[sp.layer] = (byLayer[sp.layer] || 0) + 1);
+  say('  刷怪点分层 ' + JSON.stringify(byLayer) + '（共 ' + CITY.spawnPoints.length + '）');
+  ok((byLayer.mid || 0) >= 4 && (byLayer.roof || 0) >= 4,
+     '中层/屋顶刷怪点太少，玩家一上高处就彻底安全');
+
+  /* 把玩家放到停车楼顶待 40 秒，看有多少敌人真的上来 */
+  (function () {
+    G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+    G.enemies.compact();
+    const roofY = CITY.dropTo(55, -39, 60, 0.5);
+    MOVE.teleport(G.player, 55, roofY + 0.2, -39);
+    G.player.hp = G.player.maxHp = 99999;
+    G.time = 240;                                  // 中段，刷怪目标数已经上来
+    let t0 = performance.now(), reached = 0, seen = 0;
+    for (let i = 0; i < 60 * 40; i++) {
+      G.hash.clear();
+      G.enemies.live.forEach(e => { if (!e.dead && !e._dead) G.hash.insert(e, e.pos.x, e.pos.z); });
+      Director.update(1 / 60);
+      updateEnemies(1 / 60);
+      NAV.updateCamp(1 / 60);
+      G.enemies.compact();
+    }
+    G.enemies.live.forEach(e => {
+      if (e.dead || e._dead) return;
+      seen++;
+      if (Math.abs(e.pos.y - G.player.pos.y) < 4) reached++;
+    });
+    say('  玩家在停车楼顶待 40s：场上 ' + seen + ' 只，其中 ' + reached + ' 只到了同一高度');
+    ok(reached >= 3, '在屋顶待了 40 秒也几乎没有敌人上来 —— 高处仍然是安全区');
+    say('  防站桩阶段 ' + NAV.camp.stage + '（手段 ' + NAV.camp.method + '）');
+  })();
+
+  /* 分层经验：地面必须更值钱 */
+  const L = TUNE.LAYER_PLAY;
+  say('  分层经验倍率 街 ' + L.xpStreet + ' / 中 ' + L.xpMid + ' / 顶 ' + L.xpRoof);
+  ok(L.xpStreet > L.xpMid && L.xpMid > L.xpRoof, '分层经验没有形成风险收益差');
+
   /* ---------------- 12 分钟整局不回归 ---------------- */
   say('');
   say('<b>[回归] 新机动下跑完整局</b>');
+  /* 上一段把 G.time 推到 240s 用来测中段刷怪压力，这里必须归零，
+     否则「跑满 12 分钟」的判据会被那 240 秒喂饱，测了个寂寞。 */
   place(0, 30);
+  G.time = 0; G.tlIndex = 0; G.stats.kills = 0;
+  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+  G.enemies.compact();
   G.phase = 'play';
   let t = 0, picks = 0;
   for (let i = 0; i < 60 * 60 * 12 + 900; i++) {

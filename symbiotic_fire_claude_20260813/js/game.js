@@ -175,12 +175,38 @@ function spawnPosition(forceFront, layerWant) {
    ========================================================================== */
 const Director = {
   timer: 0, target: 0, interval: 0,
+  /* M3 / todo6 §6：玩家高速跨越单元时，目标单元前方要补压力。
+     不补的话，新机动带来的直接后果就是「一转场就没怪打」——
+     机动越强，游戏越空。 */
+  trail: [], transferCd: 0,
+  _transfer(dt) {
+    const L = TUNE.LAYER_PLAY, p = G.player;
+    this.transferCd -= dt;
+    this.trail.push({ t: G.time, x: p.pos.x, z: p.pos.z });
+    while (this.trail.length && G.time - this.trail[0].t > L.transferWindow) this.trail.shift();
+    if (this.transferCd > 0 || this.trail.length < 2) return;
+    const a = this.trail[0];
+    const dx = p.pos.x - a.x, dz = p.pos.z - a.z;
+    if (Math.hypot(dx, dz) < L.transferDist) return;
+    /* 沿移动方向的前方补人：用既有的正面刷怪路径，不另造一套生成器 */
+    this.transferCd = L.transferWindow * 2;
+    const saveYaw = p.yaw;
+    p.yaw = Math.atan2(dx, dz) + Math.PI;          // 让 spawnPosition 的"正面"对上移动方向
+    for (let i = 0; i < L.transferAhead; i++) {
+      const pos = spawnPosition(true);
+      if (pos) configureEnemy(G.enemies.get(), this.pickTemplate(), pos, { grace: 0.8 });
+    }
+    p.yaw = saveYaw;
+    G.stats.transfers = (G.stats.transfers || 0) + 1;
+  },
+
   update(dt) {
     if (DebugPanel.rangeMode) return;              // 枪感实验场：暂停刷怪
     if (DebugPanel.freezeEnemies) return;         // §11.1 单独冻结敌人
     if (G.bossAlive && G.bossAlive.king) return;   // 尸王阶段停常规刷怪，避免不可读
     const t = G.time, S = TUNE.SPAWN;
     const k = Math.min(1, t / TUNE.RUN_SECONDS);
+    this._transfer(dt);
 
     /* 目标在场数 */
     const target = Math.min(S.aliveCap,
@@ -708,6 +734,12 @@ G.spawnMinion = function (parent, ox, oz, hpRatio) {
    ========================================================================== */
 function dropXp(pos, value) {
   if (G.xp.length > 620) { G.xp.shift(); }
+  /* M3：地面经验收益最高，让玩家有理由主动回到危险区域（todo4 §6 / todo6 §6）。
+     不是「屋顶不掉经验」——那会变成惩罚；是屋顶打折，让登高成为取舍。 */
+  if (CITY.enabled) {
+    const L = TUNE.LAYER_PLAY, lay = CITY.layerOf(pos.y);
+    value *= lay === 'roof' ? L.xpRoof : lay === 'mid' ? L.xpMid : L.xpStreet;
+  }
   /* §6.1 经验球记录所在高度，且绝不能停在墙面、空中或封闭模型内部 */
   let y = 0.42, base = 0;
   if (CITY.enabled) {
