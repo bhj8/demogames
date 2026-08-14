@@ -24,7 +24,7 @@ body.shot #out{display:none}</style>
 <div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
 <div id="nextdraw"></div><div id="cards"></div>
 <div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
-<div id="pause"><button id="resume"></button></div><div id="results"></div>
+<div id="pause"><button id="resume"></button></div><div id="buildgraph"></div><div id="results"></div>
 <div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
 <div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
 <pre id="out">running…</pre>
@@ -199,6 +199,70 @@ function audit() {
         if (g > 0.5) gaps.push({ k: k, g: g });
       }
   });
+  /* --- M2 / todo6 §5：路线语法四段齐全 --- */
+  const RT = CITYSCALE.ROUTES || [];
+  const badSeg = RT.filter(r => !r.entry || !r.sustain || !r.exit || !r.payoff);
+  ok('每条路线四段齐全（入口/持续/出口/兑现）', badSeg.length === 0,
+     badSeg.length ? badSeg.map(r => r.id).join(' ') : RT.length + ' 条全齐');
+  /* 每个单元 2~3 条 */
+  const perZone = {};
+  RT.forEach(r => perZone[r.zone] = (perZone[r.zone] || 0) + 1);
+  const zoneCounts = Object.keys(perZone).map(k => k + ':' + perZone[k]);
+  ok('每个单元 2~3 条路线',
+     Object.keys(perZone).length >= 3 && Object.keys(perZone).every(k => perZone[k] >= 2 && perZone[k] <= 3),
+     zoneCounts.join(' '));
+  /* 持续段时长 2~5 秒：关键动作之间要留出观察与射击时间。
+     12.5 m/s 是冲刺链的平均速度（走 6.2，冲刺与滑铲把均速拉到这个量级），
+     全部路线用同一个数折算，免得每条路线各自挑一个对自己有利的速度。 */
+  const segT = RT.map(r => {
+    const d = Math.hypot(r.sustain.to.x - r.sustain.from.x, r.sustain.to.z - r.sustain.from.z);
+    return { id: r.id, t: d / 12.5 };
+  });
+  ok('持续段 2~5 秒（留出观察与射击时间）',
+     segT.every(x => x.t >= 2 && x.t <= 5),
+     segT.map(x => x.id + ' ' + fmt(x.t) + 's').join(' '));
+
+  /* 3 秒内能找到脱困入口。
+     采样点用【贴着战斗单元 8m 以内的刷怪点】：
+       · 用刷怪点而不是包围盒四角 —— 包围盒的角多半落在实心楼体里，
+         没人会在那打；刷怪点是登记在册的战斗发生地，且过了 standable 校验。
+       · 只取贴着战斗单元的那些 —— 围合街区四角属于地图外围，
+         把它们算进来只会逼出一堆纯装饰的入口。
+     覆盖点取【路线与世界接触的所有点】：入口、出口、持续段两端。
+     站在街上要能上路线，站在屋顶上也要能顺着路线下来 —— 两个方向都算脱困。
+     距离按最保守的模型折算：3 秒跑 + 一次冲刺，不按冲刺链均速。
+     够不到就去改地图，不许改这把尺子。 */
+  const reach = 3 * 6.2 + 6.13;
+  const nearUnit = (x, z) => zk.some(k => {
+    const u = zones[k];
+    return x >= u.x0 - 8 && x <= u.x1 + 8 && z >= u.z0 - 8 && z <= u.z1 + 8;
+  });
+  const touch = [];
+  RT.forEach(r => touch.push(r.entry, r.exit, r.sustain.from, r.sustain.to));
+  const samples = CITY.spawnPoints.filter(s => nearUnit(s.x, s.z));
+  const stranded = [];
+  samples.forEach(s => {
+    let best = 1e9;
+    touch.forEach(t => { best = Math.min(best, Math.hypot(t.x - s.x, t.z - s.z)); });
+    if (best > reach) stranded.push(s.layer + '(' + fmt(s.x) + ',' + fmt(s.z) + ') ' + fmt(best) + 'm');
+  });
+  ok('任意主要战斗位置 3 秒内有脱困入口（≤' + fmt(reach) + 'm）',
+     stranded.length === 0,
+     stranded.length ? stranded.length + '/' + samples.length + ' 处够不到：' + stranded.join(' ')
+                     : samples.length + ' 处全部可达');
+
+  /* 同时只呈现 2~3 个主要方向：从单元中心看，30m 内（一眼能读完的尺度）
+     的路线入口不超过 3 个。再多玩家就不是在选路，而是在扫描。 */
+  const crowded = [];
+  zk.forEach(k => {
+    const z = zones[k];
+    const px = (z.x0 + z.x1) / 2, pz = (z.z0 + z.z1) / 2;
+    const near = RT.filter(r => Math.hypot(r.entry.x - px, r.entry.z - pz) < 30).length;
+    if (near > 3) crowded.push(k + ':' + near);
+  });
+  ok('同时只呈现 2~3 个主要方向', crowded.length === 0,
+     crowded.length ? crowded.join(' ') : '每个单元 ≤3 个入口在视野尺度内');
+
   ok('单元内体块间距 6~12m（一次动作够得着）',
      gaps.length === 0 || gaps.every(x => x.g >= 6 && x.g <= 12),
      gaps.map(x => x.k + ' ' + fmt(x.g) + 'm').join(' ') || '单体块单元');

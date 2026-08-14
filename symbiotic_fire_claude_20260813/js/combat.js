@@ -497,6 +497,21 @@ function segCylinder(p0, p1, cx, cz, r, y0, y1) {
   return t;
 }
 
+/* 命中反馈的颜色来源：谁造成的，就用谁的颜色（TODO.md M6）。
+   根弹按当前最显著的根弹属性走，派生弹按它的 sourceModule 走。 */
+function moduleHitColor(b) {
+  const g = b.gene;
+  if (!g) return 0xffd08a;
+  if (g.sourceModule && g.sourceModule !== 'root' && TUNE.MODULES[g.sourceModule])
+    return TUNE.MODULES[g.sourceModule].color;
+  if (b.bounceHits > 0) return TUNE.MODULES.ricochet.color;
+  const d = G.derived;
+  if (d.momActive > 0.01) return TUNE.MODULES.momentum.color;
+  if (b.pierceHits > 0) return TUNE.MODULES.pierce.color;
+  if (d.heavyOn) return TUNE.MODULES.heavy.color;
+  return 0xffd08a;
+}
+
 /* 子弹退场的唯一出口：谱系里还欠一次终点结算的，在这里补上（todo5 §4.3） */
 function retireBullet(b) {
   if (b.gene && typeof AG !== 'undefined') AG.onBulletEnd(b, b.pos);
@@ -625,7 +640,9 @@ function resolveBulletHit(b, e, point, weak) {
     G.ui.hitMark(killed ? 'weakkill' : 'weak');
     G.ui.dmgNumber(point, Math.round(dealt), killed);
   } else {
-    R.spark(point, b.dir, b.split ? MUT.fission.color : 0xffd08a);
+    /* M6 构筑因果：命中火花按【造成它的模块】着色，
+       玩家不看结算页也能读出「这一下是分裂/弹射/重型打的」。 */
+    R.spark(point, b.dir, moduleHitColor(b));
     Audio2.hit(point, false);
     if (dealt > 0) G.ui.hitMark(killed ? 'kill' : 'normal');
     if (DebugPanel.showDmg && dealt > 0) G.ui.dmgNumber(point, Math.round(dealt), false, true);

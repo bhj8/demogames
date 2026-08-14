@@ -398,6 +398,7 @@ const AG = {
     }
     WMOD.count('split', 'trigger');
     G.stats.splits = (G.stats.splits || 0) + n;
+    if (typeof Audio2 !== 'undefined') Audio2.derived(point, 'split');
     if (typeof R !== 'undefined' && R.puff)
       R.puff(point, 0.18, wave ? 2.4 : 1.3, TUNE.MODULES.split.color, wave ? 0.26 : 0.18);
   },
@@ -436,6 +437,7 @@ const AG = {
 
     WMOD.count('ricochet', 'trigger');
     WMOD.count('ricochet', 'targets');
+    if (typeof Audio2 !== 'undefined') Audio2.derived(point, 'bounce');
     /* 折线曳光：这是弹射唯一的可读性来源（§11） */
     if (typeof WEAPON !== 'undefined' && WEAPON.ready)
       WEAPON.addTracer(point, b.dir, TUNE.MODULES.ricochet.color,

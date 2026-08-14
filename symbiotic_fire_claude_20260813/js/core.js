@@ -212,6 +212,19 @@ const Audio2 = {
     this.weaponBus = this.ctx.createGain();
     this.weaponBus.gain.value = 0.85;
     this.weaponBus.connect(this.master);
+    /* TODO.md M6：命中确认独立成第三条总线，优先级高于世界音效。
+       普通命中 / 弱点命中 / 击杀这三层必须同时听得见 ——
+       它们是玩家判断「我打中了什么」的唯一听觉依据，
+       不能和爆炸、尸潮一起挤在被压缩的世界通道里（todo2 §8）。 */
+    this.confirmBus = this.ctx.createGain();
+    this.confirmBus.gain.value = 0.95;
+    this.confirmBus.connect(this.master);
+    /* 派生效果（分裂 / 弹射 / 终点爆破）单独一条，音量压在确认音之下，
+       这样「枪线 → 派生 → 终点」三层能分辨，而不是糊成一片。 */
+    this.derivedBus = this.ctx.createGain();
+    this.derivedBus.gain.value = 0.42;
+    this.derivedBus.connect(this.comp);
+    this._derivedFrame = 0; this._derivedT = 0;
     this.ready = true;
   },
   resume() { if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume(); },
@@ -255,10 +268,14 @@ const Audio2 = {
 
   /* 开火 —— 分层：枪口爆发 / 机械声 / 枪体 / 短尾音（todo2 §8）。
      每枪有轻微的音高与响度扰动，避免机关枪式复制粘贴。 */
-  shot(pitch, heavy) {
+  shot(pitch, heavy, interval) {
     if (!this.ready) return;                 // 玩家枪声永不因 voice cap 被跳过
     const t = this.t, dest = this.weaponBus;
-    const h = heavy || 1;
+    /* M6：射速提高时枪声必须保持【离散节奏】，不能糊成持续蜂鸣。
+       做法是把枪体尾音按真实射击间隔截断 —— 上一发还在响就把它收掉，
+       每一发才都还是「一发」。h 越大（重型）尾音越长，也仍受间隔约束。 */
+    const gap = interval || 0.11;
+    const h = Math.min(heavy || 1, Math.max(0.55, gap / 0.11));
     const jitter = 0.94 + Math.random() * 0.12;
     const p = pitch * jitter;
 
@@ -372,8 +389,9 @@ const Audio2 = {
   },
 
   hit(pos, weak) {
-    if (!this.ready || this._voices > 30) return;
-    const t = this.t, dest = pos ? this._panner(pos) : this.comp;
+    /* 弱点确认永不被 voice cap 丢掉；普通命中在极端拥挤时才让位 */
+    if (!this.ready || (!weak && this._voices > 30)) return;
+    const t = this.t, dest = this.confirmBus;
     const o = this.ctx.createOscillator();
     o.type = 'triangle';
     o.frequency.setValueAtTime(weak ? 900 : 420, t);
@@ -384,13 +402,34 @@ const Audio2 = {
 
   kill(pos) {
     if (!this.ready) return;
-    const t = this.t, dest = this._panner(pos);
+    const t = this.t, dest = this.confirmBus;
     const n = this._noise();
     const f = this.ctx.createBiquadFilter();
     f.type = 'lowpass'; f.frequency.setValueAtTime(1400, t);
     f.frequency.exponentialRampToValueAtTime(220, t + 0.16);
     const g = this._env(dest, t, 0.003, 0.16, 0.20);
     n.connect(f); f.connect(g); n.start(t); n.stop(t + 0.2);
+  },
+
+  /* TODO.md M6：派生效果的中间层（分裂弹出生 / 弹射折向）。
+     它必须存在，否则玩家只听得到「开枪」和「爆炸」，中间发生了什么全靠猜；
+     但它也必须压在确认音之下，并且同帧合并 —— 高射速下逐事件播放
+     会直接把枪声和命中确认埋掉（todo2 §8 的原话是"不得盖过首要确认音"）。 */
+  derived(pos, kind) {
+    if (!this.ready) return;
+    const now = performance.now();
+    if (now - this._derivedT < 45) { this._derivedFrame++; return; }
+    this._derivedT = now;
+    const merged = Math.min(3, 1 + this._derivedFrame);
+    this._derivedFrame = 0;
+    const t = this.t, dest = this.derivedBus;
+    const o = this.ctx.createOscillator();
+    o.type = kind === 'bounce' ? 'sawtooth' : 'triangle';
+    const base = kind === 'bounce' ? 1400 : 760;
+    o.frequency.setValueAtTime(base, t);
+    o.frequency.exponentialRampToValueAtTime(base * 0.45, t + 0.06);
+    const g = this._env(dest, t, 0.001, 0.06, 0.10 * merged);
+    o.connect(g); o.start(t); o.stop(t + 0.09);
   },
 
   /* §31 同帧多次爆炸合并 */
@@ -454,7 +493,7 @@ const Audio2 = {
   /* 弱点确认：中央、短促、不做空间衰减，否则会被枪声和尸潮声淹没 */
   weakConfirm(killed) {
     if (!this.ready) return;
-    const t = this.t, dest = this.comp;
+    const t = this.t, dest = this.confirmBus;
     const o = this.ctx.createOscillator();
     o.type = 'square';
     o.frequency.setValueAtTime(1250, t);

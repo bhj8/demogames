@@ -268,6 +268,14 @@ canvas#gl{display:block;position:fixed;inset:0}
   border-bottom:1px solid var(--line);letter-spacing:.06em}
 .rmodtab th:first-child,.rmodtab td:first-child{text-align:left}
 .rmodtab td{text-align:right;padding:4px 8px;border-bottom:1px solid rgba(255,255,255,.05)}
+/* M6 构筑图：暂停时一屏读完当前构筑 */
+#buildgraph{max-width:620px;margin:16px auto 4px;text-align:left;font-size:12.5px;line-height:1.9;
+  color:rgba(219,231,240,.72)}
+#buildgraph .bgmods{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
+#buildgraph .bgm{padding:5px 12px;border:1px solid currentColor;border-radius:3px;font-size:14px}
+#buildgraph .bgrow{display:flex;gap:10px;padding:3px 0;border-top:1px solid var(--line)}
+#buildgraph .bgk{flex:0 0 74px;color:rgba(219,231,240,.4);letter-spacing:.08em;font-size:11px}
+#buildgraph .bgs{color:#ffd24a}
 .cardfoot{font-size:11px;letter-spacing:.16em;color:rgba(219,231,240,.3)}
 
 /* ------------------------------------------------------------- 菜单/结算 */
@@ -432,6 +440,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 <div id="pause">
   <div class="mtitle" style="font-size:30px">已暂停</div>
   <div class="msub" style="font-size:13px">尸潮不会等你</div>
+  <div id="buildgraph"></div>
   <button id="resume">继 续</button>
 </div>
 

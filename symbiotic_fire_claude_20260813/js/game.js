@@ -1399,7 +1399,7 @@ function fire() {
     heavy: heavy, boltSpeed: 1 + ramp * 0.45,
     momentum: d.momActive
   });
-  Audio2.shot(1 + ramp * 0.35, heavy);
+  Audio2.shot(1 + ramp * 0.35, heavy, effectiveFireInterval());
   if (isLast) Audio2.lastRound();
 
   /* 动势强化轮的释放必须有区别于普通射击的视听轮廓（§4.6）*/
@@ -1715,6 +1715,33 @@ const UI = {
     this.toast('尸王学会了：' + MUT[id].name, MUT[id].css, true);
   },
   /* HUD：当前 1～3 个基础模块及其 S 级组合名称（todo5 §11） */
+  /* M6：暂停面板的构筑图 —— 当前模块、已成立组合、节点与规则一屏可读。
+     这不是把 describe() 打印出来，而是把「因果」摆出来：
+     模块用自己的颜色，组合写出它的名字与评级。 */
+  buildGraph() {
+    const el = $('buildgraph');
+    if (!el) return;
+    if (!WMOD.own.length) { el.innerHTML = '<i>还没有基础模块</i>'; return; }
+    const mods = WMOD.own.map(id => {
+      const M = TUNE.MODULES[id];
+      return '<span class="bgm" style="color:' + M.css + '">' + M.name + '</span>';
+    }).join('');
+    const row = (k, v) => '<div class="bgrow"><span class="bgk">' + k + '</span><span>' + (v || '—') + '</span></div>';
+    const pairs = WMOD.pairs().map(p2 => {
+      const nm = p2.info ? p2.info.name : (TUNE.MODULES[p2.a].name + '×' + TUNE.MODULES[p2.b].name);
+      return (p2.tier === 'S' ? '<b class="bgs">' + nm + '</b>' : nm) + ' [' + p2.tier + ']';
+    }).join('　');
+    const nodes = Object.keys(WMOD.nodes).filter(k => WMOD.nodes[k] > 0)
+      .map(k => NODE_MAP[k].name + (WMOD.nodes[k] > 1 ? '×' + WMOD.nodes[k] : '')).join('　');
+    el.innerHTML = '<div class="bgmods">' + mods + '</div>' +
+      row('组合反应', pairs) +
+      row('深化节点', nodes) +
+      row('形态分支', WMOD.branches.map(b => BRANCH_MAP[b].name).join('　')) +
+      row('规则改写', WMOD.rules.map(r => RULE_MAP[r].name).join('　')) +
+      row('谱系预算', '派生 ' + AG.gBudget.derived + ' · 事件 ' + AG.gBudget.events +
+        ' · 触顶 ' + AG.gBudget.rejected + ' · 最大深度 ' + AG.gBudget.maxDepth);
+  },
+
   mutationSlots() {
     this.slots.innerHTML = '';
     {
@@ -2435,7 +2462,7 @@ function boot() {
   $('seedlabel').textContent = '种子 ' + BOOT.seed;
   document.addEventListener('pointerlockchange', () => {
     if (document.pointerLockElement !== R.renderer.domElement && G.phase === 'play' && !G.over) {
-      G.paused = true; $('pause').classList.add('on');
+      G.paused = true; $('pause').classList.add('on'); UI.buildGraph();
     }
   });
   /* 浏览器可能拒绝紧跟在 exitPointerLock 之后的重新锁定 —— 点画面即可恢复 */
