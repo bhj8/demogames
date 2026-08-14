@@ -100,7 +100,9 @@ const NAV = {
         if (behind && dist < S.rearMinDist) { this._reject('rear_close'); continue; }
       }
       /* 越近越好，但不能近到违规；同层优先 */
-      const score = -dist - Math.abs(dy) * 0.35 + (s.layer === layer ? 6 : 0) + RNG.spawn.range(0, 3);
+      /* M4：热点附近的刷怪点更容易被选中，压力才真的会「迁移」 */
+      const score = -dist - Math.abs(dy) * 0.35 + (s.layer === layer ? 6 : 0)
+        + MAPEV.spawnBias(s.x, s.z) * 24 + RNG.spawn.range(0, 3);
       if (score > bestScore) { bestScore = score; best = s; }
     }
     if (!best) { this._reject('no_candidate'); return null; }

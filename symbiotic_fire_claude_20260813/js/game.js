@@ -739,6 +739,7 @@ function dropXp(pos, value) {
   if (CITY.enabled) {
     const L = TUNE.LAYER_PLAY, lay = CITY.layerOf(pos.y);
     value *= lay === 'roof' ? L.xpRoof : lay === 'mid' ? L.xpMid : L.xpStreet;
+    value *= MAPEV.xpBonus(pos.x, pos.z);          // M4：热点内收益更高
   }
   /* §6.1 经验球记录所在高度，且绝不能停在墙面、空中或封闭模型内部 */
   let y = 0.42, base = 0;
@@ -2162,7 +2163,7 @@ const DebugPanel = {
       else if (a === 'tg_dash') { TUNE.MOVEMENT.airDashCharges = TUNE.MOVEMENT.airDashCharges ? 0 : 1; this.log('空中冲刺充能 ' + TUNE.MOVEMENT.airDashCharges); }
       else if (a === 'tg_vault') { TUNE.MOVEMENT.vaultMaxHeight = TUNE.MOVEMENT.vaultMaxHeight > 0.5 ? 0.45 : 1.2; this.log('自动翻越高度 ' + TUNE.MOVEMENT.vaultMaxHeight); }
       else if (a === 'tg_stable') { TUNE.MOVEMENT.stableCam = !TUNE.MOVEMENT.stableCam; this.log('稳定跑酷镜头 ' + (TUNE.MOVEMENT.stableCam ? 'ON' : 'off')); }
-      else if (a.indexOf('ev_') === 0) this.log(MAPEV.force(a.slice(3)));
+      else if (a.indexOf('ev_') === 0) this.log(MAPEV.force());
       else if (a.indexOf('q_') === 0) { EVO.forceQuality(a.slice(2)); this.log('下一次品质强制为 ' + TUNE.RARITY.name[a.slice(2)]); }
       else if (a === 'evo_now') { EVO.progress = EVO.need + 1; EVO.draw.lastChoiceTime = -999; this.log('已把进化条打满'); }
       else if (a === 'grant_base') {
@@ -2184,8 +2185,7 @@ const DebugPanel = {
         ['刷攀爬怪', 'sp_climber'], ['刷跳跃怪', 'sp_leaper'], ['刷远程怪', 'sp_roofcaster'],
         ['坠落伤害', 'tg_fall'], ['关墙跑', 'tg_wallrun'], ['关空冲', 'tg_dash'], ['关翻越', 'tg_vault'],
         ['稳定镜头', 'tg_stable'],
-        ['事件:吊车', 'ev_crane'], ['事件:广告牌', 'ev_billboard'], ['事件:巴士', 'ev_bus'],
-        ['事件:气体', 'ev_gas'], ['事件:外墙', 'ev_facade'], ['事件:电力', 'ev_power'],
+        ['热点迁移', 'ev_next'],
         ['下次普通', 'q_common'], ['下次稀有', 'q_rare'], ['下次史诗', 'q_epic'], ['下次传奇', 'q_legend'],
         ['立刻进化', 'evo_now'], ['授予全部基础', 'grant_base'], ['授予连接+融合', 'grant_fuse'],
         ['融合精英', 'sp_fusion']

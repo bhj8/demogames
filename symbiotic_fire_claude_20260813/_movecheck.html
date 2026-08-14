@@ -316,34 +316,55 @@ addEventListener('load', () => setTimeout(() => {
   say('  分层经验倍率 街 ' + L.xpStreet + ' / 中 ' + L.xpMid + ' / 顶 ' + L.xpRoof);
   ok(L.xpStreet > L.xpMid && L.xpMid > L.xpRoof, '分层经验没有形成风险收益差');
 
-  /* ---------------- 12 分钟整局不回归 ---------------- */
+  /* ---------------- M4：热点迁移 ---------------- */
   say('');
-  say('<b>[回归] 新机动下跑完整局</b>');
-  /* 上一段把 G.time 推到 240s 用来测中段刷怪压力，这里必须归零，
-     否则「跑满 12 分钟」的判据会被那 240 秒喂饱，测了个寂寞。 */
-  place(0, 30);
-  G.time = 0; G.tlIndex = 0; G.stats.kills = 0;
-  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
-  G.enemies.compact();
-  G.phase = 'play';
-  let t = 0, picks = 0;
-  for (let i = 0; i < 60 * 60 * 12 + 900; i++) {
-    G.player.gun.held = true;
-    G.player.yaw += 0.55 * 0.0167;
-    t += 16.7; frame(t);
-    let gd = 0;
-    while (G.phase === 'choose' && gd++ < 40) {
-      const c = document.querySelector('#cards .card');
-      if (!c || !c.onclick) break;
-      c.onclick(); picks++;
+  say('<b>[M4] 热点迁移：压力换地方，但不制造空窗</b>');
+  (function () {
+    place(0, 30);
+    G.time = 0; G.tlIndex = 0;
+    G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+    G.enemies.compact();
+    MAPEV.init();
+    G.phase = 'play';
+    let minNear = 1e9, samples = 0, emptyWindows = 0;
+    let t = 0;
+    for (let i = 0; i < 60 * 60 * 12 + 900; i++) {
+      t += 16.7; frame(t);
+      if (G.phase === 'choose') {
+        const c = document.querySelector('#cards .card');
+        if (c && c.onclick) c.onclick();
+      }
+      /* 每 2 秒采样一次：玩家 45m 内有几只怪 —— 迁移不该让这个数掉到 0 */
+      if (i % 120 === 0 && G.time > 30) {
+        let near = 0;
+        G.enemies.live.forEach(e => {
+          if (e.dead || e._dead) return;
+          if (Math.hypot(e.pos.x - G.player.pos.x, e.pos.z - G.player.pos.z) < 45) near++;
+        });
+        samples++; minNear = Math.min(minNear, near);
+        if (near === 0) emptyWindows++;
+      }
+      G.player.gun.held = true;
+      G.player.yaw += 0.55 * 0.0167;
+      if (G.over) break;
     }
-    if (G.over) break;
-  }
-  say('  ' + G.time.toFixed(0) + 's 选择' + picks + '次 击杀' + G.stats.kills +
+    const migrations = MAPEV.log.length;
+    say('  整局迁移 ' + migrations + ' 次：' +
+        MAPEV.log.map(l => l.t + 's→' + MAPEV.zoneName(l.zone)).join('  '));
+    ok(migrations >= 3, '热点迁移次数太少（' + migrations + '），压力等于没换过地方');
+    ok(new Set(MAPEV.log.map(l => l.zone)).size >= 2, '热点一直在同一个单元里打转');
+    say('  45m 内敌人数：最少 ' + minNear + '，空窗采样 ' + emptyWindows + '/' + samples);
+    ok(emptyWindows === 0, '出现了「附近一只怪都没有」的空窗 ' + emptyWindows + ' 次');
+  })();
+
+  /* 这一段本身就是一整局，所以整局回归直接在这里判，不再跑第二遍 */
+  say('');
+  say('<b>[回归] 新机动 + 热点迁移下跑完整局</b>');
+  say('  ' + G.time.toFixed(0) + 's 击杀' + G.stats.kills +
       ' 逻辑异常' + (G._loopErrCount || 0) + ' 运行时异常' + window.__err.length);
   ok((G._loopErrCount || 0) === 0, '主循环出现逻辑异常');
   ok(window.__err.length === 0, '出现运行时异常：' + window.__err.join(';'));
-  ok(G.time >= 700, '没跑满 12 分钟');
+  ok(G.time >= 700, '没跑满 12 分钟（' + G.time.toFixed(0) + 's）');
 
   say('');
   say(FAIL === 0 ? '<b>ALLPASS</b>（' + WARN + ' 条提醒）' : '<i>FAIL ' + FAIL + '</i>（' + WARN + ' 条提醒）');

@@ -484,7 +484,19 @@ TIMELINE.sort((a, b) => a.t - b.t);
    只保留【真的会被关掉】的那一个。todo3 的六个开关、todo4 的三个地图入口、
    todo5 的新旧 Build 开关都已删除：分支不是安全网，只是双份维护成本。 */
 TUNE.FEATURES = {
-  dynamicMapEvents: false    // 地图结构事件：静态地图验收通过前保持关闭（todo4 §8）
+  hotspotMigration: true     // 热点迁移（TODO.md M4，取代 todo3 的动态几何事件）
+};
+
+/* --- TODO.md M4：热点迁移 ---
+   地图几何不动，动的是「哪里最危险、哪里最值钱」。
+   迁移必须渐变：硬切会让玩家在切换那一帧发现「这里突然没人了」。 */
+TUNE.HOTSPOT = {
+  firstAt: 75,               // 首个热点持续多久后开始迁移
+  interval: 105,             // 之后的迁移周期
+  telegraph: 8,              // 预告时长：先告诉玩家去哪，再真的迁
+  fade: 6,                   // 旧热点降温 / 新热点升温的渐变时长
+  spawnBias: 0.55,           // 热点中心的刷怪权重加成
+  xpBonus: 1.35              // 热点内的经验倍率 —— 留在危险的地方要有回报
 };
 
 /* --- 玩家机动 §2.3 ---
