@@ -633,7 +633,10 @@ TUNE.MAP_EVENT = {
 
 /* --- 统一进化节奏 §4.2 --- */
 TUNE.EVOLUTION = {
-  targetCount: 15,           // 目标 15 次，允许 14～16
+  /* todo10 §6.1：一局 16~20 次选择。原来是 15 —— 那是 todo5 的节奏，
+     那时一次选择可能给 1~4 级（品质随机），现在固定 1~2 级，
+     总级数要靠次数补回来。 */
+  targetCount: 18,
   firstAt: 25,               // 第一次预计 0:22～0:30
   firstWindow: [22, 30],
   intervalMin: 32,           // 常态间隔 32～50 秒（从上次选择关闭后计算）
@@ -677,8 +680,10 @@ TUNE.BUILD = {
   /* --- §6.1 一局结构 --- */
   targetCount: 18,           // 16~20 次选择，由经验曲线动态产生
   cutoff: 630,               // 最后 90 秒停止升级（12 分钟局）
-  moleculeSoftCap: 4,        // 拿到第 4 个分子后新分子权重下降，但不锁死
-  moleculeSoftWeight: 0.35,
+  /* 拿到第 3 个分子后，新分子的权重下降但不锁死 —— 幸运局仍能继续扩展。
+     实测十局平均 4.1 个，比 Bao 要的「平均 3 个」高，所以门槛从 4 降到 3。 */
+  moleculeSoftCap: 3,
+  moleculeSoftWeight: 0.22,
 
   /* --- 保底（Bao：只托底不封顶，规则可以多一点）--- */
   firstDrawAllMolecules: true,   // 第 1 次固定三张不同分子
