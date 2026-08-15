@@ -596,10 +596,21 @@ function resolveBulletHit(b, e, point, weak) {
   const killed = e.dead && hpBefore > 0;
 
   G.stats.hits++;
+  /* §8.3：命中反馈也要走同一份视觉配额。
+     多发 8 颗 × 穿透 3 次 = 单枪 24 次直击，每一次都建一个伤害数字 DOM、
+     一次火花、一次音效 —— 伤害那边只是几次乘法（实测 0.15ms/帧），
+     真正压垮帧率的是这些没有上限的表现。触顶时只合并表现，伤害照常结算。 */
+  /* 统计与表现分开：触顶只砍表现，统计永远算满 */
   if (weak && dealt > 0) {
-    /* 弱点世界反馈：金白粒子爆发，而不是只换个浅黄色 */
     G.stats.weakHits = (G.stats.weakHits || 0) + 1;
     if (killed) G.stats.weakKills = (G.stats.weakKills || 0) + 1;
+  }
+  const showFx = ATK.allowFx();
+  if (!showFx) {
+    /* 至少让击杀仍然有确认 —— 玩家可以看不见每一颗弹丸，但不能不知道死了 */
+    if (killed) G.ui.hitMark('kill');
+  } else if (weak && dealt > 0) {
+    /* 弱点世界反馈：金白粒子爆发，而不是只换个浅黄色 */
     R.spark(point, b.dir, 0xfff4c0);
     R.spark(point, b.dir, 0xffd24a);
     R.puff(point, 0.12, 1.05, 0xfff0b0, 0.2);
