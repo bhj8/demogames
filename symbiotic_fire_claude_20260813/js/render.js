@@ -306,8 +306,11 @@ const R = {
        而「重弹更粗」是 §11 要求能一眼分辨的信息，必须有真实粗细。
        圆柱建成 Z 轴朝向，实例矩阵直接按飞行方向拉伸。 */
     /* 头粗尾细：光带才有方向感，看得出是"射出去"而不是一根横着的棍。
-       rotateX(+90°) 之后 +Y 端指向 +Z，也就是飞行方向的【头部】。 */
-    const bGeo = new T.CylinderGeometry(1, 0.28, 1, 6, 1, true);
+       rotateX(+90°) 之后 +Y 端指向 +Z，也就是飞行方向的【头部】。
+       锥度 1:0.10 不是审美挑的：半径按【头端】到镜头的距离算，
+       而尾端在挂枪口那一段离镜头近得多（1m 对 10m），
+       不把尾端收细的话，它在屏幕上会比头还粗。 */
+    const bGeo = new T.CylinderGeometry(1, 0.10, 1, 6, 1, true);
     bGeo.rotateX(Math.PI / 2);                       // Y 轴 → Z 轴（飞行方向）
     this.bulletMesh = new T.InstancedMesh(bGeo, new T.MeshBasicMaterial({
       color: 0xffffff, transparent: true, opacity: 1,

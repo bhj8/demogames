@@ -2638,6 +2638,13 @@ const _tail = new THREE.Vector3();
 function syncInstances() {
   let a = 0;
   const G_ = TUNE.GUN, list = G.bullets.live;
+  /* 把「头端在屏幕上占几像素」换算成世界半径：
+     距离 d 处、半径 r 的东西，屏幕直径 = r × H / (d × tan(vfov/2))。
+     反解出 r = px × d × tan(vfov/2) / H。每帧算一次系数即可 ——
+     FOV 会随冲刺和开镜变，所以不能在启动时算死。 */
+  const camY = R.camera.position;
+  const kPx = G_.streakPx * Math.tan(R.camera.fov * Math.PI / 360)
+    / Math.max(1, R.renderer.domElement.clientHeight);
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
     if (p._dead || a >= 320) continue;
@@ -2658,7 +2665,10 @@ function syncInstances() {
     const len = _ip.length();
     if (len < 0.05) continue;
     _ip.multiplyScalar(1 / len);                     // 光带自身的朝向
-    _is.set(p.scale * G_.streakRadius, p.scale * G_.streakRadius, len);
+    /* 半径按【头端】到镜头的距离反算，所以不管子弹飞多远，
+       屏幕上都是同样宽的一道光。重弹的 scale 直接乘上去。 */
+    const r = kPx * p.pos.distanceTo(camY) * p.scale;
+    _is.set(r, r, len);
     _iq.setFromUnitVectors(_iz, _ip);
     /* 圆柱以中心为原点，所以位置取头尾中点 */
     _ip.copy(_tail).lerp(p.pos, 0.5);
