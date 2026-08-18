@@ -810,13 +810,11 @@ function dropXp(pos, value) {
      也就是玩家打死的怪白打了。渲染那边只画 640 颗，
      但没被画出来的一样能捡到，所以这里放宽不影响帧率。 */
   if (G.xp.length > TUNE.XP.maxOrbs) { G.xp.shift(); }
-  /* M3：地面经验收益最高，让玩家有理由主动回到危险区域（todo4 §6 / todo6 §6）。
-     不是「屋顶不掉经验」——那会变成惩罚；是屋顶打折，让登高成为取舍。 */
-  if (CITY.enabled) {
-    const L = TUNE.LAYER_PLAY, lay = CITY.layerOf(pos.y);
-    value *= lay === 'roof' ? L.xpRoof : lay === 'mid' ? L.xpMid : L.xpStreet;
-    value *= MAPEV.xpBonus(pos.x, pos.z);          // M4：热点内收益更高
-  }
+  /* 分层经验倍率（地面 ×1.0 / 中层 ×0.78 / 屋顶 ×0.62）已按 Bao 的要求删掉。
+     它原本想让"登高"变成一个取舍，实际效果是玩家在屋顶打得越爽收益越低，
+     而这件事在 HUD 上完全看不见 —— 一个看不见的惩罚不是取舍，是暗扣。
+     地图热点的加成保留：那个有明确的视觉标记。 */
+  if (CITY.enabled) value *= MAPEV.xpBonus(pos.x, pos.z);
   /* §6.1 经验球记录所在高度，且绝不能停在墙面、空中或封闭模型内部 */
   let y = 0.42, base = 0;
   if (CITY.enabled) {
@@ -2462,9 +2460,8 @@ const DebugPanel = {
       const d = EVO.draw, ld = EVO._lastDraw || {};
       $('dbgevo').innerHTML =
         '选择 <b>' + d.evolutionIndex + '</b>/目标' + TUNE.BUILD.targetCount +
-        ' 距上次 <b>' + (G.time - d.lastChoiceTime).toFixed(1) + 's</b>(下限' + TUNE.EVOLUTION.hardFloor + ')' +
+        ' 距上次 <b>' + (G.time - d.lastChoiceTime).toFixed(1) + 's</b>' +
         ' 进度 <b>' + EVO.progress.toFixed(0) + '/' + EVO.need.toFixed(0) + '</b>' +
-        ' pending <b>' + (d.pending ? (d.pending.open ? '已开' : '排队:' + d.deferReason) : '-') + '</b>' +
         '<br>构筑 <b>' + (BUILD.hudText() || '空') + '</b>' +
         '<br>状态 <b>' + (BUILD.stateText() || '-') + '</b>' +
         ' 下一抽修正 <b>' + (typeof MAPBUILD !== 'undefined' ? MAPBUILD.statusText() : '-') + '</b>' +

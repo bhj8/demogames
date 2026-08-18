@@ -374,10 +374,10 @@ const demon = (id, name, gain, cost, lineFn) => card({
   gain: gain, cost: cost, line: lineFn
 });
 
-demon('autoaim', '自动瞄准', '子弹自动追踪准星最近的敌人', '不再能爆头，射速降低',
+demon('autoaim', '自动瞄准', '子弹自动追踪准星最近的敌人', '不再能爆头',
   function () {
     return ['子弹自行修正方向，锁定准星最近的目标',
-            '射速 ' + pct(TUNE.DEMON.autoaim.rate) + '，所有命中都按身体结算'];
+            '所有命中都按身体结算，弱点倍率完全失效'];
   });
 
 demon('drum', '大弹鼓', '弹匣容量 +500%', '换弹时间 +500%',
@@ -511,8 +511,7 @@ const BUILD = {
        实际间隔由 fireInterval + ocRamp 在开火时算。 */
     d.fireInterval = TUNE.GUN.fireInterval
       / Math.pow(1 + TUNE.WUP.rate.perLv, this.level('rate'))
-      / hea.rate
-      / (this.has('autoaim') ? TUNE.DEMON.autoaim.rate : 1);
+      / hea.rate;
     d.ocPeak = ovc.peak;
     d.ocRampTime = ovc.ramp;
 

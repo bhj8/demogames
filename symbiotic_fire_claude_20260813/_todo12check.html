@@ -270,12 +270,12 @@ function audit() {
     BUILD.ctx.shield = 0;
   }
 
-  /* ---- 自动瞄准：射速 −25%，不能爆头 ---- */
+  /* ---- 自动瞄准：只剩「不能爆头」这一个代价（Bao 去掉了减射速） ---- */
   {
     const d = derived(['autoaim']);
     say('  自动瞄准　开火间隔 ' + n1(b.fi * 1000) + ' → ' + n1(d.fireInterval * 1000) + 'ms　'
         + '追踪 ' + d.homing + '　禁爆头 ' + d.noWeak);
-    ok(Math.abs(d.fireInterval / b.fi - 1 / 0.75) < 0.02, '射速不是 −25%');
+    ok(Math.abs(d.fireInterval / b.fi - 1) < 0.001, '射速被改动了 —— 它应该和不拿这张卡完全一样');
     ok(d.homing === true && d.noWeak === true, '追踪或禁爆头没生效');
   }
 

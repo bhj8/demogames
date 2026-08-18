@@ -22,8 +22,7 @@ const EVO = {
       evolutionIndex: 0,          // 已完成的进化次数
       lastChoiceTime: 0,          // 上一次选择【关闭】的时刻
       pending: null,              // {cards, since, reason}
-      mapTagBias: null,
-      deferT: 0, deferReason: '-'
+      mapTagBias: null
     };
     this.anchor = 0;
     this.progress = 0; this.overflow = 0;
@@ -95,69 +94,31 @@ const EVO = {
     return true;
   },
 
-  /* ------------------------------------------------------- 安全窗口 §4.7 */
-  /* 统一事件队列里谁延迟谁：Boss 入场、空投争夺、地图结构变化、
-     玩家正在攀爬关键边缘、以及高优先级承诺攻击期间，选择可以延后。 */
-  safeWindow() {
-    if (G.bossAlive && G.time - (G.bossSpawnAt || -999) < TUNE.AIRDROP.bossGrace) return 'boss入场';
-    if (G.airdrop && G.airdrop.state === 'falling') return '空投坠落';
-    if (typeof MAPEV !== 'undefined' && MAPEV.executing) return '地图事件';
-    if (MOVE.st) {
-      const s = MOVE.pose.state;
-      if (s === 'mantle' || s === 'vault' || s === 'wallclimb' || s === 'wallrun' || s === 'zip') return '攀爬中';
-      if (!MOVE.pose.grounded) return '滞空中';
-    }
-    /* 已经抬手的近战 / 扑击：让玩家先处理掉这一下 */
-    const list = G.enemies.live;
-    for (let i = 0; i < list.length; i++) {
-      const e = list[i];
-      if (e._dead || e.dead) continue;
-      if (e.state !== 'melee' && e.state !== 'leapwind' && e.state !== 'windup') continue;
-      if (Math.hypot(e.pos.x - G.player.pos.x, e.pos.z - G.player.pos.z) < 6) return '承诺攻击';
-    }
-    return null;
-  },
-
   /* ------------------------------------------------------------ 主循环 */
+  /* Bao：「经验满了就给升，无论什么时候。」
+     所以这里【一个等待条件都没有】—— 进度够了就当帧开。
+     历史上这里堆过四道闸，全部删掉，各自的死因记在下面，
+     免得以后有人凭"手感"把它们再加回来：
+
+       安全窗口   攀爬 / 滞空 / 空投坠落 / Boss 入场 / 已抬手的近战时延后，
+                  最多压 12 秒。它压的是【已经赚到手的】进化。
+       hardFloor  两次选择之间至少 20 秒。
+       firstWindow 第一次不得早于 22 秒。
+       cutoff     10:30 之后不再产生新选择 —— 那等于最后 90 秒的经验白打。
+
+     溢出仍然进入下一段进度，但不再被"绝不连弹"挡住：
+     一次攒够两级，就连着弹两次。这是 Bao 要的"满了就给"。 */
   update(dt) {
     if (G.phase !== 'play') return;
-    const E = TUNE.EVOLUTION, d = this.draw;
-
+    const d = this.draw;
     this.need = this.computeNeed();
-
-    /* §4.2 10:30 后不再生成新选择，经验继续计入分数 */
-    const past = G.time >= E.cutoff;
-
-    /* 导演主动安排最后一次：10:30 前必须把它排出来 */
-    const wantFinal = !past && G.time >= E.lastWindow[0]
-      && d.evolutionIndex < E.targetCount - 1 && !d.pending;
-
-    if (!d.pending && !past) {
-      const sinceClose = G.time - d.lastChoiceTime;
-      /* 第一次不得早于 firstWindow 的下限，否则强 build 会在十几秒就弹出来 */
-      const firstOk = d.evolutionIndex > 0 || G.time >= E.firstWindow[0];
-      const ready = this.progress >= this.need && firstOk;
-      if ((ready || wantFinal) && sinceClose >= E.hardFloor) {
-        this._queue(wantFinal && !ready ? 'final' : 'progress');
-      }
-    }
-
-    /* 排队中的进化：等一个安全窗口，但延迟不吞掉已经赚到的进化 */
-    if (d.pending && !d.pending.open) {
-      const why = this.safeWindow();
-      if (!why || d.deferT >= E.safeDelayMax) {
-        d.deferReason = why ? why + '(超时强出)' : '-';
-        this._open();
-      } else {
-        d.deferT += dt; d.deferReason = why;
-      }
-    }
+    if (d.pending || this.progress < this.need) return;
+    this._queue('progress');
+    this._open();
   },
 
   _queue(reason) {
-    const d = this.draw;
-    d.pending = { reason: reason, open: false };
-    d.deferT = 0;
+    this.draw.pending = { reason: reason, open: false };
   },
 
   /* --------------------------------------------------- §7.1 步骤 2：品质 */
@@ -178,7 +139,7 @@ const EVO = {
                    mapMark: MAPBUILD.markText ? MAPBUILD.markText() : '' };
     this.log.push({
       i: d.evolutionIndex + 1, t: Math.round(G.time),
-      defer: d.deferReason, cards: cards.map(c => c.id)
+      cards: cards.map(c => c.id)
     });
     G.phase = 'choose';
     Audio2.mutation();
@@ -198,7 +159,6 @@ const EVO = {
     d.evolutionIndex++;
     d.lastChoiceTime = G.time;
     d.pending = null;
-    d.deferT = 0; d.deferReason = '-';
 
     /* 溢出进入下一段进化进度，不连弹第二张界面（§4.2 / §6.1） */
     this.overflow = Math.max(0, this.progress - this.need);
