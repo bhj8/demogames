@@ -478,12 +478,16 @@ const CITY = {
   /* 附近的可用装置（§2.2 近距离自动吸附，全局统一） */
   nearestDevice(pos, kind, maxDist) {
     let best = null, bd = maxDist * maxDist;
+    const near = e => {
+      const dx = pos.x - e.x, dy = pos.y - e.y, dz = pos.z - e.z;
+      return dx * dx + dy * dy * 0.5 + dz * dz;
+    };
     for (let i = 0; i < this.devices.length; i++) {
       const d = this.devices[i];
       if (d.kind !== kind) continue;
-      const p = kind === 'zip' ? d.a : d;
-      const dx = pos.x - p.x, dy = pos.y - p.y, dz = pos.z - p.z;
-      const d2 = dx * dx + dy * dy * 0.5 + dz * dz;
+      /* 滑索两端都能上（todo11 §2 要求双向）—— 只认 a 端的话，
+         站在另一头怎么都吸不上，而两端都立了柱子，玩家当然会去试。 */
+      const d2 = kind === 'zip' ? Math.min(near(d.a), near(d.b)) : near(d);
       if (d2 < bd) { bd = d2; best = d; }
     }
     return best;

@@ -2408,7 +2408,9 @@ function boot() {
     $('menu').classList.remove('on');
     G.phase = 'play';
     R.renderer.domElement.requestPointerLock();
-    last = performance.now();
+    /* 不用 performance.now() 去猜第一帧的时间原点：rAF 的时间戳和它不同源。
+       置 0 让下面那句 Math.max(0, ...) 把第一帧的 dt 直接算成 0。 */
+    last = 0;
     requestAnimationFrame(frame);
   };
   $('seedlabel').textContent = '种子 ' + BOOT.seed;
@@ -2432,7 +2434,14 @@ function boot() {
 let last = 0;
 function frame(now) {
   requestAnimationFrame(frame);
-  const raw = Math.min(0.05, (now - last) / 1000);
+  /* dt 必须钳成【非负】。原来只写了上界 Math.min(0.05, ...)，下界没管 ——
+     点「开始」时代码里 last = performance.now()，而 rAF 回调拿到的 now 是
+     这一帧【开始】的时间戳，可能早于那次点击，于是第一帧的 dt 是负的。
+     一帧负 dt 会让整个世界倒着跑：G.time 变成 -0.01；所有 `x -= dt` 的
+     计时器反向增长 —— 包括 st.jumpBuf，于是没人按空格也会凭空冒出一次
+     缓冲跳跃；位置也跟着反向积分，标签页被节流过的话能直接把玩家甩出
+     地图、插进几何体里。这就是「点开始之后人在地图外面、半个身子在地里」。 */
+  const raw = Math.max(0, Math.min(0.05, (now - last) / 1000));
   last = now;
 
   const active = G.phase === 'play' && !G.paused && !G.over;

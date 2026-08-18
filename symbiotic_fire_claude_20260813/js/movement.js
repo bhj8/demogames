@@ -419,12 +419,21 @@ const MOVE = {
         return;
       }
     }
-    /* 滑索：靠近起点自动吸附 */
+    /* 滑索：靠近任一端自动吸附，朝另一端滑（§2 要求双向可用） */
     if (st.zipCd > 0) return;
     const zip = CITY.nearestDevice(p.pos, 'zip', M.zipSnapDist);
     if (zip) {
-      st.zip = { a: zip.a, b: zip.b, k: 0 };
+      /* 从近的那一端上索。原来只认 a 端，站在终点那头怎么都上不去。 */
+      const da = Math.hypot(p.pos.x - zip.a.x, p.pos.y - zip.a.y, p.pos.z - zip.a.z);
+      const db = Math.hypot(p.pos.x - zip.b.x, p.pos.y - zip.b.y, p.pos.z - zip.b.z);
+      const from = da <= db ? zip.a : zip.b, to = da <= db ? zip.b : zip.a;
+      st.zip = { a: from, b: to, k: 0 };
       st.state = 'zip'; st.grounded = false;
+      /* 玩家【是跳上来的】—— 上一次跳跃的输入缓冲还留着，而滑行中
+         「按跳 = 主动脱离」，不清掉的话第 1 帧就被甩下去。
+         实测：走上去能滑满全程 177 帧，跳上去只滑 1 帧、离终点还有 52m。
+         所以挂索时清空缓冲，并且要求【重新按一次】才允许脱离。 */
+      st.jumpBuf = 0;
       this.stats.zip++;
       G.bus.emit('zipline', {});
     }
