@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>html,body{margin:0;background:#0d1117;color:#dbe7f0;font:12px/1.55 monospace}
+#out{position:fixed;inset:0;padding:12px;white-space:pre-wrap;overflow:auto;z-index:9;background:#0d1117}
+#gl{position:fixed;inset:0}u{color:#ffb020}b{color:#7ef0a8}i{color:#ff6a7a;font-style:normal}</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud" style="display:none">
+  <div id="top"><div id="clock"></div><div id="xpwrap"><div id="xpfill"></div></div>
+  <div id="lvlrow"><b id="lvlnum"></b></div></div>
+  <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="toast"></div><div id="hint"></div><div id="prompt"></div><div id="buffbar"></div>
+  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
+  <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
+  <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
+</div>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="hitmark"><i></i><i></i></div>
+<div id="dmgnums"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
+<div id="dmgdirs"></div><div id="threats"></div><div id="shieldvig"></div><div id="shieldflash"></div>
+<div id="floattext"></div><svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="nextdraw"></div><div id="cards"></div>
+<div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
+<div id="pause"><button id="resume"></button></div><div id="buildgraph"></div><div id="results"></div>
+<div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
+<div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>
+window.__err = [];
+window.onerror = (m, s, l) => { window.__err.push(m + ' @' + (s || '').split('/').pop() + ':' + l); };
+</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/city-scale.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/attack.js"></script>
+<script src="js/build.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   todo10 阶段 D 验收：自然反应 Build V3
+
+   §10 阶段 D 明确写了「不再跑 28 对组合完成率，改为验证统一规律」。
+   所以这里量的是三件事：
+
+     §9  强度重算 —— 每张卡在它的正确场景里是不是真的更强
+     §11.2 自然组合 —— 多发的每颗弹是不是都会爆、都会穿、都会弹
+     §11.3 弹药与 DPS —— 尤其是 §0.1 那个「齐射 465 / 基线 1140」的病灶
+
+   多种子 12 分钟稳定性单独放在 _stability.html —— 十局各跑满一整局要
+   二十分钟以上，混在这里会让这套一秒出结果的验收变得没人愿意跑。
+
+   四个灰盒靶场（§10 阶段 D 第一条）：
+     近距密集 / 长线尸群 / 分散尸群 / 单体精英。
+   同一张卡在不同靶场的表现【应该】差很多 —— 那正是「大选择」的意义。
+   ========================================================================== */
+const L = [];
+let FAIL = 0, WARN = 0;
+const say = s => L.push(s);
+const ok = (cond, msg) => { if (!cond) { FAIL++; say('  <i>FAIL</i> ' + msg); } return cond; };
+const warn = (cond, msg) => { if (!cond) { WARN++; say('  <u>WARN</u> ' + msg); } return cond; };
+const n1 = v => (Math.round(v * 10) / 10).toString();
+const pc = v => (v >= 0 ? '+' : '') + Math.round(v * 100) + '%';
+
+addEventListener('load', () => setTimeout(() => {
+  try { main(); } catch (e) { done(['THROW:' + e.message + ' | ' + (e.stack || '').split('\n')[1]]); }
+}, 300));
+
+function done(lines) {
+  document.getElementById('out').innerHTML = lines.join('\n');
+  document.title = (FAIL ? 'FAILED(' + FAIL + ')' : 'ALLPASS') + ' warn=' + WARN +
+    ' err=' + window.__err.length;
+}
+
+/* --------------------------------------------------------------- 四个靶场 */
+/* 玩家站在 (0,0,30) 朝 -Z。靶子必须放在更小的 z 上 ——
+   摆错 180° 会得到「一枪不中」的假数据，todo5 的测试上当过一次。 */
+const RANGES = {
+  dense: { name: '近距密集', desc: '5×5 阵列，最近 4m', build(add) {
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++) add((c - 2) * 1.8, 26 - r * 2.2);
+  } },
+  line: { name: '长线尸群', desc: '一条 24m 纵队，正对枪线', build(add) {
+    for (let i = 0; i < 10; i++) add(0, 24 - i * 2.6);
+  } },
+  spread: { name: '分散尸群', desc: '9 只，彼此间隔 9m 以上', build(add) {
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) add((c - 1) * 10, 20 - r * 10);
+  } },
+  solo: { name: '单体精英', desc: '一只，18m 外', build(add) { add(0, 12); } }
+};
+
+function buildRange(kind) {
+  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+  G.enemies.compact();
+  G.bullets.live.slice().forEach(b => G.bullets.release(b));
+  G.bullets.compact();
+  G.hazards.length = 0; G.pendings.length = 0;
+
+  const p = G.player;
+  p.pos.set(0, 0, 30); p.vel.set(0, 0, 0); p.yaw = 0; p.pitch = 0;
+  p.hp = p.maxHp = 99999;
+  R.camera.position.set(0, 1.68, 30);
+  R.camera.rotation.set(0, 0, 0);
+  R.camera.updateWorldMatrix(true, false);
+
+  /* 不死靶：量机制，不量击杀。击杀装填要单独测，所以它有自己的靶场。 */
+  const add = (x, z) => {
+    const e = G.enemies.get();
+    configureEnemy(e, ENEMIES.grunt, { x: x, y: 0, z: z }, { grace: 0 });
+    e.hp = e.maxHp = 1e7;
+    e.speed = 0; e.vel.set(0, 0, 0);
+    e.spawnGrace = 999;
+  };
+  RANGES[kind].build(add);
+  G.hash.clear();
+  G.enemies.live.forEach(e => G.hash.insert(e, e.pos.x, e.pos.z));
+}
+
+/* --------------------------------------------------------------- 一次测量 */
+/* §9.1 要求同时量：瞬时 DPS、10 秒持续 DPS、一弹匣总伤害、打空时间、
+   换弹时间占比、每秒弹药消耗、单体伤害、群体有效伤害、弱点收益。
+   全部来自游戏自己的统计，不是测试脚本另算一遍。 */
+const DT = 1 / 60;
+function measure(cards, opts) {
+  opts = opts || {};
+  const SEC = opts.sec || 10;
+  RNG.init(20260814);
+  BUILD.init(); ATK.init();
+  G.stats.dmgDealt = 0; G.stats.hits = 0; G.stats.shots = 0;
+  (cards || []).forEach(id => BUILD.take(id));
+  recompute();
+  buildRange(opts.range || 'dense');
+
+  const p = G.player, g = p.gun;
+  g.ammo = G.derived.magazine; g.reloadT = 0; g.fireT = 0; g.held = true;
+  DebugPanel.noSpread = true;
+  G.phase = 'play';
+
+  let t = 0, shots = 0, ammoUsed = 0, reloadT = 0, fireT = 0;
+  let firstMagDmg = 0, firstMagT = 0, magDone = false;
+  let burstDmg = 0, burstT = 0;
+
+  while (t < SEC) {
+    t += DT;
+    BUILD.tick(DT, p);
+    ATK.tick(DT);
+    /* 站桩要能攒起来：玩家在靶场是不动的，lastPos 每帧同步即可 */
+    if (opts.moving) { p.pos.x += 4.0 * DT; }   // 真的在跑，不是抖一下
+
+    if (g.reloadT > 0) {
+      g.reloadT -= DT; reloadT += DT;
+      if (g.reloadT <= 0) { g.reloadT = 0; g.ammo = G.derived.magazine; }
+    } else {
+      fireT += DT;
+      g.fireT -= DT;
+      if (!G.derived.infiniteMag && g.ammo <= 0) {
+        g.reloadT = G.derived.reloadTime;
+        if (!magDone) { magDone = true; firstMagT = t; firstMagDmg = G.stats.dmgDealt; }
+        BUILD.onReloadStart();
+      } else if (g.fireT <= 0) {
+        const before = g.ammo;
+        fire(); shots++; ammoUsed += Math.max(0, before - g.ammo);
+        g.fireT = effectiveFireInterval();
+      }
+    }
+    G.hash.clear();
+    G.enemies.live.forEach(e => { if (!e.dead && !e._dead) G.hash.insert(e, e.pos.x, e.pos.z); });
+    updateBullets(DT);
+    G.bullets.compact();
+    if (t <= 1.0) { burstDmg = G.stats.dmgDealt; burstT = t; }
+  }
+  g.held = false;
+  if (!magDone) { firstMagT = t; firstMagDmg = G.stats.dmgDealt; }
+
+  const st = BUILD.stats;
+  const cycle = Math.max(0.001, fireT + reloadT);
+  return {
+    dmg: Math.round(G.stats.dmgDealt),
+    dps: Math.round(G.stats.dmgDealt / SEC),
+    burst: Math.round(burstDmg / Math.max(0.001, burstT)),
+    magDmg: Math.round(firstMagDmg), magT: n1(firstMagT),
+    shots: shots, ammo: ammoUsed, ammoPerSec: n1(ammoUsed / SEC),
+    reloadShare: Math.round(reloadT / cycle * 100),
+    fireShare: Math.round(fireT / cycle * 100),
+    hits: G.stats.hits,
+    direct: Math.round(st.direct), blast: Math.round(st.blast), bounce: Math.round(st.bounce),
+    saved: st.ammoSaved,
+    rejected: ATK.budget.rejected,
+    cost: G.derived.ammoPerShot, pellets: G.derived.pellets
+  };
+}
+
+const brief = r => 'DPS ' + r.dps + '  瞬时 ' + r.burst + '  弹匣 ' + r.magDmg + '/' + r.magT + 's' +
+  '  开火 ' + r.fireShare + '%  耗弹 ' + r.cost + '/枪  命中 ' + r.hits;
+
+/* ========================================================================== */
+/*  todo12 验收：恶魔卡 + 局部优化                                             */
+/*                                                                            */
+/*  这个文件只回答一件事：todo12 里写下的每一条数值承诺，代码里是不是真的       */
+/*  兑现了。凡是「卡面写 ×3」的，这里就要量出 ×3 —— 不看实现，只看结果。      */
+/* ========================================================================== */
+function main() {
+  if (window.__err.length) { done(['BOOT_ERR:' + window.__err.join(';')]); return; }
+  window.requestAnimationFrame = () => 0;
+  G.paused = false;
+  try { audit(); } catch (e) { done(['THROW:' + e.message + ' | ' + (e.stack || '').split('\n')[1]]); return; }
+  done(L);
+}
+
+/* 只折算，不开枪 —— 量 derive 出来的那张表 */
+function derived(cards) {
+  RNG.init(20260815);
+  BUILD.init();
+  (cards || []).forEach(id => BUILD.take(id));
+  recompute();
+  return G.derived;
+}
+
+function audit() {
+  say('<b>todo12 §2 恶魔卡</b>');
+
+  const base = derived([]);
+  const b = { mag: base.magazine, reload: base.reloadTime, dmg: base.damage, fi: base.fireInterval };
+
+  /* ---- 大弹鼓：弹匣 +500%，换弹 +200% ---- */
+  {
+    const d = derived(['drum']);
+    say('  大弹鼓　弹匣 ' + b.mag + ' → ' + d.magazine + '　换弹 ' + n1(b.reload) + ' → ' + n1(d.reloadTime) + 's');
+    ok(Math.abs(d.magazine / b.mag - 6) < 0.06, '弹匣不是 ×6（+500%）');
+    ok(Math.abs(d.reloadTime / b.reload - 3) < 0.02, '换弹不是 ×3（+200%）');
+  }
+
+  /* ---- 独弹：单发 ×16，弹匣永远 1 发 ---- */
+  {
+    const d = derived(['slug']);
+    say('  独弹　　伤害 ' + Math.round(b.dmg) + ' → ' + Math.round(d.damage) + '　弹匣 ' + d.magazine);
+    ok(Math.abs(d.damage / b.dmg - 16) < 0.02, '单发伤害不是 ×16');
+    ok(d.magazine === 1, '弹匣不是 1 发');
+    /* 「永远」是硬承诺：叠上大弹鼓和满级弹匣卡也必须还是 1 */
+    const d2 = derived(['slug', 'drum', 'mag', 'mag', 'mag']);
+    ok(d2.magazine === 1, '叠了大弹鼓/弹匣卡之后弹匣不再是 1 —— 卡面写的是「永远」');
+  }
+
+  /* ---- 玻璃大炮：造成 ×3、受到 ×3，且护盾按 ×3 扣 ---- */
+  {
+    const d = derived(['glass']);
+    ok(Math.abs(d.damage / b.dmg - 3) < 0.02, '造成伤害不是 ×3');
+    ok(Math.abs(d.hurtMult - 3) < 0.02, '受到伤害不是 ×3');
+
+    /* 护盾必须按放大后的数吃 —— 否则这张卡就没有代价了 */
+    const p = G.player;
+    p.hp = p.maxHp = 500; p.iframe = 0; p.dashIFrame = 0;
+    G.over = false; G.buff = null;
+    BUILD.ctx.shield = 90; BUILD.ctx.shieldMax = 90;
+    hurtPlayer(20, null, 'melee');
+    say('  玻璃大炮　受 20 点 → 护盾 90 → ' + Math.round(BUILD.ctx.shield) + '　生命 ' + Math.round(p.hp));
+    ok(Math.abs(BUILD.ctx.shield - 30) < 0.01, '护盾没有按 ×3 扣（应从 90 掉到 30）');
+    ok(Math.abs(p.hp - 500) < 0.01, '护盾还够，不该掉血');
+    BUILD.ctx.shield = 0;
+  }
+
+  /* ---- 自动瞄准：射速 −25%，不能爆头 ---- */
+  {
+    const d = derived(['autoaim']);
+    say('  自动瞄准　开火间隔 ' + n1(b.fi * 1000) + ' → ' + n1(d.fireInterval * 1000) + 'ms　'
+        + '追踪 ' + d.homing + '　禁爆头 ' + d.noWeak);
+    ok(Math.abs(d.fireInterval / b.fi - 1 / 0.75) < 0.02, '射速不是 −25%');
+    ok(d.homing === true && d.noWeak === true, '追踪或禁爆头没生效');
+  }
+
+  /* ---- 开镜达人：开镜 / 不开镜是两套数 ---- */
+  {
+    const D = TUNE.DEMON.scope;
+    const d = derived(['scope']);
+    const p = G.player;
+    const read = k => {
+      WEAPON.pose.ads = k;
+      BUILD.tick(1 / 60, p);
+      const e = { pos: { x: p.pos.x, y: 0, z: p.pos.z }, id: -1, radius: 0.4, height: 1.8 };
+      return { m: BUILD.victimMul(e, false), fi: BUILD.fireInterval(),
+               sp: G.derived.spreadBase, mv: G.derived.moveSpeed };
+    };
+    const hip = read(0), ads = read(1);
+    say('  开镜达人　伤害 ' + n1(hip.m) + ' → ' + n1(ads.m) +
+        '　散布 ' + n1(hip.sp) + '° → ' + n1(ads.sp) + '°' +
+        '　移速 ' + n1(hip.mv) + ' → ' + n1(ads.mv));
+    ok(Math.abs(ads.m / hip.m - (1 + D.gain)) < 0.02, '开镜伤害不是 +60%');
+    ok(Math.abs(hip.fi / ads.fi - (1 + D.gain)) < 0.02, '开镜射速不是 +60%');
+    ok(Math.abs(hip.sp / TUNE.GUN.spreadBase - D.hipSpread) < 0.02, '不开镜散布不是 ×8');
+    ok(Math.abs(ads.sp / TUNE.GUN.spreadBase - 1 / (1 + D.gain)) < 0.02, '开镜精度不是 +60%');
+    ok(Math.abs(ads.mv / TUNE.PLAYER.moveSpeed - D.speed) < 0.02, '开镜移速不是 ×0.45');
+    WEAPON.pose.ads = 0;
+  }
+
+  /* ---- 投放规则：4 分钟后、一局最多 2 张、独占第三格、不进普通牌池 ---- */
+  {
+    RNG.init(20260815); BUILD.init(); recompute();
+    G.time = 0;
+    let early = 0;
+    for (let i = 0; i < 60; i++) early += BUILD.candidates().filter(c => c.kind === 'demon').length;
+    ok(early === 0, '4 分钟前出现了恶魔卡（' + early + ' 张）');
+
+    RNG.init(20260815); BUILD.init(); recompute();
+    G.time = TUNE.DEMON.fromTime + 1;
+    let seen = 0, slot3 = 0, offers = 0;
+    for (let i = 0; i < 400; i++) {
+      const cs = BUILD.candidates();
+      const dm = cs.filter(c => c.kind === 'demon');
+      if (dm.length) {
+        offers++;
+        ok(dm.length === 1, '一次发牌出现了 ' + dm.length + ' 张恶魔卡');
+        if (cs[2] && cs[2].kind === 'demon') slot3++;
+        if (BUILD.demonCount() < TUNE.DEMON.maxPerRun) { BUILD.take(dm[0].id); seen++; }
+      }
+    }
+    say('  投放　400 次发牌里出现 ' + offers + ' 次，全部落在第三格 ' + (slot3 === offers));
+    ok(offers > 0, '4 分钟后一次都没出现过');
+    ok(slot3 === offers, '有恶魔卡没落在第三格');
+    ok(BUILD.demonCount() === TUNE.DEMON.maxPerRun, '拿满 2 张之后的上限没生效');
+    /* 拿满之后必须彻底停止投放 */
+    let after = 0;
+    for (let i = 0; i < 200; i++) after += BUILD.candidates().filter(c => c.kind === 'demon').length;
+    ok(after === 0, '已经拿满 2 张，还在继续投放（' + after + ' 张）');
+    G.time = 0;
+  }
+
+  say('');
+  say('<b>todo12 §3 局部优化</b>');
+
+  /* ---- 击杀回弹：按当前弹匣百分比，单根攻击不超过耗弹的一半 ---- */
+  {
+    const P = TUNE.WUP.killload;
+    const d1 = derived(['killload']);
+    const d2 = derived(['killload', 'drum']);
+    say('  击杀回弹　弹匣 ' + d1.magazine + ' → 每杀 ' + n1(d1.killload) + ' 发；'
+        + '大弹鼓后弹匣 ' + d2.magazine + ' → 每杀 ' + n1(d2.killload) + ' 发');
+    ok(Math.abs(d1.killload - P.pctPerLv * d1.magazine) < 1e-6, '不是按当前弹匣的百分比');
+    ok(d2.killload > d1.killload * 5, '弹匣变大后返还没有跟着变大');
+
+    /* 单根上限：连杀一整片，也不能超过这一枪耗弹的一半 */
+    derived(['killload', 'killload', 'killload', 'volley', 'volley']);
+    const g = G.player.gun;
+    const root = ATK.beginRoot(1);
+    g.ammo = 1;
+    const fake = { uid: 1, pos: { x: 0, y: 0, z: 0 }, dead: true };
+    for (let i = 0; i < 40; i++) BUILD.onKill(fake, false);
+    const back = g.ammo - 1;
+    say('  单根上限　耗弹 ' + G.derived.ammoPerShot + '/枪 → 连杀 40 只共返还 ' + back + ' 发');
+    ok(back <= Math.ceil(G.derived.ammoPerShot * 0.5), '单根返还超过了耗弹的一半');
+    ok(root.refunded <= G.derived.ammoPerShot * 0.5 + 1e-9, 'refunded 记账超过上限');
+  }
+
+  /* ---- 强心：+25%/级，并且立即回满 ---- */
+  {
+    const P = TUNE.MUP.vigor, baseHp = TUNE.PLAYER.maxHp;
+    RNG.init(20260815); BUILD.init();
+    G.player.maxHp = baseHp; G.player.hp = 12;      // 残血时拿到
+    BUILD.take('vigor');
+    const lv = BUILD.level('vigor');
+    const want = Math.round(baseHp * (1 + P.pctPerLv * lv));
+    say('  强心　　Lv' + lv + '：上限 ' + baseHp + ' → ' + G.player.maxHp + '　生命 12 → ' + G.player.hp);
+    ok(G.player.maxHp === want, '上限不是 +' + Math.round(P.pctPerLv * 100) + '%/级');
+    ok(G.player.hp === G.player.maxHp, '没有立即回满');
+  }
+
+  /* ---- 远程怪：占比 ≤20%，同时开火 ≤3 ---- */
+  {
+    ok(TUNE.SPAWN.rangedShare <= 0.20 + 1e-9, 'rangedShare 超过 20%');
+    G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+    G.enemies.compact();
+    RNG.init(20260815);
+    G.introduced.heavy = G.introduced.spitter = G.introduced.roofcaster = true;
+    G.introduced.climber = G.introduced.leaper = true;
+    G.time = 600; G.variantPool.length = 0;
+    for (let i = 0; i < 300; i++) {
+      const tpl = Director.pickTemplate();
+      const e = G.enemies.get();
+      configureEnemy(e, tpl, { x: (i % 20) * 3 - 30, y: 0, z: Math.floor(i / 20) * 3 - 20 }, { grace: 0 });
+      e.speed = 0;
+    }
+    let n = 0, tot = 0;
+    G.enemies.live.forEach(e => { if (e.dead || e._dead) return; tot++; if (e.tpl.ranged) n++; });
+    say('  远程怪　场上 ' + tot + ' 只，其中远程 ' + n + ' 只（' + Math.round(n / tot * 100) + '%）');
+    ok(n / tot <= TUNE.SPAWN.rangedShare + 0.02, '远程怪占比超过 20%');
+
+    /* 并发闸：全场都在射程内，抬手的也不能超过 3 只 */
+    const p = G.player;
+    p.pos.set(0, 0, 0); p.hp = p.maxHp = 1e6;
+    G.enemies.live.forEach(e => { e.cd = 0; e.spawnGrace = 0; e.state = 'walk'; });
+    let peak = 0;
+    for (let i = 0; i < 90; i++) {
+      updateEnemies(1 / 60);
+      let f = 0;
+      G.enemies.live.forEach(e => { if (!e.dead && !e._dead && e.state === 'spit') f++; });
+      if (f > peak) peak = f;
+    }
+    say('  同时开火　峰值 ' + peak + ' 只（上限 ' + TUNE.SPAWN.rangedFiring + '）');
+    ok(peak <= TUNE.SPAWN.rangedFiring, '同时开火的远程怪超过上限');
+  }
+
+  say('');
+  ok(window.__err.length === 0, '运行期报错：' + window.__err.join(';'));
+  say(FAIL ? '<i>FAILED ' + FAIL + ' 条</i>' : '<b>ALLPASS</b>');
+}
+</script>
+</body>
+</html>

@@ -18,7 +18,12 @@ const SEEDS = [11, 22, 33, 44, 55, 66, 77, 88, 99, 111];
 const n = Math.min(SEEDS.length, parseInt(process.argv[2], 10) || 10);
 /* node _stability.js 10 strong —— 开局就给一套强 Build，验证 todo11 §4
    的第二档（强 Build 22~24 次）。不带这个参数就是普通局那一档。 */
-const STRONG = process.argv[3] === 'strong';
+const STRONG = process.argv.indexOf('strong') > 0;
+/* node _stability.js 5 move —— 机器人在四个战斗单元之间巡逻。
+   站着不动的机器人量不出刷怪问题：全图尸潮都会走到它身上。 */
+const MOVING = process.argv.indexOf('move') > 0;
+/* node _stability.js 3 move weak4 —— 把机器人输出打成 1/4，模拟菜一点的玩家 */
+const WEAK = (process.argv.find(a => /^weak\d+$/.test(a)) || '').replace('weak', '');
 const file = 'file://' + path.resolve(__dirname, '_stability.html');
 
 (async () => {
@@ -29,7 +34,7 @@ const file = 'file://' + path.resolve(__dirname, '_stability.html');
   for (const seed of SEEDS.slice(0, n)) {
     const page = await browser.newPage();
     const t0 = Date.now();
-    await page.goto(file + '?seed=' + seed + (STRONG ? '&strong=1' : ''), { timeout: 0, waitUntil: 'load' });
+    await page.goto(file + '?seed=' + seed + (STRONG ? '&strong=1' : '') + (MOVING ? '&move=1' : '') + (WEAK ? '&weak=' + WEAK : ''), { timeout: 0, waitUntil: 'load' });
     try {
       await page.waitForFunction(() => document.title !== 'PENDING', null, { timeout: 600000 });
     } catch (e) {

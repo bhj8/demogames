@@ -11,7 +11,7 @@
   <div id="top"><div id="clock"></div><div id="xpwrap"><div id="xpfill"></div></div>
   <div id="lvlrow"><b id="lvlnum"></b></div></div>
   <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
-  <div id="toast"></div><div id="hint"></div><div id="buffbar"></div>
+  <div id="toast"></div><div id="hint"></div><div id="prompt"></div><div id="buffbar"></div>
   <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
   <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
   <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
@@ -91,10 +91,25 @@ function main() {
      todo11 §4 的目标分两档（普通 19~20 / 强 22~24），而机器人本身
      只能代表「普通局」—— 想验证强 Build 那一档，就得先把 Build 给它。 */
   const strong = new URLSearchParams(location.search).get('strong') === '1';
-  const r = fullRun(seed, strong);
-  say('SEED ' + seed + (strong ? ' [强Build]' : '') + '  ' + fmtTime(r.time) + '  升级 ' + r.picks +
+  /* ?move=1：让机器人在四个战斗单元之间巡逻，而不是站着不动。
+     这才是 Bao 描述的那种玩法 —— 站着不动的话全图尸潮都会走到你身上，
+     刷怪再慢也感觉不到；一旦你在跑，「地图很满但你面前很空」才会暴露。 */
+  const moving = new URLSearchParams(location.search).get('move') === '1';
+  /* ?weak=N：把机器人的输出打成 1/N（间歇开火 + 瞄准漂移）。
+     用来回答一个关键问题：升级次数到底对「打得好不好」有多敏感。
+     Bao 报的是「8 分钟才 5 级」，而机器人稳定 19 次 —— 差别只可能出在这里。 */
+  const weak = parseFloat(new URLSearchParams(location.search).get('weak')) || 1;
+  const r = fullRun(seed, strong, moving, weak);
+  say('SEED ' + seed + (strong ? ' [强]' : '') + (moving ? ' [跑动]' : '') +
+      (weak > 1 ? ' [弱×' + weak + ']' : '') + '  ' + fmtTime(r.time) +
+      '  身边 ' + r.near.toFixed(1) + '（前3分 ' + r.nearEarly.toFixed(1) + '，最低 ' + r.nearMin + '）' +
+      '  3分击杀 ' + r.kills3 + '  升级 ' + r.picks +
       '  分子 ' + r.mol + '  击杀 ' + r.kills + '  拒绝 ' + r.rejected +
       '  错误 ' + r.err + '  ' + r.build);
+  /* 升级到底是均匀分布还是压在后半段 —— Bao 报的是「8 分钟才 5 级」 */
+  say('  升级时刻 ' + r.pickT.join(' '));
+  const by8 = r.pickT.filter(t => t <= 480).length;
+  say('  8 分钟前 ' + by8 + ' 次 / 全程 ' + r.pickT.length + ' 次');
   ok(r.err === 0, r.err + ' 次运行时错误');
   ok(r.rejected === 0, r.rejected + ' 次事件触顶 —— 伤害被静默削掉了（§8.3）');
   ok(r.time > 700, '没跑满 12 分钟（' + Math.round(r.time) + 's）');
@@ -104,7 +119,7 @@ function main() {
 }
 
 let _clock = 0;
-function fullRun(seed, strong) {
+function fullRun(seed, strong, moving, weak) {
   RNG.init(seed);
   G.won = false; G.bossAlive = null; G.buff = null;
   document.getElementById('results').classList.remove('on');
@@ -138,24 +153,74 @@ function fullRun(seed, strong) {
   /* frame() 自己记 _last 时间戳，所以每局的 t 必须【接着上一局往下走】——
      从 0 重新开始会算出负的 dt，第二局起整局一帧都不推进（表现是 0:00）。 */
   let picks = 0, minFps = 1e9;
+  /* todo12 §1：量「玩家身边 35m 内有几只可打的」。
+     刷怪那次改动的成败就看这个数，不是看全图在场数 ——
+     地图很满而玩家面前很空，正是改之前的病。 */
+  let nearSum = 0, nearN = 0, nearMin = 1e9, early = 0, earlyN = 0, kills3 = 0;
+  const pickT = [];
   for (let i = 0; i < 60 * 60 * 12 + 600; i++) {
     _clock += 16.7;
     frame(_clock);
     if (G.phase === 'choose') {
       UI._pickAt = 0; UI._released = true;
       const c = document.querySelector('#cards .card');
-      if (c && c.onclick) { c.onclick(); picks++; }
+      if (c && c.onclick) { c.onclick(); picks++; pickT.push(Math.round(G.time)); }
     }
-    G.player.gun.held = true;
-    G.player.yaw += 0.55 * 0.0167;
+    /* 弱玩家：只有 1/weak 的时间在有效开火，其余时间在躲、在跑、在打空气 */
+    G.player.gun.held = !weak || weak <= 1 || (i % Math.round(weak)) === 0;
+    if (moving) {
+      /* 一个像样的玩家模型：【瞄着敌人、朝目标点平移】。
+         只做「朝路点跑」的话枪口永远对着空气，12 分钟只打死 38 只 ——
+         那量出来的是机器人不会瞄准，不是刷怪快慢。 */
+      const p2 = G.player;
+      let best = null, bd = 1e9;
+      const list = G.enemies.live;
+      for (let k = 0; k < list.length; k++) {
+        const e = list[k];
+        if (e.dead || e._dead) continue;
+        const ex = e.pos.x - p2.pos.x, ez = e.pos.z - p2.pos.z;
+        const d2 = ex * ex + ez * ez;
+        if (d2 < bd) { bd = d2; best = e; }
+      }
+      if (best) {
+        p2.yaw = Math.atan2(-(best.pos.x - p2.pos.x), -(best.pos.z - p2.pos.z));
+        if (weak > 1) p2.yaw += Math.sin(i * 0.07) * 0.25;   // 瞄不准
+      }
+
+      /* 在四个战斗单元中心之间巡逻，每 20 秒换一个目标；
+         用平移键走过去，不改瞄准方向 */
+      const WP = [[-55, -31], [55, -39], [-55, 40], [55, 39]];
+      const w = WP[Math.floor(G.time / 20) % WP.length];
+      const wx = w[0] - p2.pos.x, wz = w[1] - p2.pos.z;
+      const len = Math.max(0.001, Math.hypot(wx, wz));
+      /* 把世界方向投到「瞄准朝向」的前 / 右轴上 */
+      const fx = -Math.sin(p2.yaw), fz = -Math.cos(p2.yaw);
+      const rx = Math.cos(p2.yaw), rz = -Math.sin(p2.yaw);
+      const fwd = (wx * fx + wz * fz) / len, rgt = (wx * rx + wz * rz) / len;
+      KEY.KeyW = fwd > 0.35; KEY.KeyS = fwd < -0.35;
+      KEY.KeyD = rgt > 0.35; KEY.KeyA = rgt < -0.35;
+    } else {
+      G.player.yaw += 0.55 * 0.0167;
+    }
+    if (i % 30 === 0 && G.time > 5) {
+      const near = Director.countNear(TUNE.SPAWN.engageRadius);
+      nearSum += near; nearN++;
+      if (near < nearMin) nearMin = near;
+      if (G.time <= 180) { early += near; earlyN++; kills3 = G.stats.kills; }
+    }
     if (G.over) break;
   }
   G.player.gun.held = false;
+  KEY.KeyW = KEY.KeyS = KEY.KeyA = KEY.KeyD = false;
   DebugPanel.god = false;
   return {
     time: G.time, picks: picks, kills: G.stats.kills,
     mol: BUILD.molecules().length,
     build: BUILD.molecules().map(c => c.name).join('+') || '无',
+    pickT: pickT,
+    near: nearN ? nearSum / nearN : 0, kills3: kills3,
+    nearEarly: earlyN ? early / earlyN : 0,
+    nearMin: nearMin === 1e9 ? 0 : nearMin,
     rejected: ATK.budget.rejected,
     err: window.__err.length - err0,
     minFps: minFps

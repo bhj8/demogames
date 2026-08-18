@@ -77,7 +77,15 @@ const EVO = {
       mult = 1 - k * (1 - E.driftMin);
     }
     this.driftMult = mult;
-    return Math.max(4, base * mult);
+
+    /* todo12 §1：前 earlyCheapCount 次进化的需求打 earlyCheapMult 折。
+       这是 Bao 允许的那种「悄悄帮一把」—— 它是折扣，不是白送：
+       不打怪照样一级都不涨，挂机仍然一无所获。
+       为什么只放在开头：前几张卡决定这局能不能滚起来，
+       而开局收入最低、定价却按开局收入锚死，是全局最难受的一段。 */
+    const early = this.draw.evolutionIndex < E.earlyCheapCount ? E.earlyCheapMult : 1;
+
+    return Math.max(4, base * mult * early);
   },
 
   /* 经验入口：等级与“弹一次选择”彻底解耦（§4.2）。

@@ -26,6 +26,7 @@ const G = {
   supplyCharge: 0, lastDropAt: -999, dropQueued: false, airdrop: null,
   buff: null,                        // {id, t, dur, shield}
   hurtCount: 0,                      // 受伤次数，用来观测近战前摇改动的影响
+  spitCount: 0,                      // 当前抬手中的远程怪数（todo12 §3）
   pierceRamp: 0,
   overclock: 0,
   feedbackBudget: 4, feedbackTimer: 0,
@@ -115,6 +116,27 @@ function enemiesInRadius(x, z, r, out) {
 }
 
 /* 猎群算法：优先满血目标 §23 */
+/* 屏幕上离准星最近的敌人。「最近」按【与视线的夹角】算，不是按距离 ——
+   自动瞄准要的是「我看着谁就打谁」，不是「谁贴我近就打谁」。 */
+const _aimDir = new THREE.Vector3();
+function crosshairTarget(maxAngle, maxRange) {
+  const cam = R.camera;
+  cam.getWorldDirection(_aimDir);
+  const ox = cam.position.x, oy = cam.position.y, oz = cam.position.z;
+  let best = null, bestCos = Math.cos(maxAngle);
+  const list = G.enemies.live;
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (e.dead || e._dead) continue;
+    const dx = e.pos.x - ox, dy = e.pos.y + e.height * 0.55 - oy, dz = e.pos.z - oz;
+    const len = Math.hypot(dx, dy, dz);
+    if (len > maxRange || len < 0.01) continue;
+    const c = (dx * _aimDir.x + dy * _aimDir.y + dz * _aimDir.z) / len;
+    if (c > bestCos) { bestCos = c; best = e; }
+  }
+  return best;
+}
+
 function pickChainTarget(x, z, range, exclude) {
   const cand = enemiesInRadius(x, z, range, G._tmp);
   let best = null, bestScore = -Infinity;
@@ -388,11 +410,11 @@ function makeBulletPool() {
     speed: 0, dmg: 0, life: 0, pierce: 0, hitList: null, ctx: null, split: false, scale: 1,
     /* todo5 §6.2：谱系节点挂在子弹上，池化复位时必须清干净 */
     gene: null, baseDmg: 0, pierceHits: 0, bounceHits: 0,
-    pendingBlast: false, homing: 0, splitBudget: 0, volleyIndex: 0
+    pendingBlast: false, homeE: null, splitBudget: 0, volleyIndex: 0
   }), b => {
     b.ctx = null; b.hitList = null; b.gene = null;
     b.pierceHits = 0; b.bounceHits = 0; b.pendingBlast = false;
-    b.homing = 0; b.splitBudget = 0; b.volleyIndex = 0; b.baseDmg = 0;
+    b.homeE = null; b.splitBudget = 0; b.volleyIndex = 0; b.baseDmg = 0;
   });
 }
 
@@ -414,7 +436,7 @@ function spawnBullet(origin, dir, dmg, ctx, opts) {
   b.pierceHits = 0; b.bounceHits = 0;
   b.gene = opts.gene || null;
   b.baseDmg = opts.gene ? dmg : 0;
-  b.pendingBlast = false; b.homing = 0;
+  b.pendingBlast = false; b.homeE = null;
   return b;
 }
 
@@ -502,13 +524,15 @@ function updateBullets(dt) {
     if (b.life <= 0) { retireBullet(b); continue; }
 
     b.prev.copy(b.pos);
-    /* 追踪裂片分支（§7.3 史诗）：只在有限时间内轻微修正方向，不做制导导弹 */
-    if (b.homing > 0) {
-      b.homing -= dt;
-      const t = pickChainTarget(b.pos.x, b.pos.z, 13, b.hitList ? null : null);
-      if (t) {
-        V3b.set(t.pos.x - b.pos.x, t.pos.y + t.height * 0.5 - b.pos.y, t.pos.z - b.pos.z).normalize();
-        b.dir.lerp(V3b, Math.min(1, 4.5 * dt)).normalize();
+    /* 自动瞄准（todo12 §2）：目标在开火那一刻就锁死，不中途改嫁 ——
+       否则一枪打出去会追着「此刻最近的那只」乱拐，玩家完全读不懂弹道。
+       目标死了就直着飞完，不再找下一个。 */
+    if (b.homeE) {
+      const t = b.homeE;
+      if (t.dead || t._dead) b.homeE = null;
+      else {
+        V3b.set(t.pos.x - b.pos.x, t.pos.y + t.height * 0.55 - b.pos.y, t.pos.z - b.pos.z).normalize();
+        b.dir.lerp(V3b, Math.min(1, TUNE.DEMON.autoaim.turn * dt)).normalize();
       }
     }
     b.pos.addScaledVector(b.dir, b.speed * dt);
@@ -581,6 +605,10 @@ function updateBullets(dt) {
 
 function resolveBulletHit(b, e, point, weak) {
   b.hitList.add(e.uid);
+  /* 自动瞄准的代价：所有命中一律按身体结算（todo12 §2）。
+     在这里一刀切掉，而不是在瞄准那边做手脚 —— 爆炸、弹射继承的
+     也是这一次的爆头判定，所以只有这一个入口需要改。 */
+  if (G.derived.noWeak) weak = false;
 
   /* todo5 §6.3：同一目标在单根攻击里的重复命中上限。
      不通过就当没打中 —— 子弹继续飞，但不再对这只敌人结算第 N+1 次。 */
@@ -668,6 +696,9 @@ function hurtPlayer(amount, fromPos, kind) {
   if (p.iframe > 0 || p.dashIFrame > 0) return;
 
   p.iframe = TUNE.PLAYER.hurtIFrame;
+  /* 玻璃大炮：在【护盾之前】放大，所以护盾同样按 ×3 被扣掉（Bao 指定）。
+     放在护盾之后就变成「盾能挡三倍伤害」，那这张卡就没有代价了。 */
+  amount *= G.derived.hurtMult || 1;
   G.stats.dmgTaken += amount;
   G.hurtCount++;
 

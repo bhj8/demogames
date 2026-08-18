@@ -404,6 +404,7 @@ const MOVE = {
 
   _devices(p) {
     const M = TUNE.MOVEMENT, st = this.st;
+    this.zipReady = null;                  // HUD 提示每帧重算
     if (st.zip || st.scripted) return;
     /* 跳板：踩上即弹，不需要按键。
        必须有再装填时间 —— 否则站在跳板上会被无限弹起，玩家完全失去控制权。 */
@@ -419,10 +420,13 @@ const MOVE = {
         return;
       }
     }
-    /* 滑索：靠近任一端自动吸附，朝另一端滑（§2 要求双向可用） */
+    /* 滑索：手动挂索（todo12 §3）。原来是靠近就自动吸附 ——
+       在城里跑动线时会被路过的索强行拽走，玩家失去控制权。
+       现在只在范围内亮一个提示，按 E 才上索。 */
     if (st.zipCd > 0) return;
     const zip = CITY.nearestDevice(p.pos, 'zip', M.zipSnapDist);
-    if (zip) {
+    this.zipReady = zip || null;
+    if (zip && KEY.KeyE) {
       /* 从近的那一端上索。原来只认 a 端，站在终点那头怎么都上不去。 */
       const da = Math.hypot(p.pos.x - zip.a.x, p.pos.y - zip.a.y, p.pos.z - zip.a.z);
       const db = Math.hypot(p.pos.x - zip.b.x, p.pos.y - zip.b.y, p.pos.z - zip.b.z);

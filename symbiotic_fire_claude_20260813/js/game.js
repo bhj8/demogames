@@ -213,7 +213,16 @@ const Director = {
       Math.round(S.targetBase + S.targetCoef * Math.pow(k, S.targetExp)));
     this.target = target;
 
-    /* 缺得越多，间隔越短；不缺也保持 maxInterval 的涓流 */
+    /* --------------------------------------------------------------------
+       缺得越多，间隔越短；不缺也保持 maxInterval 的涓流。
+
+       todo12 §1 一度把缺口改成【玩家 35m 内】算，想解决「地图很满但玩家
+       面前很空」。实测把它否掉了：换成按身边算之后，玩家身边的平均在场数
+       47.1 → 33.8、最低 8 → 4，反而更空 —— 因为按身边算等于给刷新加了
+       第二道上限，全图总量上不去，最终能走到玩家身上的怪反而更少。
+       结论是这条路本身就错了，所以这里保持按全图算。
+       前期不够打，是 targetBase / maxInterval 这两个数的事（见 tune.js）。
+       -------------------------------------------------------------------- */
     const deficit = Math.max(0, target - G.enemies.count);
     let interval = S.maxInterval / (1 + deficit * S.deficitGain);
     if (G.surge) interval *= 0.55;
@@ -228,6 +237,21 @@ const Director = {
       this.spawnOne();
     }
   },
+  /* 玩家 r 米内还活着几只。刷怪不读它（那条路已经被实测否掉了），
+     它是【量刷怪密度的尺子】—— _stability.html 用它回答
+     「玩家面前到底有没有怪可打」，比全图在场数说明问题得多。 */
+  countNear(r) {
+    const p = G.player, r2 = r * r, list = G.enemies.live;
+    let n = 0;
+    for (let i = 0; i < list.length; i++) {
+      const e = list[i];
+      if (e.dead || e._dead) continue;
+      const dx = e.pos.x - p.pos.x, dz = e.pos.z - p.pos.z;
+      if (dx * dx + dz * dz <= r2) n++;
+    }
+    return n;
+  },
+
   spawnOne() {
     /* §5.4 防站桩：压力阶段会顶掉一次常规抽取，逐级换成攀爬 / 跳跃 / 远程 */
     let tpl = null;
@@ -257,7 +281,20 @@ const Director = {
       if (G.introduced.leaper) { pool.push(ENEMIES.leaper); w.push(0.18); }
       if (G.introduced.roofcaster) { pool.push(ENEMIES.roofcaster); w.push(0.14); }
     }
-    const base = RNG.spawn.weighted(pool, w);
+    let base = RNG.spawn.weighted(pool, w);
+
+    /* todo12 §3：远程怪占场上比例不超过 rangedShare。
+       抽到超额的就退回普通感染者 —— 不改「刷几只」，只改「这一只是什么」。 */
+    if (base.ranged) {
+      const live = G.enemies.live;
+      let n = 0, tot = 0;
+      for (let i = 0; i < live.length; i++) {
+        const e = live[i];
+        if (e.dead || e._dead) continue;
+        tot++; if (e.tpl && e.tpl.ranged) n++;
+      }
+      if (tot > 0 && (n + 1) / (tot + 1) > TUNE.SPAWN.rangedShare) base = ENEMIES.grunt;
+    }
 
     /* 只有 grunt 会被替换成变种模板 §25 */
     if (base !== ENEMIES.grunt || G.variantPool.length === 0) return base;
@@ -276,6 +313,14 @@ const _sepCand = [];
 function updateEnemies(dt) {
   const p = G.player;
   const list = G.enemies.live;
+
+  /* 当前有几只远程怪已经抬手（todo12 §3 的并发闸读它）。
+     每帧重数一次，比维护一个跨帧计数器可靠 —— 敌人会在 spit 状态里死掉。 */
+  G.spitCount = 0;
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (!e._dead && !e.dead && e.state === 'spit') G.spitCount++;
+  }
 
   for (let i = 0; i < list.length; i++) {
     const e = list[i];
@@ -396,8 +441,14 @@ function updateEnemies(dt) {
       }
     } else if (e.tpl.ranged) {
       const rg = e.tpl.ranged;
-      if (e.state === 'walk' && dist < rg.range && e.cd <= 0 && e.spawnGrace <= 0) {
+      /* todo12 §3：同一时刻最多 rangedFiring 只在开火。
+         超额的不是取消攻击，只是【继续等】—— 远程压力仍在，
+         但不会几十只同时抬手，玩家来得及一只一只处理。
+         计数用上一帧的结果：差一帧完全无所谓，省掉一次全表扫描。 */
+      if (e.state === 'walk' && dist < rg.range && e.cd <= 0 && e.spawnGrace <= 0
+          && G.spitCount < TUNE.SPAWN.rangedFiring) {
         e.state = 'spit'; e.stateT = rg.windup;
+        G.spitCount++;
         Audio2.telegraph(e.pos, 'spit');
       } else if (e.state === 'spit') {
         speed = 0;
@@ -1418,6 +1469,8 @@ const UI = {
     this.clock = $('clock'); this.ammo = $('ammo'); this.ammoBar = $('ammobar');
     this.dash = $('dashfill'); this.slots = $('slots');
     this.cards = $('cards'); this.toastEl = $('toast'); this.hintEl = $('hint');
+    this.promptEl = $('prompt');
+    this.promptEl.innerHTML = '<b>[E]</b> 上索';       // 目前只有滑索一种交互
     this.bossWrap = $('bosswrap'); this.bossFill = $('bossfill'); this.bossName = $('bossname');
     this.dmgDirs = $('dmgdirs'); this.threatEl = $('threats');
     this.vig = $('vignette');
@@ -1497,6 +1550,7 @@ const UI = {
     this._updateThreats();
     this._updateMarkers();
     this._updateBuff();
+    this._updatePrompt();
 
     if (this._toastT > 0) { this._toastT -= dt; if (this._toastT <= 0) this.toastEl.classList.remove('on'); }
     if (this._hintT > 0) { this._hintT -= dt; if (this._hintT <= 0) this.hintEl.classList.remove('on'); }
@@ -1613,16 +1667,26 @@ const UI = {
       if (!obj || !show) { el.style.opacity = 0; return; }
       const dx = obj.x - p.pos.x, dz = obj.z - p.pos.z;
       const rel = screenBearing(dx, dz, p.yaw);
-      if (Math.abs(rel) < hHalf) { el.style.opacity = 0; return; }   // 进入视野后只留世界光柱
-      el.style.opacity = 1;
+      /* todo12 §3：指引常驻。原来「进入视野就隐藏，只留世界光柱」——
+         结果一转头就找不到了，而光柱本身经常被楼挡住。
+         现在方向标永远在，目标进视野时淡一些、不抢视线。 */
+      el.style.opacity = Math.abs(rel) < hHalf ? 0.5 : 1;
       el.style.transform = 'translate(-50%,-50%) rotate(' + (rel * 180 / Math.PI) + 'deg)';
       const dyM = (obj.y === undefined ? 0 : obj.y) - p.pos.y;
       const arrow = !CITY.enabled ? '' : (dyM > 2.2 ? ' ▲' : dyM < -2.2 ? ' ▼' : ' ●');
       el.firstChild.textContent = Math.round(Math.hypot(dx, dz)) + 'm' + arrow;
       el.firstChild.style.transform = 'rotate(' + (-rel * 180 / Math.PI) + 'deg)';
     };
-    put(this.medMark, G.medical, G.player.hp / G.player.maxHp < TUNE.MEDICAL.offscreenHpFrac);
+    /* todo12 §3：医疗包只在受伤时才会掉（≤70% 生命），它存在本身就说明
+       玩家需要它 —— 再拿一个 50% 的门槛去藏指引，只会造成「掉了但找不到」。
+       所以两个都是「在场就一直指」。 */
+    put(this.medMark, G.medical, !!G.medical);
     put(this.dropMark, G.airdrop, !!G.airdrop);
+  },
+
+  /* 交互提示：目前只有滑索。不计时 —— 在范围内就一直亮着（todo12 §3） */
+  _updatePrompt() {
+    this.promptEl.classList.toggle('on', !!MOVE.zipReady);
   },
 
   /* 强化 HUD */
@@ -1734,7 +1798,9 @@ const UI = {
     this.slots.innerHTML = '';
     /* §7.2 HUD 只显示核心分子的名字和等级。没有组合名，也没有槽位上限 ——
        todo10 §1.1 删掉了「最多 3 个基础模块」的硬限制。 */
-    const mol = BUILD.molecules();
+    /* 恶魔卡也进槽位：它改的是「这把枪怎么用」，和分子同一个量级，
+       玩家必须随时看得见自己带了哪一张。 */
+    const mol = BUILD.molecules().concat(BUILD.demons());
     if (!mol.length) {
       const s0 = document.createElement('div');
       s0.className = 'slot empty'; s0.textContent = '·';
@@ -1747,7 +1813,7 @@ const UI = {
       s1.style.borderColor = c.css; s1.style.color = c.css;
       s1.style.boxShadow = '0 0 12px ' + c.css + '44';
       s1.textContent = c.name[0];
-      s1.title = c.name + ' Lv' + BUILD.level(c.id) + '：' + c.gain;
+      s1.title = (c.kind === 'demon' ? c.name : c.name + ' Lv' + BUILD.level(c.id)) + '：' + c.gain;
       this.slots.appendChild(s1);
     });
     const st = BUILD.stateText();
@@ -1817,7 +1883,7 @@ const UI = {
      当前值 → 选择后数值。禁止出现根弹、载荷、谱系、S 级反应这类实现语言。 */
   _cardHtml(o) {
     return '<div class="qtag" style="color:' + o.css + '">' +
-        (o.big ? '大升级' : '升级') + ' · ' + o.levelText + '</div>' +
+        (o.kind === 'demon' ? '恶魔' : o.big ? '大升级' : '升级') + ' · ' + o.levelText + '</div>' +
       '<div class="cname" style="color:' + o.css + '">' + o.name + '</div>' +
       '<div class="cline you"><span class="tag">得到</span>' + o.gain + '</div>' +
       (o.cost && o.cost !== '—'
@@ -1857,7 +1923,8 @@ const UI = {
     const els = [];
     cards.forEach((o, i) => {
       const el = document.createElement('div');
-      el.className = 'card evo locked' + (o.big ? ' q-epic' : ' q-common');
+      el.className = 'card evo locked' +
+        (o.kind === 'demon' ? ' q-demon' : o.big ? ' q-epic' : ' q-common');
       el.style.setProperty('--mc', o.css);
       el.style.animationDelay = (0.06 + i * 0.05) + 's';
       el.innerHTML = this._cardHtml(o);

@@ -210,6 +210,13 @@ canvas#gl{display:block;position:fixed;inset:0}
   border-left:3px solid var(--you);font-size:12.5px;line-height:1.55;
   color:rgba(219,231,240,.85);opacity:0;transition:opacity .3s}
 #hint.on{opacity:1}
+/* 交互提示：只在范围内出现，不计时（todo12 §3 手动滑索） */
+#prompt{position:absolute;left:50%;top:56%;transform:translateX(-50%);
+  padding:6px 14px;border:1px solid rgba(95,224,255,.55);border-radius:3px;
+  background:rgba(8,14,20,.55);font-size:13px;letter-spacing:.06em;
+  color:#bfe9f7;opacity:0;transition:opacity .12s;white-space:nowrap}
+#prompt.on{opacity:1}
+#prompt b{color:#5fe0ff;font-weight:700}
 
 /* ---------------------------------------------------------------- 三选一 */
 #cards{position:fixed;inset:0;z-index:20;display:none;flex-direction:column;
@@ -351,7 +358,11 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 #cards .card.evo .crel{margin-top:auto;padding-top:8px;font-size:11px;color:#8fa2b4;
   border-top:1px solid #ffffff14}
 #cards .card.evo.q-epic{box-shadow:0 0 26px #b060ff33}
-#cards .card.evo.q-legend{box-shadow:0 0 30px #ffb02044}
+/* 恶魔卡（todo12 §2）：红色、独占第三格。它必须一眼就和另外两张不一样 ——
+   玩家要在两秒内认出「这一张会改写规则」。 */
+#cards .card.evo.q-demon{border-color:#ff3b4e88;box-shadow:0 0 34px #ff3b4e4d;
+  background:linear-gradient(180deg,rgba(38,12,16,.97),rgba(13,18,26,.96))}
+#cards .card.evo.q-demon:hover{border-color:#ff3b4e}
 /* ---- todo3 §11 立体城市 + 统一进化实验面板 ---- */
 #dbgmove{font:11px/1.5 ui-monospace,monospace;color:#9fd8ff;margin-top:4px}
 #dbgevo{font:11px/1.5 ui-monospace,monospace;color:#ffd06a;margin-top:4px}
@@ -402,6 +413,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 
   <div id="toast"></div>
   <div id="hint"></div>
+  <div id="prompt"></div>
   <div id="buffbar"></div>
 
   <div id="hpwrap">

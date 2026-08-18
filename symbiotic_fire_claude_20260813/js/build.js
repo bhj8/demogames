@@ -28,8 +28,10 @@ const CARDS = [];
 const CARD_BY_ID = {};
 
 function card(c) {
-  c.big = c.kind === 'mol' || c.kind === 'choice';
-  c.levels = c.big ? TUNE.BUILD.bigLevels : TUNE.BUILD.smallLevels;
+  c.big = c.kind === 'mol' || c.kind === 'choice' || c.kind === 'demon';
+  /* 恶魔卡不分级：它改写的是规则，不是数字。「再来一张 Lv2 自动瞄准」
+     没有任何含义，所以它只有 1 级，而且拿过之后就退出牌池。 */
+  c.levels = c.kind === 'demon' ? 1 : c.big ? TUNE.BUILD.bigLevels : TUNE.BUILD.smallLevels;
   CARDS.push(c); CARD_BY_ID[c.id] = c;
   return c;
 }
@@ -304,7 +306,9 @@ wup('thrift', '有概率返还这次攻击额外消耗的弹药', '基础必耗�
 wup('killload', '击杀敌人会把弹药装回当前弹匣', '同一枪的返还不超过这枪耗弹的一半',
   function (lv, nx) {
     const P = TUNE.WUP.killload;
-    return ['每次击杀返还：' + (P.perKill * lv) + ' → ' + (P.perKill * nx) + ' 发',
+    const m = (G.derived && G.derived.magazine) || TUNE.GUN.magazine;
+    return ['每次击杀返还：当前弹匣的 ' + pct(P.pctPerLv * lv) + ' → ' + pct(P.pctPerLv * nx) +
+            '（现在是 ' + one(P.pctPerLv * nx * m) + ' 发）',
             '爆炸与弹射的击杀一样算'];
   });
 
@@ -317,10 +321,11 @@ const mup = (id, gain, cost, lineFn) => card({
   gain: gain, cost: cost, line: lineFn
 });
 
-mup('vigor', '最大生命提高，并立即恢复相应生命', '—', function (lv, nx) {
+mup('vigor', '最大生命提高，并立即回满生命', '—', function (lv, nx) {
   const P = TUNE.MUP.vigor, base = TUNE.PLAYER.maxHp;
-  return ['最大生命：' + (base + P.hpPerLv * lv) + ' → ' + (base + P.hpPerLv * nx),
-          '立即回满这部分'];
+  const at = n => Math.round(base * (1 + P.pctPerLv * n));
+  return ['最大生命：' + at(lv) + ' → ' + at(nx) + '（每级 +' + pct(P.pctPerLv) + '）',
+          '拿到的瞬间生命直接回满'];
 });
 mup('regenshield', '一段时间不受伤后恢复护盾', '受伤后重新计时', function (lv, nx) {
   const P = TUNE.MUP.regenshield;
@@ -358,6 +363,53 @@ mup('magnet', '扩大经验、医疗与空投的拾取范围', '—', function (
   return ['拾取范围：' + mul(1 + P.perLv * lv) + ' → ' + mul(1 + P.perLv * nx), '不改变掉落本身'];
 });
 
+/* ================================================================ 五张恶魔卡 */
+/* todo12 §2（Bao 设计，Claude 调数值）。
+   和上面所有卡的区别只有一条：恶魔卡【必须拿掉一样东西】。
+   不是「代价稍大的强卡」—— 是换一把枪，换一种打法。
+   所以它们独占第三格，一局最多两张，并且不分级。 */
+
+const demon = (id, name, gain, cost, lineFn) => card({
+  id: id, kind: 'demon', css: TUNE.DEMON.css, name: name,
+  gain: gain, cost: cost, line: lineFn
+});
+
+demon('autoaim', '自动瞄准', '子弹自动追踪准星最近的敌人', '不再能爆头，射速降低',
+  function () {
+    return ['子弹自行修正方向，锁定准星最近的目标',
+            '射速 ' + pct(TUNE.DEMON.autoaim.rate) + '，所有命中都按身体结算'];
+  });
+
+demon('drum', '大弹鼓', '弹匣容量 +500%', '换弹时间 +200%',
+  function () {
+    const D = TUNE.DEMON.drum, d = G.derived || {};
+    const m = d.magazine || TUNE.GUN.magazine, r = d.reloadTime || TUNE.GUN.reloadTime;
+    return ['弹匣：' + Math.ceil(m) + ' → ' + Math.ceil(m * D.mag) + ' 发',
+            '换弹：' + one(r) + ' → ' + one(r * D.reload) + ' 秒'];
+  });
+
+demon('glass', '玻璃大炮', '造成的所有伤害 ×3', '受到的所有伤害也 ×3，护盾同样按 ×3 扣',
+  function () {
+    const D = TUNE.DEMON.glass;
+    return ['造成伤害：' + mul(D.out) + '（直击、爆炸、弹射一起）',
+            '受到伤害：' + mul(D.in) + '（护盾不减免这个倍率）'];
+  });
+
+demon('slug', '独弹', '单发伤害 ×16', '弹匣永远只有 1 发',
+  function () {
+    const d = G.derived || {};
+    const base = d.damage || TUNE.GUN.damage;
+    return ['单发伤害：' + Math.round(base) + ' → ' + Math.round(base * TUNE.DEMON.slug.dmg),
+            '弹匣固定 1 发 —— 换弹卡从这里开始决定你的 DPS'];
+  });
+
+demon('scope', '开镜达人', '开镜时伤害、射速、精度全面提升', '开镜时移速大幅降低；不开镜散布极大',
+  function () {
+    const D = TUNE.DEMON.scope;
+    return ['开镜时：伤害 / 射速 / 精度各 +' + pct(D.gain) + '，移速 ' + mul(D.speed),
+            '不开镜时：散布 ' + mul(D.hipSpread) + ' —— 腰射基本打不中'];
+  });
+
 /* ========================================================================== */
 /*                                  BUILD                                     */
 /* ========================================================================== */
@@ -372,6 +424,7 @@ const BUILD = {
     rootT: 0,           // 站桩已站秒数
     focusId: -1, focusStack: 0, focusT: 0,
     quietT: 0, shield: 0, shieldMax: 0,
+    loadFrac: 0,        // 击杀装填的不满一发的零头
     healSecT: 0, healSec: 0,
     wallDist: 0, chainUsed: false,
     lastPos: { x: 0, z: 0 }
@@ -389,6 +442,7 @@ const BUILD = {
     const c = this.ctx;
     c.ocRamp = 0; c.sinceShot = 99; c.rootT = 0; c.focusId = -1; c.focusStack = 0; c.focusT = 0;
     c.quietT = 0; c.shield = 0; c.shieldMax = 0; c.healSecT = 0; c.healSec = 0;
+    c.loadFrac = 0;
     c.wallDist = 0; c.chainUsed = false;
     this.stats = { direct: 0, blast: 0, bounce: 0, pierce: 0,
                    ammoSpent: 0, ammoSaved: 0, reloadT: 0, fireT: 0, kills: 0 };
@@ -399,6 +453,7 @@ const BUILD = {
   has(id) { return (this.lv[id] || 0) > 0; },
   cardOf(id) { return CARD_BY_ID[id]; },
   molecules() { return CARDS.filter(c => c.kind === 'mol' && this.has(c.id)); },
+  demons() { return CARDS.filter(c => c.kind === 'demon' && this.has(c.id)); },
   allIds(kind) { return CARDS.filter(c => !kind || c.kind === kind).map(c => c.id); },
 
   /* 拿到一张卡。大升级 +2 级、小升级 +1 级，没有品质随机（§6.3 改版）。 */
@@ -411,8 +466,10 @@ const BUILD = {
     this.lv[id] = (this.lv[id] || 0) + n;
     this.sinceBig = c.big ? 0 : this.sinceBig + 1;
     if (id === 'vigor') {
-      const add = TUNE.MUP.vigor.hpPerLv * n;
-      G.player.maxHp += add; G.player.hp = Math.min(G.player.maxHp, G.player.hp + add);
+      /* 按等级从基线整体重算，而不是逐次累加 —— 顺带保证它幂等。
+         todo12 §3：而且【立即回满】，不是只补差额。 */
+      G.player.maxHp = Math.round(TUNE.PLAYER.maxHp * (1 + TUNE.MUP.vigor.pctPerLv * this.lv[id]));
+      G.player.hp = G.player.maxHp;
     }
     G.bus.emit('buildChanged', { id: id, levels: n });
     return n;
@@ -443,19 +500,30 @@ const BUILD = {
     d.damage = TUNE.GUN.damage
       * hea.dmg
       * Math.pow(1 + TUNE.WUP.power.perLv, this.level('power'))
-      * (this.has('overload') ? CARD_BY_ID.overload.stat(this.level('overload')).m : 1);
+      * (this.has('overload') ? CARD_BY_ID.overload.stat(this.level('overload')).m : 1)
+      * (this.has('glass') ? TUNE.DEMON.glass.out : 1)
+      * (this.has('slug') ? TUNE.DEMON.slug.dmg : 1);
+    /* 玻璃大炮的另一半在 hurtPlayer 的第一行 —— 在护盾之前乘，
+       所以护盾也按 ×3 被扣掉（Bao 指定）。 */
+    d.hurtMult = this.has('glass') ? TUNE.DEMON.glass.in : 1;
 
     /* 射速：重弹压低、射速卡和超频抬高。超频档位每帧变，所以只给上限，
        实际间隔由 fireInterval + ocRamp 在开火时算。 */
     d.fireInterval = TUNE.GUN.fireInterval
       / Math.pow(1 + TUNE.WUP.rate.perLv, this.level('rate'))
-      / hea.rate;
+      / hea.rate
+      / (this.has('autoaim') ? TUNE.DEMON.autoaim.rate : 1);
     d.ocPeak = ovc.peak;
     d.ocRampTime = ovc.ramp;
 
-    d.magazine = Math.ceil(TUNE.GUN.magazine * (1 + TUNE.WUP.mag.perLv * this.level('mag')));
+    d.magazine = Math.ceil(TUNE.GUN.magazine * (1 + TUNE.WUP.mag.perLv * this.level('mag'))
+      * (this.has('drum') ? TUNE.DEMON.drum.mag : 1));
     d.reloadTime = Math.max(TUNE.WUP.reload.floor,
-      TUNE.GUN.reloadTime * Math.pow(1 - TUNE.WUP.reload.perLv, this.level('reload')));
+      TUNE.GUN.reloadTime * Math.pow(1 - TUNE.WUP.reload.perLv, this.level('reload')))
+      * (this.has('drum') ? TUNE.DEMON.drum.reload : 1);
+    /* 独弹放在最后：弹匣「永远只有 1 发」，大弹鼓也翻不动它。
+       两张一起拿就是纯亏 —— 那是玩家自己的选择，不替他挡。 */
+    if (this.has('slug')) d.magazine = 1;
 
     /* 传播 */
     d.pierce = pie.count;
@@ -472,10 +540,17 @@ const BUILD = {
     d.thrift = this.has('thrift')
       ? Math.min(TUNE.WUP.thrift.cap, TUNE.WUP.thrift.at1 + (this.level('thrift') - 1) * TUNE.WUP.thrift.perLv)
       : 0;
-    d.killload = TUNE.WUP.killload.perKill * this.level('killload');
+    /* 按【当前弹匣】的百分比返还。放在 d.magazine 之后算，
+       所以大弹鼓、弹匣卡堆出来的容量会直接把这张卡变强。 */
+    d.killload = TUNE.WUP.killload.pctPerLv * this.level('killload') * d.magazine;
 
     /* 弱点：小升级加在基础倍率上，「爆头」大选择在命中时再乘 */
     d.weakpointMult = TUNE.GUN.weakpointMult + TUNE.WUP.weak.perLv * this.level('weak');
+    /* 自动瞄准的代价：所有命中一律按身体结算。
+       和「爆头」大选择【不做互斥】（Bao 决定）—— 两张一起拿只剩身体 ×0.7
+       的惩罚，那也是玩家自己选的。 */
+    d.noWeak = this.has('autoaim');
+    d.homing = this.has('autoaim');
 
     /* 表现与手感 */
     d.heavyOn = this.has('heavy');
@@ -520,9 +595,26 @@ const BUILD = {
     return d;
   },
 
+  /* 开镜程度 0~1。开镜达人的四项收益与两项代价全部按它插值 ——
+     不做「开镜=开关」，否则每次抬镜都会看到数值瞬跳。 */
+  adsK() {
+    return this.has('scope') && typeof WEAPON !== 'undefined' ? WEAPON.pose.ads : 0;
+  },
+
   /* -------------------------------------------------------------- 运行时 */
   tick(dt, p) {
     const c = this.ctx, C = TUNE.CHOICE;
+
+    /* 开镜达人：移速与散布【每帧】变，折进 derive 就是错的（那只在
+       recompute 时算一次）。所以在这里覆写 G.derived 的这三个数 ——
+       仍然只有 build.js 知道有卡这回事，movement 和 fire 照旧只读 derived。 */
+    if (this.has('scope')) {
+      const D = TUNE.DEMON.scope, k = this.adsK(), d = G.derived;
+      d.moveSpeed = TUNE.PLAYER.moveSpeed * lerp(1, D.speed, k);
+      const sp = lerp(D.hipSpread, 1 / (1 + D.gain), k);
+      d.spreadBase = TUNE.GUN.spreadBase * sp;
+      d.spreadBloom = TUNE.GUN.spreadBloom * sp;
+    }
 
     /* 超频：只改发射频率，不加散布、不加耗弹（Bao：持续按住本身就是代价）。
        「持续射击」不能写成「这一帧开了枪」—— 9 发/秒等于 7 帧才开一次火，
@@ -613,7 +705,8 @@ const BUILD = {
   /* 实际开火间隔：超频在这里兑现（§8.1 第 9 步） */
   fireInterval() {
     const d = G.derived;
-    return d.fireInterval / (1 + (d.ocPeak || 0) * this.ctx.ocRamp);
+    return d.fireInterval / (1 + (d.ocPeak || 0) * this.ctx.ocRamp)
+                          / (1 + TUNE.DEMON.scope.gain * this.adsK());
   },
 
   onFire(cost) {
@@ -666,6 +759,10 @@ const BUILD = {
       m *= 1 + (CARD_BY_ID.root.stat(this.level('root')).m - 1) * k;
     }
 
+    /* 开镜达人：伤害那一项和站桩同类 —— 读【此刻的玩家状态】，
+       所以放在这里按受害者重算，不折进 derive（§8.2 的分界线）。 */
+    if (this.has('scope')) m *= 1 + TUNE.DEMON.scope.gain * this.adsK();
+
     /* 专注：只对当前专注目标生效 */
     if (this.has('focus') && e.id === c.focusId) {
       m *= 1 + CARD_BY_ID.focus.stat(this.level('focus')).per * c.focusStack;
@@ -692,11 +789,21 @@ const BUILD = {
     const g = G.player.gun;
     if (this.has('killload') && g) {
       const root = G.curRoot;
-      const cap = Math.max(1, Math.floor(G.derived.ammoPerShot / 2));
+      /* 上限是【这一枪耗弹的一半】，可以是小数 —— 取整到 1 发的话，
+         耗弹 1 发的枪每杀一个就回半个弹匣，这张卡会直接变成无限弹药。 */
+      const cap = G.derived.ammoPerShot * 0.5;
       if (root && (root.refunded || 0) < cap) {
         const back = Math.min(G.derived.killload, cap - (root.refunded || 0));
-        g.ammo = Math.min(G.derived.magazine, g.ammo + back);
         root.refunded = (root.refunded || 0) + back;
+        /* 浮点累加：一次击杀可能只值 0.9 发，攒够整发才进弹匣，
+           零头留在 loadFrac 里，不做四舍五入吞掉。 */
+        const c = this.ctx;
+        c.loadFrac += back;
+        const whole = Math.floor(c.loadFrac);
+        if (whole > 0) {
+          c.loadFrac -= whole;
+          g.ammo = Math.min(G.derived.magazine, g.ammo + whole);
+        }
         this.stats.ammoSaved += back;
       }
     }
@@ -738,6 +845,7 @@ const BUILD = {
     const molCount = this.molecules().length;
     const pool = [];
     CARDS.forEach(c => {
+      if (c.kind === 'demon') return;        // 恶魔卡只走下面那条独立通道
       let w = c.kind === 'mol' ? 3.2 : c.kind === 'choice' ? 2.4 : c.kind === 'wup' ? 2.0 : 1.5;
       /* 已有 4 个分子后新分子权重下降，但不锁死 —— 幸运局可以继续扩展 */
       if (c.kind === 'mol' && !this.has(c.id) && molCount >= B.moleculeSoftCap) w *= B.moleculeSoftWeight;
@@ -771,7 +879,26 @@ const BUILD = {
     else if (forceBig) pick(c => c.big);
     if (!out.some(o => o.kind !== 'mup')) pick(c => c.kind !== 'mup');
     while (out.length < n) if (!pick(() => true)) break;
+
+    /* todo12 §2：恶魔卡独占【第三格】，前两格照常走保底。
+       换掉最后一格而不是多给一格 —— 三选一永远是三选一，
+       而且拿恶魔卡的代价里必须包含「放弃这一格本来会出的东西」。 */
+    const dm = this._demon();
+    if (dm && out.length >= 3) out[2] = dm;
     return out;
+  },
+
+  /* 已拿到的恶魔卡数量 */
+  demonCount() { return this.demons().length; },
+
+  /* 这一次发牌要不要塞一张恶魔卡。拿过的不再出现（它们不分级）。 */
+  _demon() {
+    const D = TUNE.DEMON;
+    if (G.time < D.fromTime || this.demonCount() >= D.maxPerRun) return null;
+    if (!RNG.evo.chance(D.chance)) return null;
+    const left = CARDS.filter(c => c.kind === 'demon' && !this.has(c.id));
+    if (!left.length) return null;
+    return this._offer(left[Math.floor(RNG.evo.next() * left.length)]);
   },
 
   _offer(c) {
@@ -780,14 +907,16 @@ const BUILD = {
     return {
       id: c.id, card: c, name: c.name, css: c.css, kind: c.kind, big: c.big,
       gain: c.gain, cost: c.cost, lines: c.line(lv, nx),
-      levelText: lv > 0 ? ('Lv' + lv + ' → Lv' + nx) : ('新增 · Lv' + nx)
+      levelText: c.kind === 'demon' ? '恶魔 · 改写规则'
+        : lv > 0 ? ('Lv' + lv + ' → Lv' + nx) : ('新增 · Lv' + nx)
     };
   },
 
   /* HUD：只显示分子名与等级，不显示任何组合名（§7.2） */
   hudText() {
-    return this.order.filter(id => CARD_BY_ID[id].kind === 'mol')
-      .map(id => CARD_BY_ID[id].name + ' Lv' + this.lv[id]).join('  ');
+    return this.order.filter(id => CARD_BY_ID[id].kind === 'mol' || CARD_BY_ID[id].kind === 'demon')
+      .map(id => CARD_BY_ID[id].kind === 'demon' ? CARD_BY_ID[id].name
+                                                 : CARD_BY_ID[id].name + ' Lv' + this.lv[id]).join('  ');
   },
   /* 大玩法选择的实时状态：距离、低血、站桩层数、专注层数、超频档位 */
   stateText() {
@@ -808,10 +937,12 @@ const BUILD = {
 const _dashBuf = [];
 const NUMERIC = ['damage', 'fireInterval', 'magazine', 'reloadTime', 'ammoPerShot', 'pellets',
   'pierce', 'bounce', 'blastRadius', 'blastDmg', 'bulletScale', 'knockback',
-  'weakpointMult', 'volleyFan', 'ocPeak', 'ocRampTime', 'pierceKeep'];
+  'weakpointMult', 'volleyFan', 'ocPeak', 'ocRampTime', 'pierceKeep',
+  'hurtMult', 'killload'];
 const NUMERIC_FALLBACK = {
   damage: TUNE.GUN.damage, fireInterval: TUNE.GUN.fireInterval, magazine: TUNE.GUN.magazine,
   reloadTime: TUNE.GUN.reloadTime, ammoPerShot: 1, pellets: 1, pierce: 0, bounce: 0,
   blastRadius: 0, blastDmg: 0, bulletScale: 1, knockback: TUNE.GUN.knockback,
-  weakpointMult: TUNE.GUN.weakpointMult, volleyFan: 0, ocPeak: 0, ocRampTime: 1, pierceKeep: 1
+  weakpointMult: TUNE.GUN.weakpointMult, volleyFan: 0, ocPeak: 0, ocRampTime: 1, pierceKeep: 1,
+  hurtMult: 1, killload: 0
 };

@@ -81,7 +81,9 @@ const ATK = {
       events: 0,
       hits: {},          // uid -> 本根攻击已命中次数
       blasts: 0,         // 本根攻击已经爆过几次（爆炸衰减读它）
-      refunded: 0        // 击杀装填本根已返还多少
+      refunded: 0,       // 击杀装填本根已返还多少
+      /* 自动瞄准的锁定目标：一次扳机锁一次 */
+      aim: G.derived.homing ? crosshairTarget(TUNE.DEMON.autoaim.cone, TUNE.DEMON.autoaim.range) : null
     };
     G.curRoot = root;
     return root;
@@ -100,6 +102,10 @@ const ATK = {
     const b = spawnBullet(origin, dir, d.damage, makeAttack('primary'), { pierce: d.pierce });
     if (!b) return null;
     b.root = root;
+    /* 自动瞄准：整根攻击共用一个目标，在 beginRoot 时选一次。
+       每颗弹丸各自选目标的话，多发一枪会散成一把扇子追七个人 ——
+       那不是「自动瞄准」，是自动分裂。 */
+    if (d.homing) b.homeE = root.aim;
     b.hopDmg = d.damage;          // 这颗弹当前的基准伤害（穿透会衰减它）
     b.pierceLeft = d.pierce;
     b.pelletIndex = index;
