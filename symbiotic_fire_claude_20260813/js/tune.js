@@ -41,6 +41,14 @@ const TUNE = {
     recoil: 0.55,
     recoilRecover: 8,
     muzzleVel: 220,
+    /* 子弹的可视长度与粗细。子弹【就是】曳光，没有第二个特效 ——
+       9m / 220m·s⁻¹ 意味着这条光带在画面上存在约 40ms，正好是一道快线。 */
+    streakLength: 9,
+    streakRadius: 0.05,
+    /* 尾巴挂在枪口上的距离。子弹 220m/s，这段距离决定了「看得见自己开枪」
+       的时间窗：28m ≈ 127ms ≈ 一个开火间隔，所以连续射击时画面上
+       总有一条从枪口拖出去的光带。超过这段，光带脱开、退化成拖尾。 */
+    streakBlend: 28,
     bulletLife: 0.9,
     pierce: 0,
     pellets: 1,
@@ -89,10 +97,25 @@ const TUNE = {
   /* --- 刷怪 §29 --- */
   SPAWN: {
     aliveCap: 150,                // §35 性能目标
-    minDist: 15,                  // 硬性：绝不在玩家 15m 内刷怪
-    maxDist: 24,
-    rearConeDeg: 100,             // §31 背后禁区
-    rearMinDist: 19,              // 背后更远，留出预警时间
+    /* todo12 后续修正（Bao：「刷怪距离太近了，刷怪都刷在脸上」）。
+       实测确认了这句体感：平均 26.6m 听着没问题，但最近 9.4m、
+       20m 内占 24%、背后半球占 45%。三个来源，一起改：
+         1) pickSpawn 的打分是 -dist —— 它【专挑最近的合法点】
+         2) 跨层豁免是 minDist × 0.62 = 9.3m，楼上楼下等于贴脸
+         3) 背后只保护了正后方 ±50° 的锥，锥外 51° 的地方 15m 就能刷 */
+    minDist: 20,                  // 硬性：同层绝不在玩家 20m 内刷怪
+    minDistCross: 16,             // 跨层稍近可以接受（要爬/跳过来），但不是 9m
+    preferDist: 30,               // 打分偏好的距离：靠这个数最近的点得分最高
+    maxPickDist: 52,              // 超过这个距离的刷怪点不考虑
+    maxDist: 34,                  // 平面兜底路径的最远距离
+    rearConeDeg: 100,             // §31 背后禁区（正后方的锥，要求最远）
+    rearMinDist: 26,              // 正后方锥内
+    rearHalfMinDist: 23,          // 背后【半球】——锥外也不许贴着背刷
+    /* 「必须刷在视线外」这条规则本身就把落点推到背后：视野只占 100°，
+       剩下 260° 里有 180° 是背后半球。所以要主动把分数拉回正面 ——
+       正面的合法落点必然是【被建筑挡住的】，那正是最好的一种出场：
+       怪从你面前的拐角涌出来，而不是凭空出现在你背后。 */
+    frontBonus: 12,
     frontBias: 0.65,              // 65% 刷在视野前方，保证"一直有怪打"
     hpScalePerMin: 0.26,
     dmgScalePerMin: 0.075,
@@ -134,7 +157,6 @@ const TUNE = {
   PROC: {
     maxDepth: 2,
     blastMaxGeneration: 2,
-    splitProjectileCap: 128,
     lightningChain: 3,
     conductionHits: 6
   },
@@ -250,7 +272,6 @@ const TUNE = {
     muzzleLightPeak: 2.4, muzzleLightRange: 3.2, worldFlashPeak: 2.2,
 
     /* 曳光 */
-    tracerCap: 64, tracerLife: 0.055, tracerLength: 9,
 
     /* 抛壳与弹匣 */
     shellCap: 72, shellLife: 3.2, shellScale: 1.0,

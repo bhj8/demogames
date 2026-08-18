@@ -106,6 +106,13 @@ function main() {
       '  3分击杀 ' + r.kills3 + '  升级 ' + r.picks +
       '  分子 ' + r.mol + '  击杀 ' + r.kills + '  拒绝 ' + r.rejected +
       '  错误 ' + r.err + '  ' + r.build);
+  /* 刷怪落点：Bao 报的是「刷在脸上」。把体感换成数字。 */
+  const sp = r.sp;
+  say('  刷怪 ' + sp.n + ' 次　平均 ' + (sp.sum / Math.max(1, sp.n)).toFixed(1) + 'm　' +
+      '最近 ' + (sp.min === 1e9 ? '-' : sp.min.toFixed(1)) + 'm　' +
+      '20m 内 ' + Math.round(sp.near20 / Math.max(1, sp.n) * 100) + '%　' +
+      '背后半球 ' + Math.round(sp.rear / Math.max(1, sp.n) * 100) + '%');
+  say('  落点驳回 ' + JSON.stringify(r.reject));
   /* 升级到底是均匀分布还是压在后半段 —— Bao 报的是「8 分钟才 5 级」 */
   say('  升级时刻 ' + r.pickT.join(' '));
   const by8 = r.pickT.filter(t => t <= 480).length;
@@ -127,6 +134,7 @@ function fullRun(seed, strong, moving, weak) {
      evolutionIndex 和进度，整局只弹得出 0~1 次三选一（实测种子 22 只有
      1 次升级、种子 33 一次都没有）。 */
   BUILD.init(); ATK.init(); MAPEV.init(); MAPBUILD.init(); EVO.init();
+  Director.resetSpawnStat(); NAV.stats.rejectReason = {}; NAV.stats.spawnRejected = 0;
   G.time = 0; G.tlIndex = 0; G.over = false; G.phase = 'play';
   G.stats.kills = 0;
   const err0 = window.__err.length;
@@ -219,6 +227,7 @@ function fullRun(seed, strong, moving, weak) {
     build: BUILD.molecules().map(c => c.name).join('+') || '无',
     pickT: pickT,
     near: nearN ? nearSum / nearN : 0, kills3: kills3,
+    sp: Director.spawnStat, reject: NAV.stats.rejectReason,
     nearEarly: earlyN ? early / earlyN : 0,
     nearMin: nearMin === 1e9 ? 0 : nearMin,
     rejected: ATK.budget.rejected,

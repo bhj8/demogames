@@ -15,7 +15,6 @@ function arcPath(a0, a1, r0, r1) {
          ' L ' + p(a1, r1) + ' A ' + r1 + ' ' + r1 + ' 0 ' + big + ' 0 ' + p(a0, r1) + ' Z';
 }
 const TV = new THREE.Vector3(), TV2 = new THREE.Vector3();
-const _muzzleW = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
 
 /* ============================================================================
@@ -152,6 +151,7 @@ function spawnPosition(forceFront, layerWant) {
       while (rel < -Math.PI) rel += Math.PI * 2;
       const behind = Math.abs(rel) > (Math.PI - (S.rearConeDeg * Math.PI / 180) / 2);
       if (behind && dist < S.rearMinDist) continue;
+      if (!behind && Math.abs(rel) > Math.PI / 2 && dist < S.rearHalfMinDist) continue;
     }
     let blocked = false;
     for (let o = 0; o < R.obstacles.length; o++) {
@@ -252,6 +252,12 @@ const Director = {
     return n;
   },
 
+  /* 刷怪落点的实测统计。「刷在脸上」是一句体感，这里把它变成数字：
+     平均距离、最近距离、20m 内的比例、背后半球的比例。
+     Debug 面板直接读它，_stability 也读它。 */
+  spawnStat: { n: 0, sum: 0, min: 1e9, near20: 0, rear: 0 },
+  resetSpawnStat() { this.spawnStat = { n: 0, sum: 0, min: 1e9, near20: 0, rear: 0 }; },
+
   spawnOne() {
     /* §5.4 防站桩：压力阶段会顶掉一次常规抽取，逐级换成攀爬 / 跳跃 / 远程 */
     let tpl = null;
@@ -264,7 +270,20 @@ const Director = {
       ? (RNG.spawn.chance(0.7) ? 'roof' : 'mid') : null;
     const pos = spawnPosition(false, want);
     if (!pos) return;
+    this._record(pos);
     configureEnemy(G.enemies.get(), tpl, pos);
+  },
+  _record(pos) {
+    const p = G.player, st = this.spawnStat;
+    const dx = pos.x - p.pos.x, dz = pos.z - p.pos.z;
+    const d = Math.hypot(dx, dz);
+    st.n++; st.sum += d;
+    if (d < st.min) st.min = d;
+    if (d < 20) st.near20++;
+    let rel = Math.atan2(dx, dz) - (p.yaw + Math.PI);
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    if (Math.abs(rel) > Math.PI / 2) st.rear++;      // 背后半球
   },
   /* §26 变异敌人总占比 = 已选变异数 × 8%，上限 32%；巨化权重 0.5 */
   pickTemplate() {
@@ -1418,6 +1437,10 @@ function fire() {
      整次齐射共享同一份派生预算、事件预算与统一爆炸预算，
      这就是 todo5 §4.1「单次攻击有统一爆炸预算」在代码里的样子。 */
   const root = ATK.beginRoot(d.pellets);
+  /* 子弹的光带要从【真实枪口】拖出来，而不是从镜头里。
+     弹道仍然从准星方向收敛（避免"瞄哪打不到哪"），只有尾巴锚在枪口 ——
+     这正是原来那条独立曳光在做的事，现在它就是子弹本身。 */
+  root.muz = new THREE.Vector3(); WEAPON.muzzleWorldPos(root.muz);
   const fan = (d.volleyFan || 0) * Math.PI / 180;
   for (let i = 0; i < d.pellets; i++) {
     const dir = baseDir.clone();
@@ -1432,16 +1455,6 @@ function fire() {
     dir.addScaledVector(right0, Math.cos(a) * r).addScaledVector(up0, Math.sin(a) * r).normalize();
     ATK.rootBullet(root, muzzleWorld, dir, i);
   }
-
-  /* 曳光从真实枪口出发，但弹道仍从准星方向收敛 —— 避免"瞄哪打不到哪" */
-  WEAPON.muzzleWorldPos(_muzzleW);
-  /* §11 每个模块的枪线必须能分辨：重型粗、动势蓄能亮、齐射多条 */
-  let tracerColor = 0xffd9a0, tracerLen = W.tracerLength;
-  if (d.heavyOn) { tracerColor = 0xff6a4a; tracerLen *= 1.3; }
-  else if (d.pellets > 1) tracerColor = 0x7fd4ff;
-  const nTracer = Math.min(3, d.pellets);
-  for (let i = 1; i < nTracer; i++) WEAPON.addTracer(_muzzleW, baseDir, tracerColor, tracerLen * (0.8 - i * 0.1));
-  WEAPON.addTracer(_muzzleW, baseDir, tracerColor, tracerLen);
 
   const ramp = BUILD.ctx.ocRamp;
   const isLast = !d.infiniteMag && g.ammo <= 0;
@@ -2084,7 +2097,6 @@ function showResults(won) {
   if (G.stats.buffsTaken) supply.push('空投强化 ×' + G.stats.buffsTaken);
 
   const chain = [];
-  if (G.stats.splits) chain.push('分裂 ×' + G.stats.splits);
   if (G.stats.blasts) chain.push('爆裂 ×' + G.stats.blasts);
   if (G.stats.bolts) chain.push('闪电 ×' + G.stats.bolts);
 
@@ -2385,7 +2397,7 @@ const DebugPanel = {
       ' bolt <b>' + (WEAPON.boltLocked ? 'LOCK' : WEAPON.boltSpring.x.toFixed(3)) + '</b>' +
       ' reload <b>' + (WEAPON.reload.active ? 'P' + WEAPON.reload.phase : '-') + '</b>' +
       ' ads <b>' + WEAPON.pose.ads.toFixed(2) + '</b>' +
-      '<br>曳光 <b>' + WEAPON.stats.tracers + '</b> 弹壳 <b>' + WEAPON.stats.shells + '</b>' +
+      '<br>弹壳 <b>' + WEAPON.stats.shells + '</b>' +
       '<br>弱点命中 <b style="color:#ffd24a">' + (G.stats.weakHits || 0) + '</b>' +
       ' 弱点击杀 <b style="color:#ff9a4a">' + (G.stats.weakKills || 0) + '</b>' +
       ' 命中 <b>' + G.stats.hits + '</b>' +
@@ -2394,6 +2406,11 @@ const DebugPanel = {
       ' &nbsp; 威胁扇区 <b>' + (UI._sectorScore ? Array.prototype.slice.call(UI._sectorScore)
         .map((v, i) => ({ v: v, i: i })).sort((a, b) => b.v - a.v).slice(0, 3)
         .filter(x => x.v > 0.01).map(x => x.i + ':' + x.v.toFixed(1)).join(' ') || '-' : '-') + '</b>' +
+      '<br>刷怪 <b>' + Director.spawnStat.n + '</b> 次　平均 <b>' +
+        (Director.spawnStat.sum / Math.max(1, Director.spawnStat.n)).toFixed(1) + 'm</b>' +
+        '　最近 <b>' + (Director.spawnStat.min === 1e9 ? '-' : Director.spawnStat.min.toFixed(1)) + 'm</b>' +
+        '　20m 内 <b>' + Math.round(Director.spawnStat.near20 / Math.max(1, Director.spawnStat.n) * 100) + '%</b>' +
+        '　背后 <b>' + Math.round(Director.spawnStat.rear / Math.max(1, Director.spawnStat.n) * 100) + '%</b>' +
       '<br>变种占比 <b>' + Math.round(Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation) * 100) + '%</b>' +
       ' &nbsp; ' + (BUILD.stateText() || '无状态卡') +
       '<br>无敌 <b style="color:' + (this.god ? '#7ef0a8' : '#8899aa') + '">' + (this.god ? 'ON' : 'off') + '</b>' +
@@ -2616,20 +2633,45 @@ function frame(now) {
 }
 
 const _im = new THREE.Matrix4(), _iq = new THREE.Quaternion(), _is = new THREE.Vector3();
+const _ip = new THREE.Vector3(), _iz = new THREE.Vector3(0, 0, 1), _ic = new THREE.Color();
+const _tail = new THREE.Vector3();
 function syncInstances() {
-  let a = 0, b = 0;
-  const list = G.bullets.live;
+  let a = 0;
+  const G_ = TUNE.GUN, list = G.bullets.live;
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
-    if (p._dead) continue;
-    _is.set(p.scale, p.scale, p.scale * 2.6);
-    _iq.setFromUnitVectors(new THREE.Vector3(0, 0, 1), p.dir);
-    _im.compose(p.pos, _iq, _is);
-    if (p.split) { if (b < 192) R.splitMesh.setMatrixAt(b++, _im); }
-    else { if (a < 320) R.bulletMesh.setMatrixAt(a++, _im); }
+    if (p._dead || a >= 320) continue;
+    /* 子弹就是曳光：一条沿飞行方向拉长的光带，头在 p.pos，尾在后面。
+       尾巴长度不能一出膛就拉满 —— 那样第一帧就有一条 9m 的光棍从
+       镜头里长出来。按已飞距离逐渐拉长，看起来就是"射出去"。 */
+    const flown = (G_.bulletLife - p.life) * p.speed;
+    /* 头在 p.pos，尾巴分两段人生：
+       刚出膛时锚在【真实枪口】上 —— 否则一条朝正前方的细杆在屏幕上
+       只是一个点，玩家根本看不见自己开的枪（这正是以前要另画一条
+       枪口曳光的原因）。飞过 streakBlend 米之后，尾巴脱离枪口，
+       退化成沿弹道拖在后面的 streakLength 米光带。 */
+    _tail.copy(p.pos).addScaledVector(p.dir, -Math.min(G_.streakLength, flown));
+    if (p.muz && flown < G_.streakBlend) {
+      _tail.lerp(p.muz, 1 - flown / G_.streakBlend);
+    }
+    _ip.copy(p.pos).sub(_tail);
+    const len = _ip.length();
+    if (len < 0.05) continue;
+    _ip.multiplyScalar(1 / len);                     // 光带自身的朝向
+    _is.set(p.scale * G_.streakRadius, p.scale * G_.streakRadius, len);
+    _iq.setFromUnitVectors(_iz, _ip);
+    /* 圆柱以中心为原点，所以位置取头尾中点 */
+    _ip.copy(_tail).lerp(p.pos, 0.5);
+    _im.compose(_ip, _iq, _is);
+    R.bulletMesh.setMatrixAt(a, _im);
+    /* §11 每个分子的枪线必须能分辨：重弹橙红、多发冰蓝、穿透青绿。
+       这一份颜色以前挂在 weapon.js 的曳光上，现在跟着子弹本体走。 */
+    R.bulletMesh.setColorAt(a, _ic.setHex(p.col || 0xffd9a0));
+    a++;
   }
-  R.bulletMesh.count = a; R.bulletMesh.instanceMatrix.needsUpdate = true;
-  R.splitMesh.count = b; R.splitMesh.instanceMatrix.needsUpdate = true;
+  R.bulletMesh.count = a;
+  R.bulletMesh.instanceMatrix.needsUpdate = true;
+  if (R.bulletMesh.instanceColor) R.bulletMesh.instanceColor.needsUpdate = true;
 
   let c = 0;
   const al = G.acids.live;

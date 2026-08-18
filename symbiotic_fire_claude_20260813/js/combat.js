@@ -17,7 +17,7 @@ const G = {
   variantPool: [],                   // 已进入生成池的变种
   enemies: null, bullets: null, acids: null,
   xp: [], hazards: [], pendings: [],
-  stats: { kills: 0, shots: 0, hits: 0, procs: 0, dmgDealt: 0, dmgTaken: 0, blasts: 0, bolts: 0, splits: 0 },
+  stats: { kills: 0, shots: 0, hits: 0, procs: 0, dmgDealt: 0, dmgTaken: 0, blasts: 0, bolts: 0 },
   derived: null,
   conductCounter: 0,
   xpRate: 0, xpFrame: 0, pacingMult: 1,
@@ -407,14 +407,14 @@ function makeBulletPool() {
   return new Pool(() => ({
     uid: ++_bulletUid,
     pos: new THREE.Vector3(), prev: new THREE.Vector3(), dir: new THREE.Vector3(),
-    speed: 0, dmg: 0, life: 0, pierce: 0, hitList: null, ctx: null, split: false, scale: 1,
+    speed: 0, dmg: 0, life: 0, pierce: 0, hitList: null, ctx: null, col: 0, scale: 1,
     /* todo5 §6.2：谱系节点挂在子弹上，池化复位时必须清干净 */
     gene: null, baseDmg: 0, pierceHits: 0, bounceHits: 0,
-    pendingBlast: false, homeE: null, splitBudget: 0, volleyIndex: 0
+    pendingBlast: false, homeE: null, volleyIndex: 0
   }), b => {
     b.ctx = null; b.hitList = null; b.gene = null;
     b.pierceHits = 0; b.bounceHits = 0; b.pendingBlast = false;
-    b.homeE = null; b.splitBudget = 0; b.volleyIndex = 0; b.baseDmg = 0;
+    b.homeE = null; b.muz = null; b.volleyIndex = 0; b.baseDmg = 0;
   });
 }
 
@@ -425,18 +425,20 @@ function spawnBullet(origin, dir, dmg, ctx, opts) {
   const b = G.bullets.get();
   b.pos.copy(origin); b.prev.copy(origin);
   b.dir.copy(dir).normalize();
-  b.speed = TUNE.GUN.muzzleVel * (opts.split ? 0.85 : 1);
+  b.speed = TUNE.GUN.muzzleVel;
   b.dmg = dmg;
   b.life = TUNE.GUN.bulletLife;
   b.pierce = opts.pierce !== undefined ? opts.pierce : G.derived.pierce;
   b.hitList = new Set();
   b.ctx = ctx;
-  b.split = !!opts.split;
   b.scale = (opts.scale || 1) * G.derived.bulletScale;
+  /* 光带颜色跟着分子走（§11 要求枪线能一眼分辨）。在生成时定死，
+     不在渲染里每帧查 —— 穿透衰减后颜色也不该跳。 */
+  b.col = G.derived.heavyOn ? 0xff6a4a : G.derived.pellets > 1 ? 0x7fd4ff : 0xffd9a0;
   b.pierceHits = 0; b.bounceHits = 0;
   b.gene = opts.gene || null;
   b.baseDmg = opts.gene ? dmg : 0;
-  b.pendingBlast = false; b.homeE = null;
+  b.pendingBlast = false; b.homeE = null; b.muz = null;
   return b;
 }
 

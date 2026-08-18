@@ -76,13 +76,15 @@ const NAV = {
     const hHalf = Math.atan(Math.tan(vFov / 2) * R.camera.aspect) * 1.02;
 
     let best = null, bestScore = -Infinity;
-    for (let n = 0; n < 26; n++) {
+    for (let n = 0; n < 36; n++) {
       const s = CITY.spawnPoints[RNG.spawn.int(CITY.spawnPoints.length)];
       if (s.layer !== layer) continue;
       const dx = s.x - p.pos.x, dz = s.z - p.pos.z, dy = s.y - p.pos.y;
       const dist = Math.hypot(dx, dz);
-      if (dist < S.minDist * (layer === pl ? 1 : 0.62)) { this._reject('too_close'); continue; }
-      if (dist > 46) { this._reject('too_far'); continue; }
+      /* 跨层的最近距离单独给一个数。原来写的是 minDist × 0.62 —— 9.3m，
+         楼上楼下等于直接刷在脸上（实测最近 9.4m 就是这么来的）。 */
+      if (dist < (layer === pl ? S.minDist : S.minDistCross)) { this._reject('too_close'); continue; }
+      if (dist > S.maxPickDist) { this._reject('too_far'); continue; }
 
       /* 教学 / 正面生成：要求在视野内且不太远 */
       let rel = Math.atan2(dx, dz) - (p.yaw + Math.PI);
@@ -96,12 +98,22 @@ const NAV = {
            §5.3 也禁止直接在玩家身后近距离生成普通怪来解决追击问题。 */
         const occluded = CITY.segBlocked(p.pos.x, p.pos.y + 1.5, p.pos.z, s.x, s.y + 1.0, s.z);
         if (inView && !occluded) { this._reject('visible'); continue; }
+        /* 背后分两圈：正后方的锥要求最远，锥外的整个背后半球也有下限。
+           只保护锥的话，偏 51° 的地方 15m 就能刷 —— 玩家的体感是
+           「怪凭空出现在我背后」，因为他根本没看到它走过来。 */
         const behind = Math.abs(rel) > Math.PI - 0.9;
         if (behind && dist < S.rearMinDist) { this._reject('rear_close'); continue; }
+        if (!behind && Math.abs(rel) > Math.PI / 2 && dist < S.rearHalfMinDist) {
+          this._reject('rear_half'); continue;
+        }
       }
-      /* 越近越好，但不能近到违规；同层优先 */
-      /* M4：热点附近的刷怪点更容易被选中，压力才真的会「迁移」 */
-      const score = -dist - Math.abs(dy) * 0.35 + (s.layer === layer ? 6 : 0)
+      /* 打分偏好【一个距离带】，不是「越近越好」。
+         原来是 -dist —— 它专挑最近的合法点，于是每一只都贴着下限出现，
+         下限是多少，玩家看到的就是多少。改成靠近 preferDist 得分最高：
+         太近扣分，太远也扣分，落点自然散在一个能看见它走过来的圈上。 */
+      const score = -Math.abs(dist - S.preferDist) - Math.abs(dy) * 0.35
+        + (s.layer === layer ? 6 : 0)
+        + (Math.abs(rel) < Math.PI / 2 ? S.frontBonus : 0)
         + MAPEV.spawnBias(s.x, s.z) * 24 + RNG.spawn.range(0, 3);
       if (score > bestScore) { bestScore = score; best = s; }
     }

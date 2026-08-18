@@ -296,16 +296,26 @@ const R = {
     this.xpMesh.count = 0; this.xpMesh.frustumCulled = false;
     this.scene.add(this.xpMesh);
 
-    /* 子弹：也用 InstancedMesh，主弹与分裂弹用不同颜色 → 两个实例网格 */
-    const bGeo = new T.SphereGeometry(0.075, 6, 5);
-    this.bulletMesh = new T.InstancedMesh(bGeo, new T.MeshBasicMaterial({ color: 0xffe6a8 }), 320);
+    /* 子弹 = 曳光。以前这里是一颗 0.075 的小球，另外由 weapon.js 在枪口
+       画一条 9m 的线段当曳光 —— 于是同一发子弹在画面上有【两个】东西：
+       一条又长又快的光线，和一颗慢慢飞的球。Bao 的原话是
+       「这两个本来应该是同一个东西……那种又长又快的特效，做子弹是最合适的」。
+       所以球删掉，曳光线删掉，子弹本身就是那条又长又快的光带。
+
+       用 InstancedMesh 而不是 LineSegments：WebGL 的线宽恒为 1px，
+       而「重弹更粗」是 §11 要求能一眼分辨的信息，必须有真实粗细。
+       圆柱建成 Z 轴朝向，实例矩阵直接按飞行方向拉伸。 */
+    /* 头粗尾细：光带才有方向感，看得出是"射出去"而不是一根横着的棍。
+       rotateX(+90°) 之后 +Y 端指向 +Z，也就是飞行方向的【头部】。 */
+    const bGeo = new T.CylinderGeometry(1, 0.28, 1, 6, 1, true);
+    bGeo.rotateX(Math.PI / 2);                       // Y 轴 → Z 轴（飞行方向）
+    this.bulletMesh = new T.InstancedMesh(bGeo, new T.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 1,
+      depthWrite: false, blending: T.AdditiveBlending, side: T.DoubleSide
+    }), 320);
     this.bulletMesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
     this.bulletMesh.count = 0; this.bulletMesh.frustumCulled = false;
     this.scene.add(this.bulletMesh);
-    this.splitMesh = new T.InstancedMesh(bGeo, new T.MeshBasicMaterial({ color: MUT.fission.color }), 192);
-    this.splitMesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
-    this.splitMesh.count = 0; this.splitMesh.frustumCulled = false;
-    this.scene.add(this.splitMesh);
 
     /* 敌人投射物（酸液） */
     this.acidMesh = new T.InstancedMesh(new T.SphereGeometry(0.22, 7, 6), new T.MeshBasicMaterial({ color: 0xa8c24a }), 64);

@@ -576,7 +576,7 @@ const BUILD = {
     d.hitsPerTarget = B.hitsPerTargetPerRoot;
 
     /* 老系统留下的开关：V3 不再产出它们，但战斗代码仍会读到 */
-    d.infiniteMag = false; d.splitCount = 0; d.feedback = 0;
+    d.infiniteMag = false; d.feedback = 0;
     d.executeBonus = 0; d.traumaHeal = 0; d.hunter = 0; d.searchMult = 1;
     d.momActive = 0; d.aftershock = 0; d.mutDamage = 1; d.mutRadius = 1;
 

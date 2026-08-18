@@ -39,7 +39,7 @@ const WEAPON = {
   lastAmmoShown: -1,
 
   /* --- 事件计数，供调试面板观察 --- */
-  stats: { shots: 0, shells: 0, tracers: 0 },
+  stats: { shots: 0, shells: 0 },
 
   /* ==========================================================================
      todo5 §11：每个模块必须拥有独立、可合并的反馈层。
@@ -50,7 +50,7 @@ const WEAPON = {
   moduleFx: {
     volley: 'muzzle+多条枪线（_onShot flashOuter2 / game.js fire 多曳光）',
     blast: '爆点+冲击波+合并音效（ATK._blastFx）',
-    pierce: '连续命中音阶+纵向尾迹（_onShot boltSpeed / addTracer 长枪线）',
+    pierce: '连续命中音阶+纵向尾迹（_onShot boltSpeed / 子弹光带更长）',
     heavy: '枪模后坐+巨响+粗枪线（_onShot heavy 通道）',
     overclock: '升速音层+枪口密度+血管发光（update veinMat / boltSpeed）',
     ricochet: '折线曳光（ATK._bounceFx）',
@@ -231,22 +231,9 @@ const WEAPON = {
   _buildWorldFx() {
     const T = THREE, W = TUNE.WEAPON_FX;
 
-    /* 曳光：一整个 LineSegments，一次 draw call 撑住所有轨迹 */
-    const cap = W.tracerCap;
-    const g = new T.BufferGeometry();
-    g.setAttribute('position', new T.BufferAttribute(new Float32Array(cap * 6), 3));
-    g.setAttribute('color', new T.BufferAttribute(new Float32Array(cap * 6), 3));
-    const mat = new T.LineBasicMaterial({
-      vertexColors: true, transparent: true, opacity: 0.95,
-      depthWrite: false, blending: T.AdditiveBlending
-    });
-    this.tracerMesh = new T.LineSegments(g, mat);
-    this.tracerMesh.frustumCulled = false;
-    R.scene.add(this.tracerMesh);
-    this.tracers = [];
-    for (let i = 0; i < cap; i++) {
-      this.tracers.push({ live: false, t: 0, dur: 0.06, from: new T.Vector3(), to: new T.Vector3(), c: [1, 1, 1] });
-    }
+    /* 曳光已经不在这里了：子弹本体就是曳光（render.js 的 bulletMesh）。
+       以前枪口画一条 9m 线段 + 子弹画一颗小球，同一发子弹在画面上是两个
+       东西，Bao 试玩时一眼看出来了。这里只保留弹壳、掉落弹匣与枪口闪光。 */
 
     /* 弹壳：InstancedMesh */
     const shellGeo = new T.CylinderGeometry(0.016, 0.014, 0.05, 6);
@@ -418,21 +405,6 @@ const WEAPON = {
     }
   },
 
-  /* --- 曳光 §5.2 --- */
-  addTracer(fromWorld, dir, color, len) {
-    const W = TUNE.WEAPON_FX;
-    let tr = null;
-    for (let i = 0; i < this.tracers.length; i++) if (!this.tracers[i].live) { tr = this.tracers[i]; break; }
-    if (!tr) return;
-    tr.live = true; tr.t = 0; tr.dur = W.tracerLife;
-    tr.from.copy(fromWorld);
-    tr.to.copy(fromWorld).addScaledVector(dir, len || W.tracerLength);
-    tr.c[0] = ((color >> 16) & 255) / 255;
-    tr.c[1] = ((color >> 8) & 255) / 255;
-    tr.c[2] = (color & 255) / 255;
-    this.stats.tracers++;
-  },
-
   /* ==========================================================================
      每帧更新
      ========================================================================== */
@@ -558,25 +530,6 @@ const WEAPON = {
 
   updateWorldFx(dt) {
     const W = TUNE.WEAPON_FX;
-
-    /* 曳光 */
-    const attr = this.tracerMesh.geometry.attributes;
-    let n = 0;
-    for (let i = 0; i < this.tracers.length; i++) {
-      const tr = this.tracers[i];
-      if (!tr.live) continue;
-      tr.t += dt;
-      if (tr.t >= tr.dur) { tr.live = false; continue; }
-      const a = 1 - tr.t / tr.dur;
-      const o = n * 6;
-      attr.position.array[o] = tr.from.x; attr.position.array[o + 1] = tr.from.y; attr.position.array[o + 2] = tr.from.z;
-      attr.position.array[o + 3] = tr.to.x; attr.position.array[o + 4] = tr.to.y; attr.position.array[o + 5] = tr.to.z;
-      attr.color.array[o] = tr.c[0] * a; attr.color.array[o + 1] = tr.c[1] * a; attr.color.array[o + 2] = tr.c[2] * a;
-      attr.color.array[o + 3] = tr.c[0] * a * 0.15; attr.color.array[o + 4] = tr.c[1] * a * 0.15; attr.color.array[o + 5] = tr.c[2] * a * 0.15;
-      n++;
-    }
-    attr.position.needsUpdate = true; attr.color.needsUpdate = true;
-    this.tracerMesh.geometry.setDrawRange(0, n * 2);
 
     /* 弹壳 */
     let sc = 0;
