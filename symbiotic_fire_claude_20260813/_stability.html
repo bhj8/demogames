@@ -113,6 +113,10 @@ function main() {
       '20m 内 ' + Math.round(sp.near20 / Math.max(1, sp.n) * 100) + '%　' +
       '背后半球 ' + Math.round(sp.rear / Math.max(1, sp.n) * 100) + '%');
   say('  落点驳回 ' + JSON.stringify(r.reject));
+  say('  全图在场 平均 ' + r.alive.toFixed(1) + '　峰值 ' + r.alivePeak +
+      '　（上限 ' + TUNE.SPAWN.aliveCap + '，动态目标最高 ' +
+      Math.round(TUNE.SPAWN.targetBase + TUNE.SPAWN.targetCoef) + '）' +
+      '　单帧耗时 平均 ' + r.msAvg.toFixed(2) + 'ms 最差 ' + r.msMax.toFixed(1) + 'ms');
   /* 升级到底是均匀分布还是压在后半段 —— Bao 报的是「8 分钟才 5 级」 */
   say('  升级时刻 ' + r.pickT.join(' '));
   const by8 = r.pickT.filter(t => t <= 480).length;
@@ -165,10 +169,15 @@ function fullRun(seed, strong, moving, weak) {
      刷怪那次改动的成败就看这个数，不是看全图在场数 ——
      地图很满而玩家面前很空，正是改之前的病。 */
   let nearSum = 0, nearN = 0, nearMin = 1e9, early = 0, earlyN = 0, kills3 = 0;
+  /* 全图在场数：Bao 定稿的方案是「提高怪物数量上限」，先得知道现在到底站得住几只 */
+  let aliveSum = 0, aliveN = 0, alivePeak = 0, fpsMin = 1e9, fpsN = 0, fpsSum = 0;
   const pickT = [];
+  let msMax = 0, msSum = 0, msN = 0;
   for (let i = 0; i < 60 * 60 * 12 + 600; i++) {
     _clock += 16.7;
+    const _t0 = performance.now();
     frame(_clock);
+    if (i % 7 === 0) { const d = performance.now() - _t0; msSum += d; msN++; if (d > msMax) msMax = d; }
     if (G.phase === 'choose') {
       UI._pickAt = 0; UI._released = true;
       const c = document.querySelector('#cards .card');
@@ -215,6 +224,8 @@ function fullRun(seed, strong, moving, weak) {
       nearSum += near; nearN++;
       if (near < nearMin) nearMin = near;
       if (G.time <= 180) { early += near; earlyN++; kills3 = G.stats.kills; }
+      aliveSum += G.enemies.count; aliveN++;
+      if (G.enemies.count > alivePeak) alivePeak = G.enemies.count;
     }
     if (G.over) break;
   }
@@ -227,6 +238,8 @@ function fullRun(seed, strong, moving, weak) {
     build: BUILD.molecules().map(c => c.name).join('+') || '无',
     pickT: pickT,
     near: nearN ? nearSum / nearN : 0, kills3: kills3,
+    alive: aliveN ? aliveSum / aliveN : 0, alivePeak: alivePeak,
+    msMax: msMax, msAvg: msN ? msSum / msN : 0,
     sp: Director.spawnStat, reject: NAV.stats.rejectReason,
     nearEarly: earlyN ? early / earlyN : 0,
     nearMin: nearMin === 1e9 ? 0 : nearMin,

@@ -238,7 +238,7 @@ function audit() {
     const d = derived(['drum']);
     say('  大弹鼓　弹匣 ' + b.mag + ' → ' + d.magazine + '　换弹 ' + n1(b.reload) + ' → ' + n1(d.reloadTime) + 's');
     ok(Math.abs(d.magazine / b.mag - 6) < 0.06, '弹匣不是 ×6（+500%）');
-    ok(Math.abs(d.reloadTime / b.reload - 3) < 0.02, '换弹不是 ×3（+200%）');
+    ok(Math.abs(d.reloadTime / b.reload - TUNE.DEMON.drum.reload) < 0.02, '换弹不是 ×' + TUNE.DEMON.drum.reload);
   }
 
   /* ---- 独弹：单发 ×16，弹匣永远 1 发 ---- */
@@ -391,8 +391,10 @@ function audit() {
     }
     let n = 0, tot = 0;
     G.enemies.live.forEach(e => { if (e.dead || e._dead) return; tot++; if (e.tpl.ranged) n++; });
-    say('  远程怪　场上 ' + tot + ' 只，其中远程 ' + n + ' 只（' + Math.round(n / tot * 100) + '%）');
-    ok(n / tot <= TUNE.SPAWN.rangedShare + 0.02, '远程怪占比超过 20%');
+    const cap = Math.min(TUNE.SPAWN.rangedShare * tot, TUNE.SPAWN.rangedMax);
+    say('  远程怪　场上 ' + tot + ' 只，其中远程 ' + n + ' 只（' + Math.round(n / tot * 100) +
+        '%，闸门 ' + Math.round(cap) + ' 只）');
+    ok(n <= cap + 1, '远程怪超过闸门（比例 20% 与绝对 ' + TUNE.SPAWN.rangedMax + ' 取小）');
 
     /* 并发闸：全场都在射程内，抬手的也不能超过 3 只 */
     const p = G.player;

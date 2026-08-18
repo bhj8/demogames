@@ -380,7 +380,7 @@ demon('autoaim', '自动瞄准', '子弹自动追踪准星最近的敌人', '不
             '射速 ' + pct(TUNE.DEMON.autoaim.rate) + '，所有命中都按身体结算'];
   });
 
-demon('drum', '大弹鼓', '弹匣容量 +500%', '换弹时间 +200%',
+demon('drum', '大弹鼓', '弹匣容量 +500%', '换弹时间 +500%',
   function () {
     const D = TUNE.DEMON.drum, d = G.derived || {};
     const m = d.magazine || TUNE.GUN.magazine, r = d.reloadTime || TUNE.GUN.reloadTime;

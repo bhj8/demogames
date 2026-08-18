@@ -106,7 +106,6 @@ const ATK = {
        每颗弹丸各自选目标的话，多发一枪会散成一把扇子追七个人 ——
        那不是「自动瞄准」，是自动分裂。 */
     if (d.homing) b.homeE = root.aim;
-    b.muz = root.muz;                 // 光带的起点：真实枪口（见 syncInstances）
     b.hopDmg = d.damage;          // 这颗弹当前的基准伤害（穿透会衰减它）
     b.pierceLeft = d.pierce;
     b.pelletIndex = index;

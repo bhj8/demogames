@@ -414,7 +414,7 @@ function makeBulletPool() {
   }), b => {
     b.ctx = null; b.hitList = null; b.gene = null;
     b.pierceHits = 0; b.bounceHits = 0; b.pendingBlast = false;
-    b.homeE = null; b.muz = null; b.volleyIndex = 0; b.baseDmg = 0;
+    b.homeE = null; b.volleyIndex = 0; b.baseDmg = 0;
   });
 }
 
@@ -438,7 +438,7 @@ function spawnBullet(origin, dir, dmg, ctx, opts) {
   b.pierceHits = 0; b.bounceHits = 0;
   b.gene = opts.gene || null;
   b.baseDmg = opts.gene ? dmg : 0;
-  b.pendingBlast = false; b.homeE = null; b.muz = null;
+  b.pendingBlast = false; b.homeE = null;
   return b;
 }
 

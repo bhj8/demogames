@@ -312,7 +312,9 @@ const Director = {
         if (e.dead || e._dead) continue;
         tot++; if (e.tpl && e.tpl.ranged) n++;
       }
-      if (tot > 0 && (n + 1) / (tot + 1) > TUNE.SPAWN.rangedShare) base = ENEMIES.grunt;
+      /* 比例与绝对数量取小的那个：小场面按比例，大场面按绝对值兜住 */
+      const cap = Math.min(TUNE.SPAWN.rangedShare * (tot + 1), TUNE.SPAWN.rangedMax);
+      if (n + 1 > cap) base = ENEMIES.grunt;
     }
 
     /* 只有 grunt 会被替换成变种模板 §25 */
@@ -803,7 +805,11 @@ G.spawnMinion = function (parent, ox, oz, hpRatio) {
    经验 §11.3 / §31
    ========================================================================== */
 function dropXp(pos, value) {
-  if (G.xp.length > 620) { G.xp.shift(); }
+  /* 上限跟着怪量走。原来是 620 —— 数量翻 10 倍之后，一场混战里
+     在飞的经验球轻松超过它，shift() 会把最早那颗【直接扔掉】，
+     也就是玩家打死的怪白打了。渲染那边只画 640 颗，
+     但没被画出来的一样能捡到，所以这里放宽不影响帧率。 */
+  if (G.xp.length > TUNE.XP.maxOrbs) { G.xp.shift(); }
   /* M3：地面经验收益最高，让玩家有理由主动回到危险区域（todo4 §6 / todo6 §6）。
      不是「屋顶不掉经验」——那会变成惩罚；是屋顶打折，让登高成为取舍。 */
   if (CITY.enabled) {
@@ -1437,10 +1443,6 @@ function fire() {
      整次齐射共享同一份派生预算、事件预算与统一爆炸预算，
      这就是 todo5 §4.1「单次攻击有统一爆炸预算」在代码里的样子。 */
   const root = ATK.beginRoot(d.pellets);
-  /* 子弹的光带要从【真实枪口】拖出来，而不是从镜头里。
-     弹道仍然从准星方向收敛（避免"瞄哪打不到哪"），只有尾巴锚在枪口 ——
-     这正是原来那条独立曳光在做的事，现在它就是子弹本身。 */
-  root.muz = new THREE.Vector3(); WEAPON.muzzleWorldPos(root.muz);
   const fan = (d.volleyFan || 0) * Math.PI / 180;
   for (let i = 0; i < d.pellets; i++) {
     const dir = baseDir.clone();
@@ -2634,7 +2636,7 @@ function frame(now) {
 
 const _im = new THREE.Matrix4(), _iq = new THREE.Quaternion(), _is = new THREE.Vector3();
 const _ip = new THREE.Vector3(), _iz = new THREE.Vector3(0, 0, 1), _ic = new THREE.Color();
-const _tail = new THREE.Vector3();
+const _tail = new THREE.Vector3(), _muz = new THREE.Vector3();
 function syncInstances() {
   let a = 0;
   const G_ = TUNE.GUN, list = G.bullets.live;
@@ -2645,6 +2647,11 @@ function syncInstances() {
   const camY = R.camera.position;
   const kPx = G_.streakPx * Math.tan(R.camera.fov * Math.PI / 360)
     / Math.max(1, R.renderer.domElement.clientHeight);
+  /* 光带尾巴要锚在【此刻】的枪口上，每帧重新取。
+     原来是在开火那一刻把枪口位置存进子弹里 —— 那是个世界空间的定点，
+     玩家一跑起来（8m/s，两帧就是 0.27m，和枪口偏移同量级）人走了、
+     锚点没走，光带看上去就不是从枪管里出来的。 */
+  WEAPON.muzzleWorldPos(_muz);
   for (let i = 0; i < list.length; i++) {
     const p = list[i];
     if (p._dead || a >= 320) continue;
@@ -2658,8 +2665,8 @@ function syncInstances() {
        枪口曳光的原因）。飞过 streakBlend 米之后，尾巴脱离枪口，
        退化成沿弹道拖在后面的 streakLength 米光带。 */
     _tail.copy(p.pos).addScaledVector(p.dir, -Math.min(G_.streakLength, flown));
-    if (p.muz && flown < G_.streakBlend) {
-      _tail.lerp(p.muz, 1 - flown / G_.streakBlend);
+    if (flown < G_.streakBlend) {
+      _tail.lerp(_muz, 1 - flown / G_.streakBlend);
     }
     _ip.copy(p.pos).sub(_tail);
     const len = _ip.length();
