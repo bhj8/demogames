@@ -16,6 +16,9 @@ const path = require('path');
 
 const SEEDS = [11, 22, 33, 44, 55, 66, 77, 88, 99, 111];
 const n = Math.min(SEEDS.length, parseInt(process.argv[2], 10) || 10);
+/* node _stability.js 10 strong —— 开局就给一套强 Build，验证 todo11 §4
+   的第二档（强 Build 22~24 次）。不带这个参数就是普通局那一档。 */
+const STRONG = process.argv[3] === 'strong';
 const file = 'file://' + path.resolve(__dirname, '_stability.html');
 
 (async () => {
@@ -26,7 +29,7 @@ const file = 'file://' + path.resolve(__dirname, '_stability.html');
   for (const seed of SEEDS.slice(0, n)) {
     const page = await browser.newPage();
     const t0 = Date.now();
-    await page.goto(file + '?seed=' + seed, { timeout: 0, waitUntil: 'load' });
+    await page.goto(file + '?seed=' + seed + (STRONG ? '&strong=1' : ''), { timeout: 0, waitUntil: 'load' });
     try {
       await page.waitForFunction(() => document.title !== 'PENDING', null, { timeout: 600000 });
     } catch (e) {

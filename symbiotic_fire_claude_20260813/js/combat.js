@@ -59,8 +59,16 @@ function recompute() {
       d.fireInterval /= (1 + A.ammoFireRate);
       d.infiniteMag = true;                  // 弹匣不减少，也不允许进入换弹
     } else if (G.buff.id === 'adren') {
+      /* 暴走针（todo11 §1）：机动 + 循环。换弹那一项是它真正的价值 ——
+         高耗弹 Build 有一半时间耗在换弹上，砍掉才等价于「更多输出」。 */
       d.moveSpeed *= (1 + A.adrenSpeed);
       d.dashCooldown *= (1 - A.adrenDashCd);
+      d.fireInterval /= (1 + A.adrenFireRate);
+      d.reloadTime *= (1 - A.adrenReload);
+    } else if (G.buff.id === 'shield' && G.buff.shield > 0) {
+      /* 强袭盾：护盾【还在】的时候才给伤害加成 —— 盾被打穿就没了，
+         所以它奖励的是「顶着压力继续输出」，不是无脑站着。 */
+      d.damage *= A.shieldDamage;
     }
   }
 

@@ -360,6 +360,11 @@ i{color:rgba(219,231,240,.28);font-style:normal}
   background:#0d1117cc;border:1px solid currentColor;opacity:0;transition:opacity .25s;
   pointer-events:none;z-index:40}
 #nextdraw.on{opacity:1}
+
+/* todo11 §5 防误触：锁定期间卡片明显变暗且不可点，倒计时写在下面 */
+#cards .card.locked{filter:grayscale(.7) brightness(.55);cursor:default;pointer-events:none}
+#cards .picktip{margin-top:10px;text-align:center;font:13px/1.6 ui-monospace,Menlo,monospace;
+  color:#ffb020;letter-spacing:.08em;min-height:20px}
 </style>
 </head>
 <body>

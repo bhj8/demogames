@@ -87,8 +87,12 @@ function main() {
      十局跑到 38 分钟还没完）。与其一个一个去堵，不如让每局都从
      真正干净的世界开始 —— 这也更接近玩家实际的一局。 */
   const seed = parseInt(new URLSearchParams(location.search).get('seed'), 10) || 11;
-  const r = fullRun(seed);
-  say('SEED ' + seed + '  ' + fmtTime(r.time) + '  升级 ' + r.picks +
+  /* ?strong=1：开局就塞一套强 Build 再跑。
+     todo11 §4 的目标分两档（普通 19~20 / 强 22~24），而机器人本身
+     只能代表「普通局」—— 想验证强 Build 那一档，就得先把 Build 给它。 */
+  const strong = new URLSearchParams(location.search).get('strong') === '1';
+  const r = fullRun(seed, strong);
+  say('SEED ' + seed + (strong ? ' [强Build]' : '') + '  ' + fmtTime(r.time) + '  升级 ' + r.picks +
       '  分子 ' + r.mol + '  击杀 ' + r.kills + '  拒绝 ' + r.rejected +
       '  错误 ' + r.err + '  ' + r.build);
   ok(r.err === 0, r.err + ' 次运行时错误');
@@ -100,7 +104,7 @@ function main() {
 }
 
 let _clock = 0;
-function fullRun(seed) {
+function fullRun(seed, strong) {
   RNG.init(seed);
   G.won = false; G.bossAlive = null; G.buff = null;
   document.getElementById('results').classList.remove('on');
@@ -125,6 +129,9 @@ function fullRun(seed) {
   G.acids && G.acids.compact && G.acids.compact();
   MOVE.teleport(G.player, 0, 1.2, 0);
   G.player.hp = G.player.maxHp;
+  /* 强 Build：多发 + 爆炸 + 穿透 + 威力，这是实测输出最高的一类组合。
+     这些不计入「升级次数」—— 我们量的正是「输出高了之后能多升几次」。 */
+  if (strong) ['volley', 'blast', 'pierce', 'power', 'power'].forEach(id => BUILD.take(id));
   recompute();
   G.player.gun.ammo = G.derived.magazine;
 
@@ -135,6 +142,7 @@ function fullRun(seed) {
     _clock += 16.7;
     frame(_clock);
     if (G.phase === 'choose') {
+      UI._pickAt = 0; UI._released = true;
       const c = document.querySelector('#cards .card');
       if (c && c.onclick) { c.onclick(); picks++; }
     }

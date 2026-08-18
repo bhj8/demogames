@@ -1069,7 +1069,7 @@ function clearAirdrop() {
 }
 
 /* ---- 三种强化 ---- */
-const BUFF_NAME = { ammo: '过载供弹', adren: '肾上腺素', shield: '相位护盾' };
+const BUFF_NAME = { ammo: '过载供弹', adren: '暴走针', shield: '强袭盾' };
 const BUFF_CSS = { ammo: '#ffb020', adren: '#ff4d7a', shield: '#4fa8ff' };
 
 function applyBuff(id) {
@@ -1177,6 +1177,8 @@ addEventListener('mousedown', e => {
   if (e.button === 2) WEAPON.adsWant = true;      // 轻量稳枪，不是硬核 ADS
 });
 addEventListener('mouseup', e => {
+  /* 三选一期间：松开左键才解锁选择（todo11 §5 第 3 条） */
+  if (e.button === 0 && G.phase === 'choose' && G.ui) G.ui._released = true;
   if (e.button === 0) G.player.gun.held = false;
   if (e.button === 2) WEAPON.adsWant = false;
 });
@@ -1838,18 +1840,56 @@ const UI = {
     head.innerHTML = '<div class="cs">选择 ' + (info ? info.index + 1 : 1) + '　' + marks.join('') + '</div>';
     wrap.appendChild(head);
 
+    /* todo11 §5 防误触。升级界面是在战斗中途弹出来的，玩家几乎一定
+       正按着左键在开火 —— 不做任何处理的话，那一下持续的点击会直接
+       替他选掉一张卡，而他根本没看见卡面。三道闸：
+         1) 前 lockTime 秒完全不可选（卡面上有倒计时，不是静默失效）
+         2) 弹出瞬间清掉「正在开火」状态，枪不会继续打
+         3) 锁解开后还必须【先松开左键再重新按】才算一次有效选择
+       第 3 条是关键：只做 1) 的话，按住不放的玩家会在 2 秒整那一刻被选掉。 */
+    const LOCK = TUNE.EVOLUTION.pickLockTime;
+    this._pickAt = performance.now() + LOCK * 1000;
+    this._released = false;
+    G.player.gun.held = false;
+
     const row = document.createElement('div');
     row.className = 'cardrow evorow';
+    const els = [];
     cards.forEach((o, i) => {
       const el = document.createElement('div');
-      el.className = 'card evo' + (o.big ? ' q-epic' : ' q-common');
+      el.className = 'card evo locked' + (o.big ? ' q-epic' : ' q-common');
       el.style.setProperty('--mc', o.css);
       el.style.animationDelay = (0.06 + i * 0.05) + 's';
       el.innerHTML = this._cardHtml(o);
-      el.onclick = () => pick(o.id);
+      el.onclick = () => {
+        if (performance.now() < this._pickAt) return;      // 还在锁里
+        if (!this._released) return;                        // 还没松开过左键
+        pick(o.id);
+      };
       row.appendChild(el);
+      els.push(el);
     });
     wrap.appendChild(row);
+
+    /* 倒计时 + 「松开左键」提示：不可选必须是看得见的，否则玩家以为卡死了 */
+    const tip = document.createElement('div');
+    tip.className = 'picktip';
+    wrap.appendChild(tip);
+    clearInterval(this._pickTimer);
+    this._pickTimer = setInterval(() => {
+      if (!wrap.classList.contains('on')) { clearInterval(this._pickTimer); return; }
+      const left = (this._pickAt - performance.now()) / 1000;
+      if (left > 0) {
+        tip.textContent = '看清楚再选 · ' + left.toFixed(1) + 's';
+      } else if (!this._released) {
+        tip.textContent = '松开左键，再点一次';
+        els.forEach(e => e.classList.remove('locked'));
+      } else {
+        tip.textContent = '';
+        els.forEach(e => e.classList.remove('locked'));
+        clearInterval(this._pickTimer);
+      }
+    }, 50);
 
     const foot = document.createElement('div');
     foot.className = 'cardfoot';
@@ -2053,7 +2093,7 @@ const DebugPanel = {
       ['→3:00', 'j180'], ['→6:00', 'j360'], ['→9:00', 'j540'], ['→12:00', 'j719'],
       ['事件流', 'events'], ['重置种子', 'reseed'],
       ['医疗物', 'med'], ['充满空投', 'drop'],
-      ['过载供弹', 'b_ammo'], ['肾上腺素', 'b_adren'], ['相位护盾', 'b_shield'],
+      ['过载供弹', 'b_ammo'], ['暴走针', 'b_adren'], ['强袭盾', 'b_shield'],
       ['正后方刷怪', 'behind'],
       ['弱点球', 'weak'], ['无散布枪', 'nospread'], ['全部伤害数字', 'dmg'], ['靶场', 'range'],
       ['满弹', 'fullmag'], ['清空弹匣', 'emptymag'], ['立即换弹', 'doreload'],

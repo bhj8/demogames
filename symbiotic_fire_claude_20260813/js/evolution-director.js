@@ -15,6 +15,8 @@ const EVO = {
   progress: 0, need: 0, overflow: 0,
   log: [],
 
+  anchor: 0,          // 本局第一次选择时的经验收入，作为定价的固定锚
+
   init() {
     this.draw = {
       evolutionIndex: 0,          // 已完成的进化次数
@@ -23,6 +25,7 @@ const EVO = {
       mapTagBias: null,
       deferT: 0, deferReason: '-'
     };
+    this.anchor = 0;
     this.progress = 0; this.overflow = 0;
     this.need = TUNE.EVOLUTION.firstAt * this._rate();
     this.log = [];
@@ -49,13 +52,29 @@ const EVO = {
        和 todo 的 PACING.bootstrapXp 一样，用一个固定需求，
        再由 firstWindow 的时间下限兜住强 build 提前爆条的情况。 */
     if (this.draw.evolutionIndex === 0) return E.firstNeed;
-    const base = this._rate() * E.progressBase;
+    /* todo11 §4 的真正病根在这一行。
+       原来 need = 最近经验收入 × progressBase —— 收入越高，单次需求也
+       等比例越高，两边【精确抵消】，于是不管 Build 多强，次数永远钉在
+       目标值上。实测：强 Build 多打死 15% 的怪，升级次数一次都没多。
+       Bao 的原话「我感觉我 build 很强，但是才 17」说的就是这个。
+
+       改成【一半按收入定价、一半锚在开局收入上】：
+       打得越好，进度条填得比价格涨得快，次数就真的会多。
+       锚取本局第一次选择时的收入，而不是写死一个常数 ——
+       以后再调武器数值，这个锚会自己跟着走。 */
+    const rate = this._rate();
+    if (this.anchor === 0) this.anchor = rate;
+    const priced = E.rateWeight * rate + (1 - E.rateWeight) * this.anchor;
+    const base = priced * E.progressBase;
     const delta = this.expectedIndex(G.time) - (this.draw.evolutionIndex + 1);
-    const mag = Math.abs(delta);
+    /* todo11 §4：漂移纠正【只往下托，不往上压】。
+       原来玩家领先时会把下一次的需求抬到 2.2 倍 —— 那等于「你打得好，
+       所以罚你升得慢」，强 Build 打到结尾只有 17 次就是这么来的。
+       现在领先不做任何处理：运气好、打得好，就让它多升几次。 */
     let mult = 1;
-    if (mag > E.driftDeadband) {
-      const k = Math.min(1, (mag - E.driftDeadband) / (E.driftFullAt - E.driftDeadband));
-      mult = delta > 0 ? 1 - k * (1 - E.driftMin) : 1 + k * (E.driftMax - 1);
+    if (delta > E.driftDeadband) {
+      const k = Math.min(1, (delta - E.driftDeadband) / (E.driftFullAt - E.driftDeadband));
+      mult = 1 - k * (1 - E.driftMin);
     }
     this.driftMult = mult;
     return Math.max(4, base * mult);

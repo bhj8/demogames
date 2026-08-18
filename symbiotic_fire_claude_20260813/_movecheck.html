@@ -386,6 +386,10 @@ addEventListener('load', () => setTimeout(() => {
     for (let i = 0; i < 60 * 60 * 12 + 900; i++) {
       t += 16.7; frame(t);
       if (G.phase === 'choose') {
+        /* todo11 §5 的防误触锁是按真实时间算的（2 秒 + 必须松开左键）。
+           自动化跑图不是在测这条规则（它有自己的专项测试），
+           这里直接把锁打开，否则整局会卡在三选一界面里出不来。 */
+        UI._pickAt = 0; UI._released = true;
         const c = document.querySelector('#cards .card');
         if (c && c.onclick) c.onclick();
       }
