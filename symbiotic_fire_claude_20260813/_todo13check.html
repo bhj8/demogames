@@ -105,7 +105,7 @@ function buildRange(kind) {
   G.enemies.compact();
   G.bullets.live.slice().forEach(b => G.bullets.release(b));
   G.bullets.compact();
-  G.hazards.length = 0; G.pendings.length = 0;
+  G.hazards.length = 0; G.pendings.length = 0; G.wells.length = 0;
 
   const p = G.player;
   p.pos.set(0, 0, 30); p.vel.set(0, 0, 0); p.yaw = 0; p.pitch = 0;
@@ -519,6 +519,79 @@ function audit() {
     ok(Math.abs(d.damage / base.dmg - D.dmg) < 0.02, '伤害不是 ×' + D.dmg);
     ok(d.ammoPerShot === base.ammo * D.ammo, '耗弹不是 ×' + D.ammo);
     ok(d.pierce >= 999 && isFinite(d.pierce), '穿透不是「无限」（而且必须是有限数，否则会被 NaN 守门换掉）');
+  }
+
+  say('');
+  say('<b>批次 3 · 坍缩炮</b>');
+  {
+    const C = TUNE.DEMON.collapse;
+    const d = derived(['collapse']);
+    ok(d.chargeGun === true, '没有切换到蓄力开火');
+    say('  蓄力档位　' + one(C.minCharge) + '～' + one(C.maxCharge) + 's　' +
+        '伤害 ×' + C.dmgAt0 + '→×' + C.dmgAt1 + '　半径 ' + C.radiusAt0 + '→' + C.radiusAt1 + 'm');
+
+    /* 蓄不满不发射；蓄满了才打得出去 */
+    line(4, 1e7);
+    const g = G.player.gun;
+    g.ammo = 60; g.reloadT = 0; g.fireT = 0;
+    G.phase = 'play';
+    const shots0 = G.stats.shots;
+    BUILD.ctx.chargeT = 0;
+    g.held = true; updatePlayer(0.1); g.held = false; updatePlayer(1 / 60);
+    ok(G.stats.shots === shots0, '只蓄了 0.1 秒也发射了 —— 应该打不出去');
+    BUILD.ctx.chargeT = 0;
+    g.held = true; for (let i = 0; i < 90; i++) updatePlayer(1 / 60);   // 蓄满
+    const ammoBefore = g.ammo;
+    g.held = false; updatePlayer(1 / 60);
+    say('  蓄满松手　发射 ' + (G.stats.shots - shots0) + ' 次　耗弹 ' + (ammoBefore - g.ammo) +
+        ' 发（蓄满应是 ' + C.ammoAt1 + '）');
+    ok(G.stats.shots === shots0 + 1, '蓄满松手没有发射');
+    ok(ammoBefore - g.ammo === C.ammoAt1, '蓄满的耗弹不是 ' + C.ammoAt1 + ' 发');
+
+    /* 引力核心落地要开井，井到期要坍缩出伤害 */
+    const wells0 = G.wells.length;
+    for (let i = 0; i < 240; i++) { updateBullets(1 / 60); updateWells(1 / 60); }
+    say('  核心落地　产生引力井 ' + (G.wells.length >= wells0 ? '是' : '否') +
+        '　坍缩伤害 ' + Math.round(BUILD.stats.collapse || 0));
+    ok((BUILD.stats.collapse || 0) > 0, '引力核心没有坍缩出任何伤害');
+    g.held = false;
+  }
+
+  say('');
+  say('<b>批次 3 · G08 延迟清算</b>');
+  {
+    const D = TUNE.DEMON.defer;
+    const d = derived(['defer']);
+    ok(d.deferOn === true, 'deferOn 没有打开');
+    line(4, 500);
+    const e0 = G.enemies.live[0];
+    const hp0 = e0.hp;
+    damageEnemy(e0, 100, makeAttack('primary'), { point: e0.pos });
+    say('  记账　打 100：生命 ' + Math.round(e0.hp) + '（原 ' + hp0 + '）　待清算 ' + Math.round(e0.deferred));
+    ok(e0.hp === hp0, '结算之前敌人就掉血了 —— 这张卡的代价没有生效');
+    ok(Math.abs(e0.deferred - 100) < 0.01, '伤害没有记到待清算里');
+
+    /* 换弹开始时统一 ×1.5 兑现 */
+    BUILD.onReloadStart();
+    say('  清算　换弹瞬间：生命 ' + Math.round(e0.hp) + '　待清算 ' + Math.round(e0.deferred) +
+        '（应扣 ' + (100 * D.mult) + '）');
+    ok(Math.abs((hp0 - e0.hp) - 100 * D.mult) < 0.01, '清算没有按 ×' + D.mult + ' 兑现');
+    ok(e0.deferred === 0, '清算之后欠账没有清零');
+
+    /* 无限弹匣：永远不换弹，必须按固定周期强制清算（否则伤害永远不兑现） */
+    G.buff = { id: 'ammo', t: 9999, dur: 9999, shield: 0 };
+    recompute();
+    ok(G.derived.infiniteMag === true, '过载供弹没有打开无限弹匣');
+    const e1 = G.enemies.live[1];
+    const h1 = e1.hp;
+    damageEnemy(e1, 80, makeAttack('primary'), { point: e1.pos });
+    ok(e1.hp === h1, '无限弹匣下伤害应该同样先记账');
+    BUILD.ctx.deferT = 0;
+    for (let i = 0; i < Math.ceil((D.forceEvery + 0.2) * 60); i++) updatePlayer(1 / 60);
+    say('  无限弹匣　' + one(D.forceEvery) + ' 秒后自动清算：生命 ' + Math.round(e1.hp) +
+        '（原 ' + h1 + '）');
+    ok(e1.hp < h1, '无限弹匣下没有强制清算 —— 伤害永远不会兑现，玩家会以为枪坏了');
+    G.buff = null; recompute();
   }
 
   say('');

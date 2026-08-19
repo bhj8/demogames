@@ -63,6 +63,7 @@ function configureEnemy(e, tpl, pos, opts) {
   opts = opts || {};
   const hpScale = G.hpScale();
   e.tpl = tpl;
+  e.deferred = 0;                     // 延迟清算的欠账（todo13），复用池化对象必须清
   e.variant = tpl.variant || null;
   e.maxHp = tpl.hp * hpScale * (opts.hpMult || 1);
   e.hp = e.maxHp;
@@ -354,6 +355,12 @@ function updateEnemies(dt) {
       e.bodyMat.emissiveIntensity = e.variant ? 0.16 + e.hurtFlash * 5 : e.hurtFlash * 6;
       if (e.hurtFlash <= 0 && !e.variant) e.bodyMat.emissive.setHex(0x000000);
       else if (e.hurtFlash > 0) e.bodyMat.emissive.setHex(e.variant ? MUT[e.variant].color : 0xffffff);
+    }
+    /* 延迟清算的欠账要看得见（todo13 G08）：紫色自发光，
+       亮度按「欠了它几成命」。看不见的话玩家完全不知道自己打进去了多少。 */
+    if (e.deferred > 0 && e.hurtFlash <= 0) {
+      e.bodyMat.emissive.setHex(0xc58aff);
+      e.bodyMat.emissiveIntensity = 0.15 + Math.min(1, e.deferred / Math.max(1, e.maxHp)) * 0.75;
     }
 
     /* 立体导航接管：跨层时走连接边，同层时交还给下面的二维追击（§5.2）。
@@ -1337,11 +1344,31 @@ function updatePlayer(dt) {
       g.emptyT += dt;
       if (g.held && g.dryT <= 0) { WEAPON.on('empty'); g.dryT = 0.28; }
       if (g.emptyT >= TUNE.WEAPON_FX.emptyBeat) tryReload();
+    } else if (d.chargeGun) {
+      /* 坍缩炮：按住是蓄力，松手才发射。整条常规开火路径在这一档里
+         完全不走 —— 所以射速卡和超频对这把枪自然失效，不需要另外去屏蔽。 */
+      g.emptyT = 0;
+      const c = BUILD.ctx, C = TUNE.DEMON.collapse;
+      if (g.held) c.chargeT = Math.min(C.maxCharge, c.chargeT + dt);
+      else if (c.chargeT > 0) {
+        if (c.chargeT >= C.minCharge) fireCollapse(c.chargeT);
+        c.chargeT = 0;
+      }
     } else if (g.held && g.fireT <= 0) {
       g.emptyT = 0;
       fire(); g.fireT = effectiveFireInterval();
     }
   }
+
+  /* 延迟清算的无限弹匣兜底：过载供弹期间永远不进换弹，
+     不强制结算的话伤害永远不兑现，玩家会以为枪坏了。 */
+  if (d.deferOn && d.infiniteMag) {
+    const c = BUILD.ctx;
+    c.deferT += dt;
+    if (c.deferT >= TUNE.DEMON.defer.forceEvery) { c.deferT = 0; settleDeferred(); }
+  }
+
+  updateWells(dt);
 
   /* 相机后坐：方向确定的 pitch/yaw，回位用临界阻尼，不越过 */
   const cr = p.camRecoil, WF = TUNE.WEAPON_FX;
@@ -1470,6 +1497,104 @@ function fire() {
 
   /* 开火不震屏 —— 力量全部由枪模、机械部件、枪口光和声音承担 */
   G.bus.emit('fire', {});
+}
+
+/* ============================================================================
+   坍缩炮（todo13）：蓄力 → 引力核心 → 吸附 → 坍缩
+   收益全部来自蓄力时间与额外耗弹，所以引力不会变成每颗子弹都免费触发的东西。
+   ========================================================================== */
+function fireCollapse(chargeT) {
+  const p = G.player, g = p.gun, d = G.derived, C = TUNE.DEMON.collapse;
+  const k = clamp((chargeT - C.minCharge) / (C.maxCharge - C.minCharge), 0, 1);
+  const cost = Math.round(lerp(C.ammoAt0, C.ammoAt1, k));
+  if (!d.infiniteMag) {
+    if (g.ammo < cost) { tryReload(); return; }     // 蓄满了但弹不够：直接进换弹
+    g.ammo -= cost;
+  }
+  BUILD.onFire(cost);
+  G.stats.shots++;
+  p.shotIndex++;
+
+  const W = TUNE.WEAPON_FX;
+  p.camRecoil.vp += W.cameraRecoilScale * 3.2 * 60;
+
+  const origin = R.camera.position.clone();
+  const dir = R.camera.getWorldDirection(new THREE.Vector3());
+  const b = spawnBullet(origin.addScaledVector(dir, 0.7), dir, 0, makeAttack('collapse'), { pierce: 0 });
+  if (b) {
+    b.speed = C.coreSpeed;
+    b.core = { k: k, dmg: d.damage * lerp(C.dmgAt0, C.dmgAt1, k), radius: lerp(C.radiusAt0, C.radiusAt1, k) };
+    b.col = 0xc58aff;
+    b.scale = 1 + k * 1.6;
+    b.wallLeft = 0;
+  }
+  WEAPON.on('shot', { isLastRound: false, pellets: 1, overclock: 0, heavy: 2.2, boltSpeed: 1, momentum: 0 });
+  Audio2.shot(0.7 + k * 0.3, 2.2, 0.6);
+  G.bus.emit('fire', {});
+}
+
+/* 引力核心落地：先吸一段时间，再坍缩。
+   吸力写进 e.knock —— 和击退共用同一条位移通道，不另造一套。 */
+function spawnWell(pos, core) {
+  G.wells.push({
+    x: pos.x, y: pos.y, z: pos.z, t: 0,
+    dur: TUNE.DEMON.collapse.pullTime, radius: core.radius, dmg: core.dmg
+  });
+  R.ring(pos, 0.4, core.radius, 0xc58aff, TUNE.DEMON.collapse.pullTime, false);
+  Audio2.blast(pos, false);
+}
+
+const _wellBuf = [];
+function updateWells(dt) {
+  for (let i = G.wells.length - 1; i >= 0; i--) {
+    const w = G.wells[i];
+    w.t += dt;
+    const list = enemiesInRadius(w.x, w.z, w.radius + 2, _wellBuf);
+    for (let j = 0; j < list.length; j++) {
+      const e = list[j];
+      if (e.dead || e._dead || e.boss) continue;      // Boss 不被拖走
+      const dx = w.x - e.pos.x, dz = w.z - e.pos.z;
+      const dist = Math.max(0.4, Math.hypot(dx, dz));
+      if (dist > w.radius) continue;
+      const a = TUNE.DEMON.collapse.pullAccel * (1 - (e.knockResist || 0)) * dt;
+      e.knock.x += dx / dist * a;
+      e.knock.z += dz / dist * a;
+    }
+    if (w.t >= w.dur) {
+      G.wells.splice(i, 1);
+      /* 坍缩：走 ATK.area，和尸爆共用同一套范围结算 */
+      ATK.area({ x: w.x, y: w.y, z: w.z }, w.dmg, w.radius, null, makeAttack('collapse'), 'collapse');
+      R.ring({ x: w.x, y: w.y, z: w.z }, w.radius, 0.3, 0xc58aff, 0.35, false);
+      G.shake(0.3, { x: w.x, y: w.y, z: w.z });
+      Audio2.blast({ x: w.x, y: w.y, z: w.z }, true);
+    }
+  }
+}
+
+/* ============================================================================
+   延迟清算（todo13 G08）：伤害先记账，换弹时统一 ×1.5 兑现
+   ========================================================================== */
+let _settling = false;
+function settleDeferred() {
+  if (_settling) return;
+  _settling = true;
+  const M = TUNE.DEMON.defer.mult;
+  const list = G.enemies.live;
+  let total = 0;
+  for (let i = 0; i < list.length; i++) {
+    const e = list[i];
+    if (e._dead || e.dead || !e.deferred) continue;
+    const owed = e.deferred;
+    e.deferred = 0;
+    total += owed * M;
+    damageEnemy(e, owed * M, makeAttack('defer'), { point: e.pos, settled: true });
+  }
+  _settling = false;
+  if (total > 0) {
+    G.ui.floatText('清算 ' + Math.round(total), '#c58aff');
+    G.shake(0.2, null);
+    Audio2.blast(G.player.pos, true);
+  }
 }
 
 /* ============================================================================

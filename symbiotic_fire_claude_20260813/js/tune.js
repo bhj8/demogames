@@ -839,7 +839,24 @@ TUNE.DEMON = {
   /* todo13 A04 轨道炮：找一条直线穿透整条街。
      Bao 确认【不设上限】—— 无限穿透配尸爆/弹射时总伤害随命中数线性增长，
      那是想要的运气组合，不去削它。 */
-  railgun: { rate: 0.25, ammo: 3, dmg: 6 }
+  railgun: { rate: 0.25, ammo: 3, dmg: 6 },
+  /* todo13 坍缩炮（原案 A01+D05+G03 合并）。
+     收益全部来自【蓄力时间与额外耗弹】，所以引力不会变成每颗普通子弹
+     都免费触发的东西。原案里「弹匣固定 1 发」那条 Bao 已经取消。 */
+  collapse: {
+    minCharge: 0.30,          // 低于这个时长松手不发射
+    maxCharge: 1.50,
+    ammoAt0: 2, ammoAt1: 8,   // 蓄满耗 8 发
+    dmgAt0: 3, dmgAt1: 14,    // 蓄满伤害 ×14（分摊在整片被吸住的敌人身上）
+    radiusAt0: 5, radiusAt1: 12,
+    pullTime: 0.55,           // 吸附持续多久
+    pullAccel: 26,            // 吸力（写进 e.knock，和击退共用通道）
+    coreSpeed: 42             // 引力核心的飞行速度，明显比子弹慢，看得清
+  },
+  /* todo13 G08 延迟清算。
+     forceEvery 是给无限弹匣兜的底：过载供弹期间永远不换弹，
+     不强制结算的话伤害永远不兑现，玩家会以为枪坏了。 */
+  defer: { mult: 1.5, forceEvery: 4.0 }
 };
 
 /* --- 护盾池（todo13）---

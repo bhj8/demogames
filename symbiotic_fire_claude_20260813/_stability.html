@@ -156,7 +156,7 @@ function fullRun(seed, strong, moving, weak, secs, force) {
   G.enemies.compact();
   G.bullets.live.slice().forEach(b => G.bullets.release(b));
   G.bullets.compact();
-  G.xp.length = 0; G.hazards.length = 0; G.pendings.length = 0;
+  G.xp.length = 0; G.hazards.length = 0; G.pendings.length = 0; G.wells.length = 0;
   G.medical = null; G.airdrop = null; G.buff = null;
   G.acids && G.acids.live && G.acids.live.slice().forEach(a => G.acids.release(a));
   G.acids && G.acids.compact && G.acids.compact();
@@ -193,6 +193,12 @@ function fullRun(seed, strong, moving, weak, secs, force) {
     }
     /* 弱玩家：只有 1/weak 的时间在有效开火，其余时间在躲、在跑、在打空气 */
     G.player.gun.held = !weak || weak <= 1 || (i % Math.round(weak)) === 0;
+    /* 蓄力枪（坍缩炮）：真人会松手，机器人不会 ——
+       一直按住的话蓄力枪一发都打不出去（实测 0 击杀）。
+       蓄满就松一帧，这才是它该被测到的样子。 */
+    if (G.derived.chargeGun && BUILD.ctx.chargeT >= TUNE.DEMON.collapse.maxCharge) {
+      G.player.gun.held = false;
+    }
     if (moving) {
       /* 一个像样的玩家模型：【瞄着敌人、朝目标点平移】。
          只做「朝路点跑」的话枪口永远对着空气，12 分钟只打死 38 只 ——

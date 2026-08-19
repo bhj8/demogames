@@ -500,6 +500,25 @@ demon('railgun', '轨道炮', '所有伤害 ×6，无限穿透 —— 一枪贯�
             '射速 ' + pct(D.rate) + '，耗弹 ' + mul(D.ammo) + '：这把枪要你找角度，不要你泼子弹'];
   });
 
+demon('collapse', '坍缩炮', '枪改为蓄力射击：松手打出引力核心，把沿途和落点附近的敌人吸成一堆再坍缩',
+  '蓄得越久耗弹越多；不蓄力打不出去',
+  function () {
+    const D = TUNE.DEMON.collapse;
+    return ['蓄力 ' + one(D.minCharge) + '～' + one(D.maxCharge) + ' 秒：' +
+            '伤害 ' + mul(D.dmgAt0) + '→' + mul(D.dmgAt1) +
+            '　半径 ' + D.radiusAt0 + '→' + D.radiusAt1 + 'm　耗弹 ' + D.ammoAt0 + '→' + D.ammoAt1 + ' 发',
+            '射速与超频对这把枪完全失效 —— 它要你选时机，不要你按住不放'];
+  });
+
+demon('defer', '延迟清算', '所有伤害先记成紫色的待清算伤害，换弹开始时统一 ×1.5 结算',
+  '结算之前敌人不会掉血、不会死、也不给经验',
+  function () {
+    const D = TUNE.DEMON.defer;
+    return ['换弹瞬间把攒下的伤害 ' + mul(D.mult) + ' 一次性兑现',
+            '弹匣越大攒得越多，但怪也活得越久；无限弹匣时每 ' +
+            one(D.forceEvery) + ' 秒自动结算一次'];
+  });
+
 /* ========================================================================== */
 /*                                  BUILD                                     */
 /* ========================================================================== */
@@ -516,6 +535,8 @@ const BUILD = {
     quietT: 0, shield: 0, shieldMax: 0,
     loadFrac: 0,        // 击杀装填的不满一发的零头
     revived: false,     // 恶魔复生是否已经用掉（用掉之后进入第二形态）
+    chargeT: 0,         // 坍缩炮已蓄力秒数
+    deferT: 0,          // 距上次强制清算多久（无限弹匣时用）
     healSecT: 0, healSec: 0,
     wallDist: 0, chainUsed: false,
     lastPos: { x: 0, z: 0 }
@@ -533,7 +554,7 @@ const BUILD = {
     const c = this.ctx;
     c.ocRamp = 0; c.sinceShot = 99; c.rootT = 0; c.focusId = -1; c.focusStack = 0; c.focusT = 0;
     c.quietT = 0; c.shield = 0; c.shieldMax = 0; c.healSecT = 0; c.healSec = 0;
-    c.loadFrac = 0; c.revived = false;
+    c.loadFrac = 0; c.revived = false; c.chargeT = 0; c.deferT = 0;
     c.wallDist = 0; c.chainUsed = false;
     this.stats = { direct: 0, corpse: 0, bounce: 0, pierce: 0, overflow: 0,
                    ammoSpent: 0, ammoSaved: 0, reloadT: 0, fireT: 0, kills: 0 };
@@ -653,6 +674,10 @@ const BUILD = {
     d.pierceKeep = this.has('railgun') ? Math.max(pie.keep, 1) : pie.keep;
     d.bounce = ric.count;
     d.bounceSeq = ric.seq;
+
+    /* 坍缩炮 / 延迟清算：热路径只读这两个布尔 */
+    d.chargeGun = this.has('collapse');
+    d.deferOn = this.has('defer');
 
     /* 尸爆：打死才炸，威力按死者自己的生命算 */
     d.corpsePct = cor.pct;
@@ -870,7 +895,13 @@ const BUILD = {
     this.ctx.sinceShot = 0;
     this.stats.ammoSpent += cost;
   },
-  onReloadStart() { this.ctx.ocRamp = 0; this.ctx.sinceShot = 99; },
+  onReloadStart() {
+    this.ctx.ocRamp = 0; this.ctx.sinceShot = 99;
+    /* 延迟清算就在这一刻兑现（todo13 G08）。挂在这里而不是挂在
+       「换弹结束」上：玩家按下 R 的那一下就该看到紫色伤害一起炸出来，
+       等 1.5 秒换完再结算，因果关系就断了。 */
+    if (G.derived.deferOn) settleDeferred();
+  },
   onHurt() { this.ctx.quietT = 0; },
 
   /* ------------------------------------------------- §8.2 两类伤害倍率 */

@@ -17,6 +17,7 @@ const G = {
   variantPool: [],                   // 已进入生成池的变种
   enemies: null, bullets: null, acids: null,
   xp: [], hazards: [], pendings: [],
+  wells: [],                         // 坍缩炮的引力井（todo13）
   stats: { kills: 0, shots: 0, hits: 0, procs: 0, dmgDealt: 0, dmgTaken: 0, blasts: 0, bolts: 0 },
   derived: null,
   conductCounter: 0,
@@ -191,6 +192,17 @@ function damageEnemy(e, amount, ctx, opts) {
 
   /* 处决弹头 §23 */
   if (G.derived.executeBonus && e.hp / e.maxHp < 0.30) amount *= (1 + G.derived.executeBonus);
+
+  /* 延迟清算（todo13 G08）：伤害先记在敌人身上，不进生命。
+     opts.settled 是清算自己打出来的那一发，不能再被记账，否则永远兑现不了。
+     结算之前敌人不掉血、不死、也不给经验 —— 那正是这张卡的代价。 */
+  if (G.derived.deferOn && !(opts && opts.settled)) {
+    e.deferred = (e.deferred || 0) + amount;
+    e.hurtFlash = 0.12;
+    G.stats.dmgDealt += amount;
+    G.bus.emit('damage', { enemy: e, amount: amount, ctx: ctx, opts: opts });
+    return amount;
+  }
 
   e.hp -= amount;
   e.hurtFlash = 0.12;
@@ -466,11 +478,11 @@ function makeBulletPool() {
     speed: 0, dmg: 0, life: 0, pierce: 0, hitList: null, ctx: null, col: 0, scale: 1,
     /* todo5 §6.2：谱系节点挂在子弹上，池化复位时必须清干净 */
     gene: null, baseDmg: 0, pierceHits: 0, bounceHits: 0,
-    pendingBlast: false, homeE: null, wallLeft: 0, volleyIndex: 0
+    pendingBlast: false, homeE: null, wallLeft: 0, core: null, volleyIndex: 0
   }), b => {
     b.ctx = null; b.hitList = null; b.gene = null;
     b.pierceHits = 0; b.bounceHits = 0; b.pendingBlast = false;
-    b.homeE = null; b.wallLeft = 0; b.volleyIndex = 0; b.baseDmg = 0;
+    b.homeE = null; b.wallLeft = 0; b.core = null; b.volleyIndex = 0; b.baseDmg = 0;
   });
 }
 
@@ -496,6 +508,7 @@ function spawnBullet(origin, dir, dmg, ctx, opts) {
   b.baseDmg = opts.gene ? dmg : 0;
   b.pendingBlast = false; b.homeE = null;
   b.wallLeft = G.derived.wallBounce || 0;
+  b.core = null;
   return b;
 }
 
@@ -581,7 +594,10 @@ function updateBullets(dt) {
     b.life -= dt;
     /* todo5 §4.3：贯穿弹的「终点爆破」必须在子弹自然消失的那一刻兑现，
        否则打空的那一发就静静消失，玩家永远看不到终点这个概念。 */
-    if (b.life <= 0) { retireBullet(b); continue; }
+    if (b.life <= 0) {
+      if (b.core) spawnWell(b.pos, b.core);      // 飞到寿终也要落地开井
+      retireBullet(b); continue;
+    }
 
     b.prev.copy(b.pos);
     /* 自动瞄准（todo12 §2）：目标在开火那一刻就锁死，不中途改嫁 ——
@@ -599,6 +615,7 @@ function updateBullets(dt) {
 
     /* 出界或撞掩体 */
     if (Math.abs(b.pos.x) > R.arenaHalf || Math.abs(b.pos.z) > R.arenaHalf || b.pos.y < 0.02) {
+      if (b.core) spawnWell(b.pos, b.core);
       R.spark(b.pos, null, 0x9fb4c8);
       retireBullet(b); continue;
     }
@@ -628,6 +645,7 @@ function updateBullets(dt) {
         R.spark(_wallHit, b.dir, 0x9fd8ff);
         continue;
       }
+      if (b.core) spawnWell(b.pos, b.core);       // 引力核心撞墙就在墙根开井
       R.spark(b.pos, null, 0x9fb4c8);
       retireBullet(b); continue;
     }
@@ -685,6 +703,8 @@ function updateBullets(dt) {
 }
 
 function resolveBulletHit(b, e, point, weak) {
+  /* 引力核心不做直击：它的全部作用是「落点开一口引力井」（todo13 坍缩炮） */
+  if (b.core) { spawnWell(point, b.core); G.bullets.release(b); return; }
   b.hitList.add(e.uid);
   /* 自动瞄准的代价：所有命中一律按身体结算（todo12 §2）。
      在这里一刀切掉，而不是在瞄准那边做手脚 —— 爆炸、弹射继承的
