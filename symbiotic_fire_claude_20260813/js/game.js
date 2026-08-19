@@ -61,7 +61,7 @@ function makeEnemyPool() {
 
 function configureEnemy(e, tpl, pos, opts) {
   opts = opts || {};
-  const hpScale = 1 + (G.time / 60) * TUNE.SPAWN.hpScalePerMin;
+  const hpScale = G.hpScale();
   e.tpl = tpl;
   e.variant = tpl.variant || null;
   e.maxHp = tpl.hp * hpScale * (opts.hpMult || 1);
@@ -791,7 +791,7 @@ function bossMutationFlavor(e, at) {
 G.spawnMinion = function (parent, ox, oz, hpRatio) {
   const pos = TV.set(parent.pos.x + ox, 0, parent.pos.z + oz).clone();
   const e = configureEnemy(G.enemies.get(), ENEMIES.grunt, pos, {
-    hpMult: hpRatio * (parent.maxHp / (ENEMIES.grunt.hp * (1 + (G.time / 60) * TUNE.SPAWN.hpScalePerMin))),
+    hpMult: hpRatio * (parent.maxHp / (ENEMIES.grunt.hp * G.hpScale())),
     xpMult: 0, minion: true, grace: 0.45
   });
   e.grp.scale.multiplyScalar(0.72);
@@ -1800,14 +1800,14 @@ const UI = {
         return '<span class="bgm" style="color:' + c.css + '">' + c.name + ' Lv' + BUILD.lv[id] + '</span>';
       }).join('');
     const row = (k, v) => '<div class="bgrow"><span class="bgk">' + k + '</span><span>' + (v || '—') + '</span></div>';
-    const st = BUILD.stats, tot = Math.max(1, st.direct + st.blast + st.bounce + (st.overflow || 0));
+    const st = BUILD.stats, tot = Math.max(1, st.direct + st.corpse + st.bounce + (st.overflow || 0));
     const share = (n, v) => n + ' ' + Math.round(v / tot * 100) + '%';
     el.innerHTML = '<div class="bgmods">' + grp('mol') + '</div>' +
       row('玩法选择', grp('choice')) +
       row('武器', grp('wup')) +
       row('机动生存', grp('mup')) +
-      /* §7.2 结算与构筑图分别显示直接 / 爆炸 / 弹射 —— 不显示任何组合名 */
-      row('伤害来源', share('直接', st.direct) + '　' + share('爆炸', st.blast) + '　' + share('弹射', st.bounce) +
+      /* §7.2 结算与构筑图分别显示直接 / 尸爆 / 弹射 —— 不显示任何组合名 */
+      row('伤害来源', share('直接', st.direct) + '　' + share('尸爆', st.corpse) + '　' + share('弹射', st.bounce) +
         (st.overflow ? '　' + share('溢出', st.overflow) : '')) +
       row('弹药', '已消耗 ' + Math.round(st.ammoSpent) + '　返还 ' + Math.round(st.ammoSaved)) +
       row('性能', ATK.debugLine());
@@ -2052,6 +2052,9 @@ function updateTimeline(dt) {
    生命周期
    ========================================================================== */
 G.dmgScale = function () { return 1 + (G.time / 60) * TUNE.SPAWN.dmgScalePerMin; };
+/* 敌人生命随时间的缩放。以前只在 configureEnemy 里就地算，
+   尸爆的卡面要显示「现在一只普通怪能炸多少」，所以提出来共用。 */
+G.hpScale = function () { return 1 + (G.time / 60) * TUNE.SPAWN.hpScalePerMin; };
 
 function cleanupWorldPickups() {
   clearAirdrop();
@@ -2106,14 +2109,14 @@ function showResults(won) {
   if (G.stats.blasts) chain.push('爆裂 ×' + G.stats.blasts);
   if (G.stats.bolts) chain.push('闪电 ×' + G.stats.bolts);
 
-  /* §7.2 结算页继续分别显示直接、爆炸、弹射等伤害，以及弹药消耗、
+  /* §7.2 结算页继续分别显示直接、尸爆、弹射等伤害，以及弹药消耗、
      换弹时间占比和有效开火时间。这里【不显示任何组合名】——
      §11.2 的验收条件是「删掉组合名称表后战斗结果不变」，
      那么结算页当然也不该有组合名可显示。 */
   let modBlock = '';
   {
     const st = BUILD.stats;
-    const tot = Math.max(1, st.direct + st.blast + st.bounce);
+    const tot = Math.max(1, st.direct + st.corpse + st.bounce + (st.overflow || 0));
     const rows = BUILD.order.map(id => {
       const c = BUILD.cardOf(id);
       return '<tr><td style="color:' + c.css + '">' + c.name + '</td>' +
@@ -2125,7 +2128,8 @@ function showResults(won) {
     modBlock =
       '<div class="rsec">伤害来自哪里</div>' +
       '<div class="rmods">' +
-        bar('直接', st.direct, '#ffd08a') + bar('爆炸', st.blast, '#ff9a3c') +
+        bar('直接', st.direct, '#ffd08a') + bar('尸爆', st.corpse, '#ff9a3c') +
+        (st.overflow ? bar('溢出', st.overflow, '#ffb84d') : '') +
         bar('弹射', st.bounce, '#c58aff') + '</div>' +
       '<div class="runseen">弹药：消耗 ' + Math.round(st.ammoSpent) +
         ' · 返还 ' + Math.round(st.ammoSaved) +
@@ -2492,7 +2496,7 @@ const DebugPanel = {
         ' 弹丸 <b>' + G.derived.pellets + '</b>' +
         ' 贯穿 <b>' + G.derived.pierce + '</b> 弹射 <b>' + G.derived.bounce + '</b>' +
         '<br>伤害 直接<b>' + Math.round(BUILD.stats.direct) + '</b>' +
-        ' 爆炸<b>' + Math.round(BUILD.stats.blast) + '</b>' +
+        ' 尸爆<b>' + Math.round(BUILD.stats.corpse) + '</b>' +
         ' 弹射<b>' + Math.round(BUILD.stats.bounce) + '</b>' +
         ' 弹药 花<b>' + Math.round(BUILD.stats.ammoSpent) + '</b>' +
         ' 省<b>' + Math.round(BUILD.stats.ammoSaved) + '</b>' +

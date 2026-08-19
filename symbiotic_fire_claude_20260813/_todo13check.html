@@ -449,6 +449,79 @@ function audit() {
   }
 
   say('');
+  say('<b>批次 2 · A05 墙面反弹</b>');
+  {
+    const M = TUNE.MOL_WALL;
+    const d = derived(['wallbounce']);
+    say('  Lv' + BUILD.level('wallbounce') + '　反弹 ' + d.wallBounce + ' 次　每次伤害 ×' + d.wallGain.toFixed(2));
+    ok(d.wallBounce === M.countAt1 + M.countPerLv, '反弹次数不对（Lv2 应是 2）');
+    ok(Math.abs(d.wallGain - (M.gainAt1 + M.gainPerLv)) < 1e-6, '反弹增益不对');
+
+    /* 取墙面法线：拿一块真实的城市几何，从 -X 侧打进去，法线必须是 -X。
+       这一条是反弹能不能成立的地基 —— 法线错了子弹就会弹进墙里。 */
+    const box = CITY.solids && CITY.solids.length ? CITY.solids[0] : null;
+    if (!box) { warn(false, '拿不到城市几何，跳过法线检查'); }
+    else {
+      const cy = (box.y0 + box.y1) / 2, cz = (box.z0 + box.z1) / 2;
+      const h = {};
+      const got = CITY.segHit(box.x0 - 3, cy, cz, box.x0 + 1.0, cy, cz, h);
+      say('  法线检查　从 -X 侧打进一块几何：命中 ' + got +
+          '　法线 (' + h.nx + ',' + h.ny + ',' + h.nz + ')');
+      ok(got === true, 'segHit 没有命中一块明确在路径上的几何');
+      ok(h.nx === -1 && h.ny === 0 && h.nz === 0, '法线不是 -X —— 反弹方向会算错');
+    }
+  }
+
+  say('');
+  say('<b>批次 2 · C01 尸爆（取代爆炸）</b>');
+  {
+    const M = TUNE.MOL.corpse;
+    ok(!BUILD.cardOf('blast'), '「爆炸」应该已经从牌池里删掉了');
+    ok(!!BUILD.cardOf('corpse'), '「尸爆」不存在');
+    const d = derived(['corpse']);
+    const lv = BUILD.level('corpse');
+    say('  Lv' + lv + '　死者生命的 ' + Math.round(d.corpsePct * 100) + '%　半径 ' + n1(d.corpseRadius) + 'm');
+    ok(Math.abs(d.corpsePct - (M.pctAt1 + M.pctPerLv)) < 1e-6, '爆炸比例不对');
+
+    /* 威力必须跟【死者】走，不跟枪走：同一套 Build 杀小怪和杀肉山，爆的量要差一个量级 */
+    line(6, 1e7);                       // 周围不死，纯粹量爆出来多少
+    const mid = G.enemies.live[3];
+    const before = G.stats.dmgDealt;
+    BUILD.stats.corpse = 0;
+    ATK.corpse({ pos: mid.pos, maxHp: 100, uid: 999 }, makeAttack('primary'));
+    const small = BUILD.stats.corpse;
+    BUILD.stats.corpse = 0;
+    ATK.corpse({ pos: mid.pos, maxHp: 4000, uid: 998 }, makeAttack('primary'));
+    const big = BUILD.stats.corpse;
+    say('  威力跟死者走　100 血的怪炸 ' + Math.round(small) + '　4000 血的怪炸 ' + Math.round(big));
+    ok(big > small * 30, '杀大怪没有炸得更狠 —— 威力没有跟死者生命走');
+
+    /* 连锁层数：超过 corpseDepth 就不再往下 */
+    BUILD.stats.corpse = 0;
+    const deep = makeAttack('primary');
+    deep.procDepth = TUNE.BUILD.corpseDepth;
+    ATK.corpse({ pos: mid.pos, maxHp: 4000, uid: 997 }, deep);
+    say('  连锁上限　已经在第 ' + TUNE.BUILD.corpseDepth + ' 层时再触发：炸出 ' + Math.round(BUILD.stats.corpse));
+    ok(BUILD.stats.corpse === 0, '连锁没有被 corpseDepth 挡住');
+  }
+
+  say('');
+  say('<b>批次 2 · A04 轨道炮</b>');
+  {
+    const D = TUNE.DEMON.railgun;
+    const b = derived([]);
+    const base = { fi: b.fireInterval, dmg: b.damage, ammo: b.ammoPerShot };
+    const d = derived(['railgun']);
+    say('  射速 ' + n1(base.fi * 1000) + ' → ' + n1(d.fireInterval * 1000) + 'ms　' +
+        '伤害 ' + Math.round(base.dmg) + ' → ' + Math.round(d.damage) + '　' +
+        '耗弹 ' + base.ammo + ' → ' + d.ammoPerShot + '　穿透 ' + d.pierce);
+    ok(Math.abs(d.fireInterval / base.fi - 1 / D.rate) < 0.02, '射速不是 ×' + D.rate);
+    ok(Math.abs(d.damage / base.dmg - D.dmg) < 0.02, '伤害不是 ×' + D.dmg);
+    ok(d.ammoPerShot === base.ammo * D.ammo, '耗弹不是 ×' + D.ammo);
+    ok(d.pierce >= 999 && isFinite(d.pierce), '穿透不是「无限」（而且必须是有限数，否则会被 NaN 守门换掉）');
+  }
+
+  say('');
   ok(window.__err.length === 0, '运行期报错：' + window.__err.join(';'));
   say(FAIL ? '<i>FAILED ' + FAIL + ' 条</i>' : '<b>ALLPASS</b>');
 }

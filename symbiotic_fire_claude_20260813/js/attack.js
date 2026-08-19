@@ -80,7 +80,6 @@ const ATK = {
       pellets: pellets,
       events: 0,
       hits: {},          // uid -> 本根攻击已命中次数
-      blasts: 0,         // 本根攻击已经爆过几次（爆炸衰减读它）
       refunded: 0,       // 击杀装填本根已返还多少
       /* 自动瞄准的锁定目标：一次扳机锁一次 */
       aim: G.derived.homing ? crosshairTarget(TUNE.DEMON.autoaim.cone, TUNE.DEMON.autoaim.range) : null
@@ -121,9 +120,9 @@ const ATK = {
     BUILD.stats.direct += dealt;
     if (b.pierceHits) BUILD.stats.pierce += dealt;
 
-    /* 第 5 步：每次主弹命中【独立】触发爆炸。
-       不再有「整根攻击只有一份爆炸预算」，也不再是只有终点才爆。 */
-    if (d.blastOn) this.blast(root, point, b.hopDmg, e);
+    /* 原来第 5 步是「每次主弹命中都独立触发一次爆炸」。爆炸卡已经删掉
+       （todo13：太强了），取代它的尸爆挂在【击杀】上而不是命中上 ——
+       见 killEnemy 里的 ATK.corpse。所以这里少了一步。 */
 
     /* 第 6 步：每次主弹命中【独立】产生一条弹射链。
        穿 5 个人就是 5 条链 —— §2.4 点名说这是允许的自然化学反应。
@@ -146,16 +145,27 @@ const ATK = {
   /* 子弹自然终结（射程 / 出界 / 撞掩体）：V3 没有终点爆破，这里不欠账 */
   onBulletEnd() {},
 
-  /* ---------------------------------------------------------- 第 5 步：爆炸 */
-  /* 每一次真实命中都爆。同一根攻击里连续爆炸按统一衰减递减 ——
-     max(floor, ratio^(n-1))，掉到地板就不再掉。这是【统一衰减】，
-     不是针对某一对组合的专属折算（§8.4 的调整优先级第二档）。 */
-  blast(root, point, hitDmg, source) {
-    const d = G.derived, T = TUNE.BUILD;
-    const decay = Math.max(T.blastDecayFloor, Math.pow(T.blastDecay, root.blasts));
-    root.blasts++;
-    const dmg = hitDmg * d.blastDmg * decay;
-    const r = d.blastRadius;
+  /* ------------------------------------------------------------ 尸爆 §C01 */
+  /* 敌人死亡时炸开，威力按【死掉那只自己的生命上限】算。
+     和被它取代的「爆炸」的根本区别：收益不跟你的枪走，跟你杀的东西走 ——
+     所以杀精英才有大爆，泼子弹刷小怪不会把伤害堆起来。
+     连锁允许，但走现成的 procDepth 上限（corpseDepth 层），
+     否则 900 只 30 血的小怪会一路连爆推平全图。 */
+  corpse(e, ctx) {
+    const d = G.derived;
+    if (!(d.corpsePct > 0) || !e || !e.maxHp) return;
+    const depth = (ctx && ctx.procDepth) || 0;
+    if (depth >= TUNE.BUILD.corpseDepth) return;
+    const next = typeof deriveAttack === 'function'
+      ? deriveAttack(ctx || makeAttack('corpse'), 'corpse')
+      : makeAttack('corpse');
+    this.area(e.pos, e.maxHp * d.corpsePct, d.corpseRadius, e, next, 'corpse');
+  },
+
+  /* 一次范围结算。尸爆和以后的坍缩都走它 —— 半径查询、边缘衰减、
+     victimMul、击杀回调、视觉配额这一套只写一遍。 */
+  area(point, dmg, r, source, ctx, tag) {
+    const root = G.curRoot;
     if (dmg <= 0 || r <= 0) return;
 
     /* 查询半径要比爆炸半径大一圈：enemiesInRadius 的粗筛是
@@ -169,13 +179,13 @@ const ATK = {
       const dx = e.pos.x - point.x, dz = e.pos.z - point.z;
       const dist = Math.hypot(dx, dz);
       if (dist > r + e.radius) continue;
-      if (!this.allowDamage(root)) break;
+      if (root && !this.allowDamage(root)) break;
       /* 边缘衰减：中心满伤，边缘 45% —— 让「站在爆点上」有意义 */
       const fall = 1 - 0.55 * Math.min(1, dist / Math.max(0.01, r));
       const m = BUILD.victimMul(e, false);
       const hp0 = e.hp;
-      const got = damageEnemy(e, dmg * fall * m, null, { point: point, blast: true });
-      BUILD.stats.blast += got;
+      const got = damageEnemy(e, dmg * fall * m, ctx, { point: point, blast: true });
+      BUILD.stats[tag] = (BUILD.stats[tag] || 0) + got;
       if (e.dead && hp0 > 0) BUILD.onKill(e, this._closeTo(e));
     }
     this._blastFx(point, r);
@@ -208,9 +218,6 @@ const ATK = {
       BUILD.stats.bounce += got;
       G.stats.hits++;
       if (next.dead && hp0 > 0) BUILD.onKill(next, this._closeTo(next));
-
-      /* 弹射命中一样触发爆炸 —— 它继承的是统一规律，不是专属分支 */
-      if (d.blastOn) this.blast(root, next.pos, hitDmg * seq[hop], next);
 
       this._bounceFx(curPos, next.pos);
       curPos = { x: next.pos.x, y: next.pos.y + 0.9, z: next.pos.z };

@@ -805,16 +805,12 @@ TUNE.BUILD = {
   pelletFar: 14,             // 14m 外只剩 farKeep
   pelletFarKeep: 0.45,
 
-  /* --- §8.1 弹射与爆炸的搜索半径 --- */
+  /* --- §8.1 弹射的搜索半径 --- */
   bounceSearch: 14,
-  blastSearch: 6.0,
 
-  /* --- 爆炸的统一衰减（Bao：稍微不收敛一点）---
-     同一根攻击里第 n 次爆炸 ×max(floor, ratio^(n-1))。
-     0.93 前 8 次几乎不掉，掉到 0.55 就不再掉 —— 之后每多一次命中
-     都是稳定的 +55%，总和线性增长、不收敛。 */
-  blastDecay: 0.93,
-  blastDecayFloor: 0.55
+  /* 爆炸的统一衰减已经删掉：它是为「每次命中都炸」那版爆炸准备的。
+     尸爆一只怪只炸一次，收敛靠连锁层数和「按死者生命算」，不靠衰减。 */
+  corpseDepth: 2               // 尸爆连锁最多几层（沿用 procDepth）
 };
 
 /* --- todo12 §2 恶魔卡：红色、稀有、改写规则的一层 ---
@@ -839,7 +835,11 @@ TUNE.DEMON = {
   slug:    { dmg: 16 },
   scope:   { gain: 0.60, speed: 0.45, hipSpread: 8 },
   /* todo13 E12 恶魔复生：不是保险，是死亡之后正式进入第二形态。 */
-  rebirth: { hpMult: 0.5, dmgMult: 2.0 }
+  rebirth: { hpMult: 0.5, dmgMult: 2.0 },
+  /* todo13 A04 轨道炮：找一条直线穿透整条街。
+     Bao 确认【不设上限】—— 无限穿透配尸爆/弹射时总伤害随命中数线性增长，
+     那是想要的运气组合，不去削它。 */
+  railgun: { rate: 0.25, ammo: 3, dmg: 6 }
 };
 
 /* --- 护盾池（todo13）---
@@ -864,12 +864,18 @@ TUNE.MOL = {
     ammoEveryLv: 2,          // 每两级再 +1
     fanDeg: 3.4
   },
-  blast: {
-    name: '爆炸', css: '#ff9a3c',
-    dmgAt1: 0.52,            // 本次命中伤害的 52%（§9.2 要求大升级 ≥ +40%）
-    dmgPerLv: 0.09,
-    radiusAt1: 2.5,
-    radiusPerLv: 0.32
+  /* todo13 C01 尸爆 —— 取代原来的「爆炸」（Bao：爆炸太强了，先隐藏掉）。
+     原来的爆炸是「每次命中都按本次伤害的百分比炸一圈」，配多发/穿透时
+     一枪能炸几十次，伤害随命中数线性堆上去。
+     尸爆改成【打死才炸，威力按死掉那只怪自己的生命算】：
+       - 收益不跟你的枪走，跟你杀的东西走 —— 杀精英才有大爆
+       - 连锁受 corpseDepth（2 层）约束，不会一路推平全图 */
+  corpse: {
+    name: '尸爆', css: '#ff9a3c',
+    pctAt1: 0.25,            // 炸出死者最大生命的 25%
+    pctPerLv: 0.10,
+    radiusAt1: 4.0,
+    radiusPerLv: 0.7
   },
   pierce: {
     name: '穿透', css: '#8affc1',
@@ -912,6 +918,17 @@ TUNE.MOL = {
 /* --- todo13 C03 过量伤害转移 ---
    只转移【超过敌人剩余生命的那部分】。天然收敛：每跳再乘 keep，
    而且高射速小伤害的 Build 本来就没有溢出，白赚不到。 */
+/* --- todo13 A05 墙面反弹 ---
+   子弹撞墙不消失，反弹并且【伤害提高】。代价不是衰减，是它和穿透
+   抢同一颗子弹：穿透与反弹哪个先用完，子弹就在那里消失（Bao 定）。
+   它顺带把「城市几何」拉进 Build —— 巷子和拐角第一次变成输出的一部分。 */
+TUNE.MOL_WALL = {
+  css: '#9fd8ff', name: '墙面反弹',
+  countAt1: 1, countPerLv: 1,
+  gainAt1: 1.35, gainPerLv: 0.15,   // 每次反弹之后伤害乘这个数
+  nudge: 0.25                        // 反弹后沿新方向推开一点，避免同一帧再撞
+};
+
 TUNE.MOL_OVERFLOW = {
   css: '#ffb84d', name: '过量转移',
   keepAt1: 0.65, keepPerLv: 0.05, keepMax: 0.85,

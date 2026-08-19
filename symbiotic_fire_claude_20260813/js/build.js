@@ -64,17 +64,23 @@ card({
 });
 
 card({
-  id: 'blast', kind: 'mol', css: TUNE.MOL.blast.css, name: '爆炸',
-  gain: '每次命中都会伤害周围敌人',
-  cost: '同一枪里连续爆炸会逐次减弱',
+  id: 'corpse', kind: 'mol', css: TUNE.MOL.corpse.css, name: TUNE.MOL.corpse.name,
+  gain: '敌人死亡时炸开，威力按【它自己的生命上限】算 —— 杀得越硬，炸得越狠',
+  cost: '只有打死才炸；连锁最多 ' + TUNE.BUILD.corpseDepth + ' 层',
   stat(lv) {
-    const M = TUNE.MOL.blast;
-    if (lv <= 0) return { dmg: 0, radius: 0 };
-    return { dmg: M.dmgAt1 + (lv - 1) * M.dmgPerLv, radius: M.radiusAt1 + (lv - 1) * M.radiusPerLv };
+    const M = TUNE.MOL.corpse;
+    if (lv <= 0) return { pct: 0, radius: 0 };
+    return { pct: M.pctAt1 + (lv - 1) * M.pctPerLv,
+             radius: M.radiusAt1 + (lv - 1) * M.radiusPerLv };
   },
   line(lv, nx) {
     const a = this.stat(lv), b = this.stat(nx);
-    return ['爆炸伤害：' + pct(a.dmg) + ' → ' + pct(b.dmg) + '（按本次命中）',
+    /* 卡面给两个真实数字：小怪炸多少、精英炸多少。
+       「死者生命的 25%」对玩家是抽象的，「肉山炸 850」不是。 */
+    const g = Math.round(ENEMIES.grunt.hp * b.pct * G.hpScale());
+    const m = Math.round(ENEMIES.midboss.hp * b.pct * G.hpScale());
+    return ['爆炸伤害：死者生命上限的 ' + pct(a.pct) + ' → ' + pct(b.pct) +
+            '（现在：普通怪 ' + g + ' / 肉山 ' + m + '）',
             '爆炸半径：' + one(a.radius) + ' → ' + one(b.radius) + ' 米'];
   }
 });
@@ -167,6 +173,24 @@ card({
     const tot = k => k <= 0 ? 0 : k * (1 - Math.pow(k, b.hops)) / (1 - k);
     return ['每次转移保留：' + pct(a.keep) + ' → ' + pct(b.keep),
             '最多转移 ' + b.hops + ' 次，溢出伤害合计最高 ' + mul(tot(b.keep))];
+  }
+});
+
+card({
+  id: 'wallbounce', kind: 'mol', css: TUNE.MOL_WALL.css, name: TUNE.MOL_WALL.name,
+  gain: '子弹撞墙不消失，反弹继续飞，而且【反弹之后伤害更高】',
+  cost: '和穿透抢同一颗子弹：穿透与反弹哪个先用完，子弹就在那里消失',
+  stat(lv) {
+    const M = TUNE.MOL_WALL;
+    if (lv <= 0) return { count: 0, gain: 1 };
+    return { count: M.countAt1 + (lv - 1) * M.countPerLv,
+             gain: M.gainAt1 + (lv - 1) * M.gainPerLv };
+  },
+  line(lv, nx) {
+    const a = this.stat(lv), b = this.stat(nx);
+    return ['反弹次数：' + a.count + ' → ' + b.count,
+            '每次反弹后伤害：' + mul(a.gain) + ' → ' + mul(b.gain) +
+            '（弹 ' + b.count + ' 次共 ' + mul(Math.pow(b.gain, b.count)) + '）'];
   }
 });
 
@@ -468,6 +492,14 @@ demon('rebirth', '恶魔复生', '致死时复活一次并回满生命', '复活
             '之后最大生命 ' + mul(D.hpMult) + '、所有伤害 ' + mul(D.dmgMult) + ' —— 这是第二形态，不是保险'];
   });
 
+demon('railgun', '轨道炮', '所有伤害 ×6，无限穿透 —— 一枪贯穿整条街',
+  '射速降到 25%，每枪耗弹 ×3',
+  function () {
+    const D = TUNE.DEMON.railgun;
+    return ['伤害 ' + mul(D.dmg) + '，穿透【无限】—— 一条直线上有几只就打几只',
+            '射速 ' + pct(D.rate) + '，耗弹 ' + mul(D.ammo) + '：这把枪要你找角度，不要你泼子弹'];
+  });
+
 /* ========================================================================== */
 /*                                  BUILD                                     */
 /* ========================================================================== */
@@ -503,7 +535,7 @@ const BUILD = {
     c.quietT = 0; c.shield = 0; c.shieldMax = 0; c.healSecT = 0; c.healSec = 0;
     c.loadFrac = 0; c.revived = false;
     c.wallDist = 0; c.chainUsed = false;
-    this.stats = { direct: 0, blast: 0, bounce: 0, pierce: 0, overflow: 0,
+    this.stats = { direct: 0, corpse: 0, bounce: 0, pierce: 0, overflow: 0,
                    ammoSpent: 0, ammoSaved: 0, reloadT: 0, fireT: 0, kills: 0 };
     return this;
   },
@@ -564,7 +596,8 @@ const BUILD = {
   derive(d) {
     const B = TUNE.BUILD;
     const vol = CARD_BY_ID.volley.stat(this.level('volley'));
-    const bla = CARD_BY_ID.blast.stat(this.level('blast'));
+    const cor = CARD_BY_ID.corpse.stat(this.level('corpse'));
+    const wal = CARD_BY_ID.wallbounce.stat(this.level('wallbounce'));
     const pie = CARD_BY_ID.pierce.stat(this.level('pierce'));
     const ric = CARD_BY_ID.ricochet.stat(this.level('ricochet'));
     const hea = CARD_BY_ID.heavy.stat(this.level('heavy'));
@@ -574,6 +607,7 @@ const BUILD = {
     d.pellets = vol.pellets;
     d.volleyFan = TUNE.MOL.volley.fanDeg;
     let cost = 1 + vol.ammo + (this.has('heavy') ? TUNE.MOL.heavy.ammoExtra : 0);
+    if (this.has('railgun')) cost *= TUNE.DEMON.railgun.ammo;
     d.extraAmmo = cost - 1;                    // 节弹只能返还这部分
     if (this.has('overload')) cost *= TUNE.CHOICE.overload.ammoMult;
     d.ammoPerShot = Math.max(1, Math.round(cost));
@@ -585,7 +619,8 @@ const BUILD = {
       * (this.has('overload') ? CARD_BY_ID.overload.stat(this.level('overload')).m : 1)
       * (this.has('glass') ? TUNE.DEMON.glass.out : 1)
       * (this.has('slug') ? TUNE.DEMON.slug.dmg : 1)
-      * (this.ctx.revived ? TUNE.DEMON.rebirth.dmgMult : 1);
+      * (this.ctx.revived ? TUNE.DEMON.rebirth.dmgMult : 1)
+      * (this.has('railgun') ? TUNE.DEMON.railgun.dmg : 1);
     /* 玻璃大炮的另一半在 hurtPlayer 的第一行 —— 在护盾之前乘，
        所以护盾也按 ×3 被扣掉（Bao 指定）。 */
     d.hurtMult = this.has('glass') ? TUNE.DEMON.glass.in : 1;
@@ -594,7 +629,8 @@ const BUILD = {
        实际间隔由 fireInterval + ocRamp 在开火时算。 */
     d.fireInterval = TUNE.GUN.fireInterval
       / Math.pow(1 + TUNE.WUP.rate.perLv, this.level('rate'))
-      / hea.rate;
+      / hea.rate
+      / (this.has('railgun') ? TUNE.DEMON.railgun.rate : 1);
     d.ocPeak = ovc.peak;
     d.ocRampTime = ovc.ramp;
 
@@ -611,15 +647,20 @@ const BUILD = {
     const ovf = CARD_BY_ID.overflow.stat(this.level('overflow'));
     d.overflowKeep = ovf.keep;
     d.overflowHops = ovf.hops;
-    d.pierce = pie.count;
-    d.pierceKeep = pie.keep;
+    /* 轨道炮：无限穿透。用一个够大的数而不是 Infinity ——
+       它会进 NaN 守门的 isFinite 检查，Infinity 会被当成坏值换掉。 */
+    d.pierce = this.has('railgun') ? 999 : pie.count;
+    d.pierceKeep = this.has('railgun') ? Math.max(pie.keep, 1) : pie.keep;
     d.bounce = ric.count;
     d.bounceSeq = ric.seq;
 
-    /* 爆炸 */
-    d.blastOn = this.has('blast');
-    d.blastDmg = bla.dmg;
-    d.blastRadius = bla.radius;
+    /* 尸爆：打死才炸，威力按死者自己的生命算 */
+    d.corpsePct = cor.pct;
+    d.corpseRadius = cor.radius;
+
+    /* 墙面反弹 */
+    d.wallBounce = wal.count;
+    d.wallGain = wal.gain;
 
     /* 弹药循环 */
     d.thrift = this.has('thrift')
@@ -1075,13 +1116,13 @@ const BUILD = {
 
 const _dashBuf = [];
 const NUMERIC = ['damage', 'fireInterval', 'magazine', 'reloadTime', 'ammoPerShot', 'pellets',
-  'pierce', 'bounce', 'blastRadius', 'blastDmg', 'bulletScale', 'knockback',
+  'pierce', 'bounce', 'corpseRadius', 'corpsePct', 'wallBounce', 'wallGain', 'bulletScale', 'knockback',
   'weakpointMult', 'volleyFan', 'ocPeak', 'ocRampTime', 'pierceKeep',
   'hurtMult', 'killload', 'overflowKeep', 'overflowHops'];
 const NUMERIC_FALLBACK = {
   damage: TUNE.GUN.damage, fireInterval: TUNE.GUN.fireInterval, magazine: TUNE.GUN.magazine,
   reloadTime: TUNE.GUN.reloadTime, ammoPerShot: 1, pellets: 1, pierce: 0, bounce: 0,
-  blastRadius: 0, blastDmg: 0, bulletScale: 1, knockback: TUNE.GUN.knockback,
+  corpseRadius: 0, corpsePct: 0, wallBounce: 0, wallGain: 1, bulletScale: 1, knockback: TUNE.GUN.knockback,
   weakpointMult: TUNE.GUN.weakpointMult, volleyFan: 0, ocPeak: 0, ocRampTime: 1, pierceKeep: 1,
   hurtMult: 1, killload: 0, overflowKeep: 0, overflowHops: 0
 };

@@ -97,7 +97,11 @@ const RANGES = {
   spread: { name: '分散尸群', desc: '9 只，彼此间隔 9m 以上', build(add) {
     for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) add((c - 1) * 10, 20 - r * 10);
   } },
-  solo: { name: '单体精英', desc: '一只，18m 外', build(add) { add(0, 12); } }
+  solo: { name: '单体精英', desc: '一只，18m 外', build(add) { add(0, 12); } },
+  /* 尸爆只有「打死」才触发，所以它需要一个会死的靶场 —— 上面四个是不死靶。 */
+  frail: { name: '近距脆皮', desc: '5×5 阵列，血量正常（会死）', build(add) {
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++) add((c - 2) * 1.8, 26 - r * 2.2);
+  } }
 };
 
 function buildRange(kind) {
@@ -114,11 +118,12 @@ function buildRange(kind) {
   R.camera.rotation.set(0, 0, 0);
   R.camera.updateWorldMatrix(true, false);
 
-  /* 不死靶：量机制，不量击杀。击杀装填要单独测，所以它有自己的靶场。 */
+  /* 不死靶：量机制，不量击杀。击杀装填与尸爆要单独测，各有自己的靶场。 */
+  const frail = kind === 'frail';
   const add = (x, z) => {
     const e = G.enemies.get();
     configureEnemy(e, ENEMIES.grunt, { x: x, y: 0, z: z }, { grace: 0 });
-    e.hp = e.maxHp = 1e7;
+    if (!frail) e.hp = e.maxHp = 1e7;
     e.speed = 0; e.vel.set(0, 0, 0);
     e.spawnGrace = 999;
   };
@@ -194,7 +199,8 @@ function measure(cards, opts) {
     reloadShare: Math.round(reloadT / cycle * 100),
     fireShare: Math.round(fireT / cycle * 100),
     hits: G.stats.hits,
-    direct: Math.round(st.direct), blast: Math.round(st.blast), bounce: Math.round(st.bounce),
+    direct: Math.round(st.direct), corpse: Math.round(st.corpse), bounce: Math.round(st.bounce),
+    overflow: Math.round(st.overflow || 0), kills: G.stats.kills,
     saved: st.ammoSaved,
     rejected: ATK.budget.rejected,
     cost: G.derived.ammoPerShot, pellets: G.derived.pellets
@@ -240,23 +246,22 @@ function audit() {
 
   /* ------------------------------------------------ §11.2 自然组合 */
   say('\n<u>[§11.2] 自然组合：统一规律，不是逐对配方</u>');
-  const vb = measure(['volley', 'blast'], { range: 'dense' });
-  const b1 = measure(['blast'], { range: 'dense' });
-  say('  爆炸      ' + brief(b1) + '  爆炸伤害 ' + b1.blast);
-  say('  多发+爆炸 ' + brief(vb) + '  爆炸伤害 ' + vb.blast);
-  ok(vb.blast > b1.blast * 1.6,
-    '多发的每颗弹都要能独立触发爆炸（' + vb.blast + ' vs ' + b1.blast + '）');
+  /* 尸爆取代了爆炸（todo13）。它的性质和爆炸【不是同一个】，
+     所以这里量的也换了：爆炸看「每次命中是否都独立触发」，
+     尸爆看「是否只有击杀才触发，且威力跟死者生命走」。 */
+  const c0 = measure(['power', 'power'], { range: 'frail' });
+  const c1 = measure(['corpse', 'power', 'power'], { range: 'frail' });
+  say('  基线@脆皮    ' + brief(c0) + '  击杀 ' + c0.kills + '  尸爆伤害 ' + c0.corpse);
+  say('  尸爆@脆皮    ' + brief(c1) + '  击杀 ' + c1.kills + '  尸爆伤害 ' + c1.corpse);
+  ok(c1.corpse > 0, '尸爆在会死的靶场上一点伤害都没打出来');
+  ok(c1.kills > c0.kills, '尸爆没有帮上清场（击杀 ' + c1.kills + ' vs ' + c0.kills + '）');
 
-  /* 同一个靶场里比，跨靶场比出来的差是靶场的差，不是机制的差 */
-  const bLine = measure(['blast'], { range: 'line' });
-  const pb = measure(['pierce', 'blast'], { range: 'line' });
+  const cImm = measure(['corpse', 'power', 'power'], { range: 'dense' });
+  say('  尸爆@不死靶  ' + brief(cImm) + '  尸爆伤害 ' + cImm.corpse);
+  ok(cImm.corpse === 0, '打不死也炸了 —— 尸爆必须只在【击杀】时触发');
+
   const p1 = measure(['pierce'], { range: 'line' });
   say('  穿透        ' + brief(p1));
-  say('  爆炸@长线   ' + brief(bLine) + '  爆炸伤害 ' + bLine.blast);
-  say('  穿透+爆炸   ' + brief(pb) + '  爆炸伤害 ' + pb.blast);
-  ok(pb.blast > bLine.blast * 1.5,
-    '穿透的每一次命中都要完整触发爆炸，不是只有终点才爆（' +
-    pb.blast + ' vs 单爆炸 ' + bLine.blast + '）');
 
   const pr = measure(['pierce', 'ricochet'], { range: 'dense' });
   const r1 = measure(['ricochet'], { range: 'dense' });
@@ -265,19 +270,19 @@ function audit() {
   ok(pr.bounce > r1.bounce * 1.5,
     '穿 N 个人就该产生 N 条弹射链，而不是穿完才折一次（' + pr.bounce + ' vs ' + r1.bounce + '）');
 
-  const hv = measure(['ricochet', 'blast', 'heavy'], { range: 'dense' });
-  const rb = measure(['ricochet', 'blast'], { range: 'dense' });
-  say('  弹射+爆炸      ' + brief(rb) + '  直接 ' + rb.direct + ' 爆 ' + rb.blast + ' 弹 ' + rb.bounce);
-  say('  弹射+爆炸+重弹 ' + brief(hv) + '  直接 ' + hv.direct + ' 爆 ' + hv.blast + ' 弹 ' + hv.bounce);
-  ok(hv.blast > rb.blast && hv.bounce > rb.bounce,
-    '重弹必须同时放大直击、爆炸与弹射（爆 ' + hv.blast + '/' + rb.blast +
+  const hv = measure(['ricochet', 'heavy'], { range: 'dense' });
+  const rb = measure(['ricochet'], { range: 'dense' });
+  say('  弹射        ' + brief(rb) + '  直接 ' + rb.direct + ' 弹 ' + rb.bounce);
+  say('  弹射+重弹   ' + brief(hv) + '  直接 ' + hv.direct + ' 弹 ' + hv.bounce);
+  ok(hv.direct > rb.direct && hv.bounce > rb.bounce,
+    '重弹必须同时放大直击与弹射（直 ' + hv.direct + '/' + rb.direct +
     '，弹 ' + hv.bounce + '/' + rb.bounce + '）');
 
   /* ------------------------------------------------ §9.2 大升级最低标准 */
   say('\n<u>[§9.2] 每个大升级在它的正确场景里至少 +40%</u>');
   const scen = [
     { id: 'volley', range: 'dense', why: '近距密集' },
-    { id: 'blast', range: 'dense', why: '近距密集' },
+    { id: 'corpse', range: 'frail', why: '近距脆皮（尸爆要能打死才有）' },
     { id: 'pierce', range: 'line', why: '长线尸群' },
     { id: 'ricochet', range: 'dense', why: '近距密集' },
     { id: 'heavy', range: 'solo', why: '单体精英' },
@@ -351,13 +356,16 @@ function audit() {
 
   /* ------------------------------------------------ §8.3 性能 */
   say('\n<u>[§8.3] 最重构筑：伤害算满，只砍对象与特效</u>');
-  const heavyBuild = ['volley', 'volley', 'volley', 'pierce', 'pierce', 'ricochet', 'ricochet', 'blast', 'blast', 'overclock'];
+  const heavyBuild = ['volley', 'volley', 'volley', 'pierce', 'pierce', 'ricochet', 'ricochet',
+                      'wallbounce', 'corpse', 'overflow', 'overclock'];
   const hb = measure(heavyBuild, { range: 'dense', sec: 6 });
   say('  ' + heavyBuild.length + ' 张卡：' + brief(hb));
-  say('  直接 ' + hb.direct + '  爆炸 ' + hb.blast + '  弹射 ' + hb.bounce +
-      '  弹丸/枪 ' + hb.pellets + '  事件拒绝 ' + hb.rejected);
+  say('  直接 ' + hb.direct + '  尸爆 ' + hb.corpse + '  弹射 ' + hb.bounce +
+      '  溢出 ' + hb.overflow + '  弹丸/枪 ' + hb.pellets + '  事件拒绝 ' + hb.rejected);
   ok(hb.dmg > 0 && isFinite(hb.dmg), '最重构筑必须仍然结算出有限伤害');
-  ok(hb.direct > 0 && hb.blast > 0 && hb.bounce > 0, '三条伤害来源都必须仍然在工作');
+  /* 尸爆与溢出都只在【击杀】时才有，而这里用的是不死靶 ——
+     所以这一条只能要求直击和弹射在工作，不能要求那两条。 */
+  ok(hb.direct > 0 && hb.bounce > 0, '直击与弹射都必须仍然在工作');
   ok(hb.rejected === 0,
     '触顶拒绝 ' + hb.rejected + ' 次 —— 伤害被静默削掉了，§8.3 明令禁止');
 

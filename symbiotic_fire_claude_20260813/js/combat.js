@@ -266,6 +266,11 @@ function killEnemy(e, ctx, opts) {
     healPlayer(heal);        // healPlayer 自己会闪治疗反馈
   }
 
+  /* 尸爆（todo13 C01）：挂在死亡上，而不是命中上。
+     放在 emit('kill') 之前 —— 尸群共同进化那边也订阅 kill，
+     顺序上先把这一具尸体炸掉，再让世界对这次死亡做反应。 */
+  if (G.derived.corpsePct > 0) ATK.corpse(e, ctx);
+
   G.bus.emit('kill', { enemy: e, ctx: ctx || makeAttack('world'), opts: opts || {} });
 }
 
@@ -461,11 +466,11 @@ function makeBulletPool() {
     speed: 0, dmg: 0, life: 0, pierce: 0, hitList: null, ctx: null, col: 0, scale: 1,
     /* todo5 §6.2：谱系节点挂在子弹上，池化复位时必须清干净 */
     gene: null, baseDmg: 0, pierceHits: 0, bounceHits: 0,
-    pendingBlast: false, homeE: null, volleyIndex: 0
+    pendingBlast: false, homeE: null, wallLeft: 0, volleyIndex: 0
   }), b => {
     b.ctx = null; b.hitList = null; b.gene = null;
     b.pierceHits = 0; b.bounceHits = 0; b.pendingBlast = false;
-    b.homeE = null; b.volleyIndex = 0; b.baseDmg = 0;
+    b.homeE = null; b.wallLeft = 0; b.volleyIndex = 0; b.baseDmg = 0;
   });
 }
 
@@ -490,6 +495,7 @@ function spawnBullet(origin, dir, dmg, ctx, opts) {
   b.gene = opts.gene || null;
   b.baseDmg = opts.gene ? dmg : 0;
   b.pendingBlast = false; b.homeE = null;
+  b.wallLeft = G.derived.wallBounce || 0;
   return b;
 }
 
@@ -566,6 +572,7 @@ function retireBullet(b) {
 }
 
 const _hitCand = [];
+const _wallHit = { x: 0, y: 0, z: 0, nx: 0, ny: 0, nz: 0 };
 function updateBullets(dt) {
   const list = G.bullets.live;
   for (let i = 0; i < list.length; i++) {
@@ -600,6 +607,27 @@ function updateBullets(dt) {
        于是子弹会直接穿过整栋楼。城市地图里「墙能挡枪线」是战术的前提：
        没有它，掩体、街道峡谷和纵深选择全部不成立。 */
     if (CITY.segBlocked(b.prev.x, b.prev.y, b.prev.z, b.pos.x, b.pos.y, b.pos.z)) {
+      /* 墙面反弹（todo13 A05）：还有反弹次数就弹，没有就到此为止。
+         穿透和反弹抢同一颗子弹 —— 哪个先用完，子弹就在那里消失（Bao 定）。 */
+      if (b.wallLeft > 0 && CITY.segHit(b.prev.x, b.prev.y, b.prev.z, b.pos.x, b.pos.y, b.pos.z, _wallHit)) {
+        b.wallLeft--;
+        const dot = b.dir.x * _wallHit.nx + b.dir.y * _wallHit.ny + b.dir.z * _wallHit.nz;
+        b.dir.x -= 2 * dot * _wallHit.nx;
+        b.dir.y -= 2 * dot * _wallHit.ny;
+        b.dir.z -= 2 * dot * _wallHit.nz;
+        b.dir.normalize();
+        /* 从命中点沿新方向推开一点：不推的话下一帧的线段起点仍在墙里，
+           会立刻再判一次撞墙，一颗子弹在一个角上把次数全耗掉。 */
+        const nu = TUNE.MOL_WALL.nudge;
+        b.pos.set(_wallHit.x + b.dir.x * nu, _wallHit.y + b.dir.y * nu, _wallHit.z + b.dir.z * nu);
+        b.prev.copy(b.pos);
+        /* 反弹之后伤害提高 —— 这是这张卡的收益，不是衰减 */
+        b.hopDmg = (b.hopDmg || b.dmg) * G.derived.wallGain;
+        b.dmg = b.hopDmg;
+        b.hitList.clear();          // 弹回来可以再打同一只（重复命中仍受 root 的 gate 约束）
+        R.spark(_wallHit, b.dir, 0x9fd8ff);
+        continue;
+      }
       R.spark(b.pos, null, 0x9fb4c8);
       retireBullet(b); continue;
     }

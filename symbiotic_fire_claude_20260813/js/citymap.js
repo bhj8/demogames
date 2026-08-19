@@ -353,6 +353,35 @@ const CITY = {
     return false;
   },
 
+  /* 取墙面法线（todo13 A05 墙面反弹）。
+     segBlocked 只回答「挡不挡」，反弹还需要知道【撞在哪个面上】。
+     城市几何全是 AABB，所以法线就是「命中点离哪个面最近」那个轴 ——
+     不需要真正的射线-盒求交，沿线步进到第一个撞点再判一次就够准。
+     命中写进 out：{x,y,z, nx,ny,nz}；没撞到返回 false。 */
+  segHit(x0, y0, z0, x1, y1, z1, out) {
+    const steps = Math.max(2, Math.ceil(Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 0.5));
+    for (let i = 1; i <= steps; i++) {
+      const k = i / steps;
+      const x = lerp(x0, x1, k), y = lerp(y0, y1, k), z = lerp(z0, z1, k);
+      this.beginQuery();
+      const list = this.query(x - 0.05, x + 0.05, z - 0.05, z + 0.05);
+      for (let j = 0; j < list.length; j++) {
+        const s = list[j];
+        if (!(x > s.x0 && x < s.x1 && z > s.z0 && z < s.z1 && y > s.y0 && y < s.y1)) continue;
+        /* 六个面各自的入侵深度，最浅的那个就是撞进来的面 */
+        const d = [x - s.x0, s.x1 - x, y - s.y0, s.y1 - y, z - s.z0, s.z1 - z];
+        let m = 0;
+        for (let a = 1; a < 6; a++) if (d[a] < d[m]) m = a;
+        out.x = x; out.y = y; out.z = z;
+        out.nx = m === 0 ? -1 : m === 1 ? 1 : 0;
+        out.ny = m === 2 ? -1 : m === 3 ? 1 : 0;
+        out.nz = m === 4 ? -1 : m === 5 ? 1 : 0;
+        return true;
+      }
+    }
+    return false;
+  },
+
   /* 统一层级定义 §9：玩家与敌人共用 */
   layerOf(y) {
     const M = TUNE.VERTICAL_MAP;
