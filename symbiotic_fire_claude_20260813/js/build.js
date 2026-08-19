@@ -519,6 +519,22 @@ demon('defer', '延迟清算', '所有伤害先记成紫色的待清算伤害，
             one(D.forceEvery) + ' 秒自动结算一次'];
   });
 
+demon('predator', '捕食代谢', '拾取经验时按经验价值恢复生命 —— 经验就是血',
+  '医疗包不再掉落，近杀回血失效（再生盾不受影响）',
+  function () {
+    const P = TUNE.DEMON.predator;
+    return ['每 1 点经验回 ' + one(P.perXp) + ' 生命，每秒最多 ' + P.capPerSec,
+            '医疗包【不再出现】、近杀回血【完全失效】—— 想活命就得冲进经验堆里'];
+  });
+
+demon('eliteworld', '精英世界', '所有普通敌人都带一种变异，精英与特殊怪明显变多，经验 ×2.5',
+  '每一只都比原来难杀',
+  function () {
+    const P = TUNE.DEMON.eliteWorld;
+    return ['场上不再有「纯普通怪」，精英权重 ×' + P.eliteWeight + '，经验 ' + mul(P.xpMult),
+            '总数量不变 —— 换的是质量，不是数量'];
+  });
+
 /* ========================================================================== */
 /*                                  BUILD                                     */
 /* ========================================================================== */
@@ -675,9 +691,11 @@ const BUILD = {
     d.bounce = ric.count;
     d.bounceSeq = ric.seq;
 
-    /* 坍缩炮 / 延迟清算：热路径只读这两个布尔 */
+    /* 坍缩炮 / 延迟清算 / 捕食代谢 / 精英世界：热路径只读这几个布尔 */
     d.chargeGun = this.has('collapse');
     d.deferOn = this.has('defer');
+    d.predator = this.has('predator');
+    d.eliteWorld = this.has('eliteworld');
 
     /* 尸爆：打死才炸，威力按死者自己的生命算 */
     d.corpsePct = cor.pct;
@@ -1015,7 +1033,9 @@ const BUILD = {
       this.addShield(P.perKill * this.level('killshield') * (elite ? P.eliteMult : 1));
     }
 
-    if (this.has('lifesteal') && closeKill) {
+    /* 捕食代谢把近杀回血整个关掉（卡面已点名，Bao 特别提醒过这件事
+       必须让玩家知道）——「回血只从经验来」是这张卡的全部意义。 */
+    if (this.has('lifesteal') && closeKill && !this.has('predator')) {
       const P = TUNE.MUP.lifesteal, c = this.ctx;
       const heal = Math.min(P.perLv * this.level('lifesteal'), P.capPerSec - c.healSec);
       if (heal > 0) {
@@ -1050,9 +1070,14 @@ const BUILD = {
     }
 
     const molCount = this.molecules().length;
+    /* G10 纯化构筑（todo13，只有 Debug 开关，不进正式牌池）：
+       只发核心分子与大玩法选择，砍掉全部小升级。
+       想看的是「纯大升级局」到底更爽，还是五分钟后彻底失控。 */
+    const pure = typeof DebugPanel !== 'undefined' && DebugPanel.pureBuild;
     const pool = [];
     CARDS.forEach(c => {
       if (c.kind === 'demon') return;        // 恶魔卡只走下面那条独立通道
+      if (pure && c.kind !== 'mol' && c.kind !== 'choice') return;
       let w = c.kind === 'mol' ? 3.2 : c.kind === 'choice' ? 2.4 : c.kind === 'wup' ? 2.0 : 1.5;
       /* 已有 4 个分子后新分子权重下降，但不锁死 —— 幸运局可以继续扩展 */
       if (c.kind === 'mol' && !this.has(c.id) && molCount >= B.moleculeSoftCap) w *= B.moleculeSoftWeight;
@@ -1084,7 +1109,9 @@ const BUILD = {
     };
     if (molCount < 2 && this.draws >= B.secondMoleculeByDraw) pick(c => c.kind === 'mol' && !this.has(c.id));
     else if (forceBig) pick(c => c.big);
-    if (!out.some(o => o.kind !== 'mup')) pick(c => c.kind !== 'mup');
+    /* 「每次至少一张武器侧」这条保底在纯化模式下必须短路：
+       池子里已经没有机动生存卡了，再去找「非 mup」会永远成立、白跑一次。 */
+    if (!pure && !out.some(o => o.kind !== 'mup')) pick(c => c.kind !== 'mup');
     while (out.length < n) if (!pick(() => true)) break;
 
     /* todo12 §2：恶魔卡独占【第三格】，前两格照常走保底。

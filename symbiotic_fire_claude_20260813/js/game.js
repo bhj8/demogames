@@ -253,6 +253,15 @@ const Director = {
     return n;
   },
 
+  /* 精英世界用的变异池：玩家选过的优先，不够就从全集补。 */
+  elitePool() {
+    const P = TUNE.DEMON.eliteWorld;
+    const pool = G.variantPool.slice();
+    if (pool.length >= P.minPool) return pool;
+    Object.keys(G.variantTpl || {}).forEach(id => { if (pool.indexOf(id) < 0) pool.push(id); });
+    return pool;
+  },
+
   /* 刷怪落点的实测统计。「刷在脸上」是一句体感，这里把它变成数字：
      平均距离、最近距离、20m 内的比例、背后半球的比例。
      Debug 面板直接读它，_stability 也读它。 */
@@ -301,6 +310,11 @@ const Director = {
       if (G.introduced.leaper) { pool.push(ENEMIES.leaper); w.push(0.18); }
       if (G.introduced.roofcaster) { pool.push(ENEMIES.roofcaster); w.push(0.14); }
     }
+    /* 精英世界：把非普通怪的权重整体抬起来。总数量不动 —— 换的是质量。 */
+    if (G.derived.eliteWorld) {
+      const W = TUNE.DEMON.eliteWorld.eliteWeight;
+      for (let i = 1; i < w.length; i++) w[i] *= W;
+    }
     let base = RNG.spawn.weighted(pool, w);
 
     /* todo12 §3：远程怪占场上比例不超过 rangedShare。
@@ -319,7 +333,21 @@ const Director = {
     }
 
     /* 只有 grunt 会被替换成变种模板 §25 */
-    if (base !== ENEMIES.grunt || G.variantPool.length === 0) return base;
+    if (base !== ENEMIES.grunt) return base;
+
+    /* 精英世界（todo13 G09）：不再看概率，每一只普通怪都带一种变异。
+       变异池优先用玩家【选过】的 —— 共同进化那条线（你变强，尸潮长出
+       对应的怪）不能因为一张卡就断掉；不足 minPool 种时从全集补齐，
+       否则开局拿到这张卡等于没有效果。 */
+    if (G.derived.eliteWorld) {
+      const pool = this.elitePool();
+      if (pool.length) {
+        const w = pool.map(id => (id === 'giant' ? MUT.giant.enemy.weight : 1));
+        return G.variantTpl[RNG.spawn.weighted(pool, w)];
+      }
+    }
+
+    if (G.variantPool.length === 0) return base;
     const share = Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation);
     if (!RNG.spawn.chance(share)) return base;
     const weights = G.variantPool.map(id => (id === 'giant' ? MUT.giant.enemy.weight : 1));
@@ -822,6 +850,7 @@ function dropXp(pos, value) {
      而这件事在 HUD 上完全看不见 —— 一个看不见的惩罚不是取舍，是暗扣。
      地图热点的加成保留：那个有明确的视觉标记。 */
   if (CITY.enabled) value *= MAPEV.xpBonus(pos.x, pos.z);
+  if (G.derived.eliteWorld) value *= TUNE.DEMON.eliteWorld.xpMult;
   /* §6.1 经验球记录所在高度，且绝不能停在墙面、空中或封闭模型内部 */
   let y = 0.42, base = 0;
   if (CITY.enabled) {
@@ -866,7 +895,17 @@ function updateXp(dt) {
     } else {
       c.y = c.base + 0.42 + Math.sin(G.time * 3 + c.bob) * 0.09;
     }
-    if (d3 < pick) { gainXp(c.v); G.xp.splice(i, 1); continue; }
+    if (d3 < pick) {
+      gainXp(c.v);
+      /* 捕食代谢（todo13 E04）：经验就是血。每秒有上限，
+         否则一次吸进一大片经验会直接满血，这张卡的紧张感就没了。 */
+      if (G.derived.predator) {
+        const P = TUNE.DEMON.predator, bc = BUILD.ctx;
+        const heal = Math.min(c.v * P.perXp, P.capPerSec - bc.healSec);
+        if (heal > 0) { bc.healSec += heal; healPlayer(heal); }
+      }
+      G.xp.splice(i, 1); continue;
+    }
     if (n < 640) {
       _xpQ.setFromAxisAngle(UP, G.time * 2.4 + c.bob);
       const s = c.v >= 3 ? 1.7 : 1;
@@ -990,6 +1029,8 @@ function updateMedical(dt) {
   else if (frac > M.band35) G.medNeed += M.gainBand50 * dt;
   else G.medNeed += M.gainBand35 * dt;
 
+  /* 捕食代谢：医疗包直接不再掉落。掉了但捡着没用是最容易被当成 bug 的做法。 */
+  if (G.derived.predator) return;
   if (!G.medPending && !G.medical && G.medCooldown <= 0 && G.medNeed >= M.needThreshold) {
     G.medPending = true;            // 下一只非召唤物敌人死亡时掉落
   }
@@ -2313,7 +2354,8 @@ const DebugPanel = {
       ['满弹', 'fullmag'], ['清空弹匣', 'emptymag'], ['立即换弹', 'doreload'],
       ['无限供弹', 'infammo'], ['相机后坐×0', 'camrec0'], ['相机后坐×1', 'camrec1'],
       ['枪感实验场', 'gunrange'], ['慢动作', 'slowmo'],
-      ['恶魔卡必出', 'demonall'], ['给一张恶魔卡', 'demon1'], ['立即致死', 'kill1']
+      ['恶魔卡必出', 'demonall'], ['给一张恶魔卡', 'demon1'], ['立即致死', 'kill1'],
+      ['纯化构筑', 'purebuild']
     ].map(([t, a]) => '<button data-a="' + a + '">' + t + '</button>').join('');
     $('dbgbtns').onclick = e => {
       const a = e.target.dataset.a; if (!a) return;
@@ -2344,6 +2386,12 @@ const DebugPanel = {
         this.log('已获得恶魔卡：' + c.name);
       }
       else if (a === 'kill1') { hurtPlayer(1e9, null, 'melee'); this.log('已施加致死伤害'); }
+      /* G10 纯化构筑：只是实验，不进正式牌池（todo13 §3）。
+         第一轮不给等级翻倍 —— 先看纯大升级局本身是不是已经失控了。 */
+      else if (a === 'purebuild') {
+        this.pureBuild = !this.pureBuild;
+        this.log('纯化构筑 ' + (this.pureBuild ? 'ON（三选一只出分子与大选择）' : 'off'));
+      }
       else if (a === 'slowmo') {
         BOOT.timescale = BOOT.timescale === 1 ? 0.15 : 1;
         this.log('时间倍率 ' + BOOT.timescale + ' —— 可逐帧看枪机/枪口/曳光/抛壳是否同帧');

@@ -856,7 +856,15 @@ TUNE.DEMON = {
   /* todo13 G08 延迟清算。
      forceEvery 是给无限弹匣兜的底：过载供弹期间永远不换弹，
      不强制结算的话伤害永远不兑现，玩家会以为枪坏了。 */
-  defer: { mult: 1.5, forceEvery: 4.0 }
+  defer: { mult: 1.5, forceEvery: 4.0 },
+  /* todo13 E04 捕食代谢：把「活下去」和「冲进经验堆」绑在一起。
+     Bao 定的范围：医疗包【不再掉落】（掉了捡着没用最像 bug）、
+     近杀回血失效、再生盾保留（那是护盾不是生命）。 */
+  predator: { perXp: 3.0, capPerSec: 22 },
+  /* todo13 G09 精英世界：不加总量，只把每一只都变成变异体。
+     变异池优先用玩家【选过】的（共同进化那条线不能断），
+     不足两种时从全集补齐，否则开局这张卡等于没有效果。 */
+  eliteWorld: { xpMult: 2.5, eliteWeight: 3.0, minPool: 2 }
 };
 
 /* --- 护盾池（todo13）---

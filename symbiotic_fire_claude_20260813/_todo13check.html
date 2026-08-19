@@ -595,6 +595,123 @@ function audit() {
   }
 
   say('');
+  say('<b>批次 4 · E04 捕食代谢</b>');
+  {
+    const P = TUNE.DEMON.predator;
+    const d = derived(['predator']);
+    ok(d.predator === true, 'predator 没有打开');
+    const p = G.player;
+
+    /* 经验回血 */
+    p.hp = p.maxHp - 60; BUILD.ctx.healSec = 0;
+    const before = p.hp;
+    G.xp.length = 0;
+    G.xp.push({ x: p.pos.x, y: p.pos.y + 0.9, z: p.pos.z, base: 0, v: 5, t: 0, home: true,
+                layer: 'street', leftT: 0, bob: 0 });
+    updateXp(1 / 60);
+    say('  经验回血　捡到 5 点经验：生命 ' + Math.round(before) + ' → ' + Math.round(p.hp) +
+        '（每点 ' + one(P.perXp) + '）');
+    ok(Math.abs((p.hp - before) - 5 * P.perXp) < 0.01, '经验没有按 ' + P.perXp + '/点 回血');
+
+    /* 每秒上限：一次吸一大片不能直接满血 */
+    p.hp = 10; BUILD.ctx.healSec = 0;
+    G.xp.length = 0;
+    for (let i = 0; i < 40; i++) {
+      G.xp.push({ x: p.pos.x, y: p.pos.y + 0.9, z: p.pos.z, base: 0, v: 5, t: 0, home: true,
+                  layer: 'street', leftT: 0, bob: 0 });
+    }
+    updateXp(1 / 60);
+    say('  每秒上限　同一帧吸 40 颗（值 200 点）：只回了 ' + Math.round(p.hp - 10) +
+        '（上限 ' + P.capPerSec + '）');
+    ok(p.hp - 10 <= P.capPerSec + 0.01, '一次吸进一大片直接突破了每秒上限');
+
+    /* 近杀回血必须失效 */
+    derived(['predator', 'lifesteal', 'lifesteal']);
+    p.hp = p.maxHp - 50; BUILD.ctx.healSec = 0;
+    const h0 = p.hp;
+    BUILD.onKill({ uid: 1, pos: p.pos, dead: true, tpl: ENEMIES.grunt }, true);
+    say('  近杀回血　带着捕食代谢时近距击杀：生命 ' + Math.round(h0) + ' → ' + Math.round(p.hp));
+    ok(p.hp === h0, '近杀回血没有被关掉 —— 卡面写了失效就必须真的失效');
+
+    /* 医疗包不再掉落 */
+    derived(['predator']);
+    G.medical = null; G.medPending = false; G.medCooldown = 0;
+    G.medNeed = TUNE.MEDICAL.needThreshold + 10;
+    p.hp = p.maxHp * 0.3;
+    updateMedical(1 / 60);
+    say('  医疗包　需求已满时：待掉落 ' + G.medPending);
+    ok(G.medPending === false, '医疗包还在排队掉落 —— 掉了捡着没用最像 bug');
+  }
+
+  say('');
+  say('<b>批次 4 · G09 精英世界</b>');
+  {
+    const P = TUNE.DEMON.eliteWorld;
+    const d = derived(['eliteworld']);
+    ok(d.eliteWorld === true, 'eliteWorld 没有打开');
+
+    /* 每一只普通怪都必须带变异 */
+    RNG.init(20260819);
+    G.introduced.heavy = G.introduced.spitter = G.introduced.roofcaster = true;
+    G.introduced.climber = G.introduced.leaper = true;
+    G.time = 400; G.variantPool.length = 0;
+    let plain = 0, variant = 0, special = 0;
+    for (let i = 0; i < 400; i++) {
+      const tpl = Director.pickTemplate();
+      if (tpl.variant) variant++;
+      else if (tpl.id === 'grunt') plain++;
+      else special++;
+    }
+    say('  400 次抽模板　纯普通怪 ' + plain + '　变异体 ' + variant + '　特殊怪 ' + special);
+    ok(plain === 0, '还有 ' + plain + ' 只纯普通怪 —— 卡面写的是「所有普通敌人都带变异」');
+
+    /* 变异池优先用玩家选过的 */
+    G.variantPool.length = 0;
+    G.variantPool.push('giant', 'ossify');
+    const pool = Director.elitePool();
+    say('  变异池　玩家选过 2 种时用的是：' + pool.join(',') );
+    ok(pool.length === 2 && pool.indexOf('giant') >= 0,
+      '玩家已经选过 2 种变异，精英世界却没有优先用它们 —— 共同进化那条线断了');
+    G.variantPool.length = 0;
+    ok(Director.elitePool().length >= P.minPool, '玩家还没选过变异时，池子应该从全集补齐');
+
+    /* 经验 ×2.5 */
+    derived([]);
+    G.xp.length = 0; G.time = 0;
+    dropXp({ x: 0, y: 0, z: 0 }, 10);
+    const plainXp = G.xp[G.xp.length - 1].v;
+    derived(['eliteworld']);
+    G.xp.length = 0;
+    dropXp({ x: 0, y: 0, z: 0 }, 10);
+    const eliteXp = G.xp[G.xp.length - 1].v;
+    say('  经验　同一只怪掉 ' + n1(plainXp) + ' → ' + n1(eliteXp) + '（应 ×' + P.xpMult + '）');
+    ok(Math.abs(eliteXp / plainXp - P.xpMult) < 0.01, '经验没有 ×' + P.xpMult);
+    G.variantPool.length = 0;
+  }
+
+  say('');
+  say('<b>批次 4 · G10 纯化构筑（只有 Debug 开关）</b>');
+  {
+    RNG.init(20260819); BUILD.init(); recompute();
+    G.time = 0;
+    DebugPanel.pureBuild = true;
+    const kinds = {};
+    let n = 0;
+    for (let i = 0; i < 300; i++) BUILD.candidates().forEach(c => { kinds[c.kind] = (kinds[c.kind] || 0) + 1; n++; });
+    DebugPanel.pureBuild = false;
+    say('  300 次发牌（' + n + ' 张）：' + Object.keys(kinds).map(k => k + ' ' + kinds[k]).join('　'));
+    ok(!kinds.wup && !kinds.mup, '纯化模式下还发出了小升级卡');
+    ok(kinds.mol > 0 && kinds.choice > 0, '纯化模式下分子或大选择一张都没发出来');
+    ok(n >= 300 * 3 - 5, '纯化模式下发牌数量不足 —— 保底逻辑可能空转了（' + n + '）');
+
+    /* 关掉之后必须恢复正常 */
+    RNG.init(20260819); BUILD.init(); recompute();
+    const k2 = {};
+    for (let i = 0; i < 100; i++) BUILD.candidates().forEach(c => { k2[c.kind] = 1; });
+    ok(!!(k2.wup || k2.mup), '关掉纯化模式之后小升级没有回来');
+  }
+
+  say('');
   ok(window.__err.length === 0, '运行期报错：' + window.__err.join(';'));
   say(FAIL ? '<i>FAILED ' + FAIL + ' 条</i>' : '<b>ALLPASS</b>');
 }
