@@ -449,6 +449,52 @@ function audit() {
   }
 
   say('');
+  say('<b>连锁反应：尸爆 × 溢出不允许自持</b>');
+  {
+    /* 这一条是回归测试，钉住一个真出过的事故：
+       尸爆按【死者生命上限】注入全新伤害，而溢出的收敛论证靠「每跳衰减」——
+       两者互相喂料时，一枪连杀 88 只，而且和输入伤害无关
+       （打 400 和打 1600 都是 88），那正是自持反应的签名。
+       修法是两条规则：尸爆打出来的伤害不产生溢出；溢出每跳也算一代 procDepth。 */
+    const grid = (hp) => {
+      G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+      G.enemies.compact();
+      const p = G.player;
+      p.pos.set(0, 0, 0); p.yaw = 0;
+      for (let a = 0; a < 15; a++) for (let b = 0; b < 15; b++) {
+        const e = G.enemies.get();
+        configureEnemy(e, ENEMIES.grunt, { x: (a - 7) * 2.2, y: 0, z: (b - 7) * 2.2 - 20 }, { grace: 999 });
+        e.hp = e.maxHp = hp; e.speed = 0; e.vel.set(0, 0, 0);
+      }
+      G.hash.clear();
+      G.enemies.live.forEach(e => G.hash.insert(e, e.pos.x, e.pos.z));
+    };
+    const oneShot = (cards, over) => {
+      RNG.init(20260819); BUILD.init(); ATK.init();
+      cards.forEach(id => BUILD.take(id));
+      recompute();
+      grid(40);
+      ATK.beginRoot(1);
+      const t = G.enemies.live[112];
+      damageEnemy(t, 40 * over, makeAttack('primary'), { point: t.pos });
+      let dead = 0;
+      G.enemies.live.forEach(e => { if (e.dead || e._dead) dead++; });
+      return dead;
+    };
+    const only = oneShot(['overflow', 'overflow'], 10);
+    const both = oneShot(['corpse', 'corpse', 'overflow', 'overflow'], 10);
+    const bothBig = oneShot(['corpse', 'corpse', 'overflow', 'overflow'], 40);
+    say('  225 只 ×40 血，一枪打死中间那只：溢出Lv4 单独 ' + only +
+        ' 只　尸爆Lv4+溢出Lv4 ' + both + ' 只');
+    say('  同一组合把输入伤害从 ×10 提到 ×40：' + both + ' → ' + bothBig + ' 只');
+    ok(both <= only + 6, '尸爆和溢出合起来远超各自之和（' + both + ' vs 单独 ' + only +
+      '）—— 两者在互相喂料，收敛论证已经作废');
+    ok(bothBig <= both + 2, '输入伤害翻四倍，连锁规模跟着涨了（' + both + ' → ' + bothBig +
+      '）—— 说明它不是自持反应就是没有上限');
+    ok(both < 30, '一枪连杀 ' + both + ' 只，这已经不是连锁是清屏');
+  }
+
+  say('');
   say('<b>批次 2 · A05 墙面反弹</b>');
   {
     const M = TUNE.MOL_WALL;

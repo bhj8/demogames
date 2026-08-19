@@ -215,42 +215,58 @@ function damageEnemy(e, amount, ctx, opts) {
   if (typeof NAV !== 'undefined' && NAV.enabled) NAV.onDamaged(e);
 
   /* §C03 过量伤害转移：只有【打过头】的那部分才转移。
-     必须在 killEnemy 之前把溢出量记下来 —— 之后 e.hp 会被 killEnemy 归零。 */
+     必须在 killEnemy 之前把溢出量记下来 —— 之后 e.hp 会被 killEnemy 归零。
+
+     opts.blast 是尸爆/坍缩这类【派生范围伤害】打出来的。它不产生溢出：
+     溢出转移的是「你这一枪打过头的那部分」，而尸爆的伤害不是你打出来的，
+     它没有"打过头"可言。放开这一条的话，尸爆会不断往溢出链里注入
+     全新的伤害，溢出「每跳衰减」的收敛论证就当场作废 ——
+     实测尸爆 Lv4 + 溢出 Lv4 一枪连杀 88 只，而且和输入伤害无关
+     （打 400 和打 1600 都是 88），那正是自持反应的样子。 */
   const over = e.hp < 0 ? -e.hp : 0;
   if (e.hp <= 0) killEnemy(e, ctx, opts);
-  if (over > 0 && G.derived.overflowKeep > 0) overflowTransfer(e, over, ctx, opts);
+  if (over > 0 && G.derived.overflowKeep > 0 && !(opts && opts.blast)) {
+    overflowTransfer(e, over, ctx, opts);
+  }
   return amount;
 }
 
-/* 溢出转移。天然收敛：每跳乘 keep（<1），并且跳数有上限。
-   用一个模块级的跳数计数器而不是 ctx —— 这条链是通过 damageEnemy
-   递归展开的，计数器必须跨越整条递归，不能被派生上下文复制掉。 */
-let _ovHop = 0;
-/* 用普通对象而不是 Set：ATK._nearestNew 的排除是 `seen[e.uid]`。
-   传 Set 进去的话排除恒为 undefined，链条会反复砸同一只没死的敌人。 */
-let _ovSeen = {};
+/* 溢出转移。链条本身是【线性】的：一次击杀只推向一个新目标，
+   每跳乘 keep（<1），而且打不死就没有溢出可转、当场停。
+
+   跳数与已命中集合都挂在 ctx 上，不用模块级变量：
+   这条链是通过 damageEnemy 递归展开的，中途还会岔出尸爆的递归 ——
+   模块级计数器在这种交叉重入下会被另一条链改写（改之前就是这样，
+   每一次尸爆击杀都从 hop 0 重开一条全新的 6 跳链）。
+
+   ctx 走 deriveAttack，所以 procDepth 每跳 +1：溢出链跑得再远，
+   尸爆也只在最初的 maxDepth 代里还能被触发，不会一路跟着无限开花。 */
 function overflowTransfer(from, over, ctx, opts) {
   const d = G.derived, M = TUNE.MOL_OVERFLOW;
-  if (_ovHop >= d.overflowHops) return;
+  const hop = (ctx && ctx.ovHop) || 0;
+  if (hop >= d.overflowHops) return;
   const dmg = over * d.overflowKeep;
   if (dmg < M.minDamage) return;
 
-  const root = _ovHop === 0;
-  if (root) { _ovSeen = {}; _ovSeen[from.uid] = 1; }
-  const next = ATK._nearestNew(from.pos, _ovSeen, M.search);
-  if (!next) { if (root) _ovHop = 0; return; }
-  _ovSeen[next.uid] = 1;
+  /* 用普通对象而不是 Set：ATK._nearestNew 的排除是 `seen[e.uid]`。 */
+  let seen = ctx && ctx.ovSeen;
+  if (!seen) seen = {};
+  seen[from.uid] = 1;
+  const next = ATK._nearestNew(from.pos, seen, M.search);
+  if (!next) return;
+  seen[next.uid] = 1;
 
-  _ovHop++;
+  const nctx = deriveAttack(ctx || makeAttack('overflow'), 'overflow');
+  nctx.ovHop = hop + 1;
+  nctx.ovSeen = seen;
+
   const m = BUILD.victimMul(next, false);
   const hp0 = next.hp;
-  damageEnemy(next, dmg * m, ctx, { point: next.pos, overflow: true });
+  damageEnemy(next, dmg * m, nctx, { point: next.pos, overflow: true });
   BUILD.stats.overflow = (BUILD.stats.overflow || 0) + dmg * m;
   G.stats.hits++;
   if (next.dead && hp0 > 0) BUILD.onKill(next, ATK._closeTo(next));
   if (ATK.allowFx() && R.addBeam) R.addBeam(from.pos, next.pos, 0xffb84d);
-  _ovHop--;
-  if (root) _ovHop = 0;
 }
 
 function killEnemy(e, ctx, opts) {
