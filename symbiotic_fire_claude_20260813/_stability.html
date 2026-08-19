@@ -12,7 +12,7 @@
   <div id="lvlrow"><b id="lvlnum"></b></div></div>
   <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
   <div id="toast"></div><div id="hint"></div><div id="prompt"></div><div id="buffbar"></div>
-  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
+  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div><div id="shieldfill"></div></div><div id="hpnum"></div></div>
   <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
   <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
 </div>
@@ -99,7 +99,13 @@ function main() {
      用来回答一个关键问题：升级次数到底对「打得好不好」有多敏感。
      Bao 报的是「8 分钟才 5 级」，而机器人稳定 19 次 —— 差别只可能出在这里。 */
   const weak = parseFloat(new URLSearchParams(location.search).get('weak')) || 1;
-  const r = fullRun(seed, strong, moving, weak);
+  /* ?secs=N —— 只跑 N 秒游戏内时间（默认整局 12 分钟）。
+     整局要跑 43800 帧，机器慢的时候一局要十几分钟；
+     而「新卡会不会在真实对局里报错 / 触顶」这件事，三分钟就问得出来。 */
+  const secs = parseFloat(new URLSearchParams(location.search).get('secs')) || TUNE.RUN_SECONDS;
+  /* ?cards=a,b,c —— 开局强制塞这几张卡，用来定向验证某一批新卡。 */
+  const force = (new URLSearchParams(location.search).get('cards') || '').split(',').filter(Boolean);
+  const r = fullRun(seed, strong, moving, weak, secs, force);
   say('SEED ' + seed + (strong ? ' [强]' : '') + (moving ? ' [跑动]' : '') +
       (weak > 1 ? ' [弱×' + weak + ']' : '') + '  ' + fmtTime(r.time) +
       '  身边 ' + r.near.toFixed(1) + '（前3分 ' + r.nearEarly.toFixed(1) + '，最低 ' + r.nearMin + '）' +
@@ -123,14 +129,14 @@ function main() {
   say('  8 分钟前 ' + by8 + ' 次 / 全程 ' + r.pickT.length + ' 次');
   ok(r.err === 0, r.err + ' 次运行时错误');
   ok(r.rejected === 0, r.rejected + ' 次事件触顶 —— 伤害被静默削掉了（§8.3）');
-  ok(r.time > 700, '没跑满 12 分钟（' + Math.round(r.time) + 's）');
+  ok(r.time > Math.min(700, secs - 20), '没跑到预期时长（' + Math.round(r.time) + 's / ' + Math.round(secs) + 's）');
   document.title = (FAIL ? 'FAILED' : 'OK') + '>>' + r.build + '|' + r.picks +
     '|' + r.mol + '|' + r.kills + '|' + r.err + '|' + r.rejected + '<<';
   document.getElementById('out').innerHTML = L.join('\n');
 }
 
 let _clock = 0;
-function fullRun(seed, strong, moving, weak) {
+function fullRun(seed, strong, moving, weak, secs, force) {
   RNG.init(seed);
   G.won = false; G.bossAlive = null; G.buff = null;
   document.getElementById('results').classList.remove('on');
@@ -159,6 +165,7 @@ function fullRun(seed, strong, moving, weak) {
   /* 强 Build：多发 + 爆炸 + 穿透 + 威力，这是实测输出最高的一类组合。
      这些不计入「升级次数」—— 我们量的正是「输出高了之后能多升几次」。 */
   if (strong) ['volley', 'blast', 'pierce', 'power', 'power'].forEach(id => BUILD.take(id));
+  (force || []).forEach(id => { if (BUILD.cardOf(id)) BUILD.take(id); else say('  <i>未知卡 ' + id + '</i>'); });
   recompute();
   G.player.gun.ammo = G.derived.magazine;
 
@@ -173,7 +180,8 @@ function fullRun(seed, strong, moving, weak) {
   let aliveSum = 0, aliveN = 0, alivePeak = 0, fpsMin = 1e9, fpsN = 0, fpsSum = 0;
   const pickT = [];
   let msMax = 0, msSum = 0, msN = 0;
-  for (let i = 0; i < 60 * 60 * 12 + 600; i++) {
+  const frames = Math.ceil((secs || TUNE.RUN_SECONDS) * 60) + 600;
+  for (let i = 0; i < frames; i++) {
     _clock += 16.7;
     const _t0 = performance.now();
     frame(_clock);

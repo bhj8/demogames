@@ -149,6 +149,27 @@ card({
   }
 });
 
+card({
+  id: 'overflow', kind: 'mol', css: TUNE.MOL_OVERFLOW.css, name: TUNE.MOL_OVERFLOW.name,
+  gain: '打死敌人时，超出它剩余生命的那部分伤害转移给附近的敌人',
+  cost: '每转移一次都会衰减，而且只有"打过头"才有东西可转',
+  stat(lv) {
+    const M = TUNE.MOL_OVERFLOW;
+    if (lv <= 0) return { keep: 0, hops: 0 };
+    return {
+      keep: Math.min(M.keepMax, M.keepAt1 + (lv - 1) * M.keepPerLv),
+      hops: Math.min(M.hopsMax, M.hopsAt1 + (lv - 1) * M.hopsPerLv)
+    };
+  },
+  line(lv, nx) {
+    const a = this.stat(lv), b = this.stat(nx);
+    /* 等比数列的和写在卡面上 —— 玩家该看得见"这张卡最多能放大多少" */
+    const tot = k => k <= 0 ? 0 : k * (1 - Math.pow(k, b.hops)) / (1 - k);
+    return ['每次转移保留：' + pct(a.keep) + ' → ' + pct(b.keep),
+            '最多转移 ' + b.hops + ' 次，溢出伤害合计最高 ' + mul(tot(b.keep))];
+  }
+});
+
 /* ============================================================ 七个大玩法选择 */
 /* §3：必须改变距离、站位、瞄准、生命风险、弹药风险或目标选择。
    正常游玩必然自动触发的条件，不允许作为大选择。 */
@@ -247,6 +268,21 @@ card({
 });
 
 card({
+  id: 'pristine', kind: 'choice', css: TUNE.CHOICE.pristine.css, name: TUNE.CHOICE.pristine.name,
+  gain: '生命完全满格时，所有伤害提高',
+  cost: '掉一点血就立刻失效，必须回满才能恢复',
+  stat(lv) {
+    if (lv <= 0) return { m: 1 };
+    return { m: 1 + TUNE.CHOICE.pristine.gainPerLv * lv };
+  },
+  line(lv, nx) {
+    const a = this.stat(lv), b = this.stat(nx);
+    return ['生命 100% 时：' + mul(a.m) + ' → ' + mul(b.m),
+            '护盾挡下的伤害不算掉血 —— 护盾流可以一直挂着它'];
+  }
+});
+
+card({
   id: 'focus', kind: 'choice', css: TUNE.CHOICE.focus.css, name: '专注目标',
   gain: '持续瞄准同一个敌人时，对它的伤害越来越高',
   cost: '换目标就从零开始',
@@ -303,6 +339,11 @@ wup('thrift', '有概率返还这次攻击额外消耗的弹药', '基础必耗�
     return ['返还概率：' + pct(at(lv)) + ' → ' + pct(at(nx)),
             '只作用于多发与重弹产生的额外耗弹'];
   });
+wup('opener', '对满血敌人伤害提高', '—', function (lv, nx) {
+  const P = TUNE.WUP.opener;
+  return ['满血目标：' + mul(1 + P.perLv * lv) + ' → ' + mul(1 + P.perLv * nx),
+          '爆炸与弹射打到的满血目标一样算'];
+});
 wup('killload', '击杀敌人会把弹药装回当前弹匣', '同一枪的返还不超过这枪耗弹的一半',
   function (lv, nx) {
     const P = TUNE.WUP.killload;
@@ -358,6 +399,16 @@ mup('dashhit', '高速冲刺可以伤害并推开普通敌人', '同一敌人有
   return ['冲刺撞击：' + (P.perLv * lv) + ' → ' + (P.perLv * nx) + ' 伤害',
           '同一敌人 ' + one(P.cooldown) + ' 秒内只触发一次'];
 });
+mup('killshield', '击杀获得临时护盾，精英给得更多', '停止击杀后很快衰减', function (lv, nx) {
+  const P = TUNE.MUP.killshield;
+  return ['每次击杀：+' + (P.perKill * lv) + ' → +' + (P.perKill * nx) + ' 护盾（精英 ×' + P.eliteMult + '）',
+          '这部分上限 ' + pct(P.capFrac) + ' 最大生命，且会持续衰减'];
+});
+mup('overheal', '满血之后的治疗转成护盾，不再浪费', '护盾有上限', function (lv, nx) {
+  const P = TUNE.MUP.overheal, base = G.player ? G.player.maxHp : TUNE.PLAYER.maxHp;
+  return ['溢出治疗 ×' + P.convert + ' 转为护盾',
+          '这部分上限 ' + pct(P.capFrac) + ' 最大生命（现在是 ' + Math.round(base * P.capFrac * nx) + '）'];
+});
 mup('magnet', '扩大经验、医疗与空投的拾取范围', '—', function (lv, nx) {
   const P = TUNE.MUP.magnet;
   return ['拾取范围：' + mul(1 + P.perLv * lv) + ' → ' + mul(1 + P.perLv * nx), '不改变掉落本身'];
@@ -410,6 +461,13 @@ demon('scope', '开镜达人', '开镜时伤害、射速、精度全面提升', 
             '不开镜时：散布 ' + mul(D.hipSpread) + ' —— 腰射基本打不中'];
   });
 
+demon('rebirth', '恶魔复生', '致死时复活一次并回满生命', '复活后最大生命永久减半，但所有伤害永久翻倍',
+  function () {
+    const D = TUNE.DEMON.rebirth;
+    return ['一局一次：本该死掉的那一刻满血站起来',
+            '之后最大生命 ' + mul(D.hpMult) + '、所有伤害 ' + mul(D.dmgMult) + ' —— 这是第二形态，不是保险'];
+  });
+
 /* ========================================================================== */
 /*                                  BUILD                                     */
 /* ========================================================================== */
@@ -425,6 +483,7 @@ const BUILD = {
     focusId: -1, focusStack: 0, focusT: 0,
     quietT: 0, shield: 0, shieldMax: 0,
     loadFrac: 0,        // 击杀装填的不满一发的零头
+    revived: false,     // 恶魔复生是否已经用掉（用掉之后进入第二形态）
     healSecT: 0, healSec: 0,
     wallDist: 0, chainUsed: false,
     lastPos: { x: 0, z: 0 }
@@ -442,11 +501,36 @@ const BUILD = {
     const c = this.ctx;
     c.ocRamp = 0; c.sinceShot = 99; c.rootT = 0; c.focusId = -1; c.focusStack = 0; c.focusT = 0;
     c.quietT = 0; c.shield = 0; c.shieldMax = 0; c.healSecT = 0; c.healSec = 0;
-    c.loadFrac = 0;
+    c.loadFrac = 0; c.revived = false;
     c.wallDist = 0; c.chainUsed = false;
-    this.stats = { direct: 0, blast: 0, bounce: 0, pierce: 0,
+    this.stats = { direct: 0, blast: 0, bounce: 0, pierce: 0, overflow: 0,
                    ammoSpent: 0, ammoSaved: 0, reloadT: 0, fireT: 0, kills: 0 };
     return this;
+  },
+
+  /* 最大生命只有这一个出口。强心按等级、恶魔复生按第二形态，两者都从
+     基线整体重算 —— 谁先谁后都不影响结果，也不会互相把对方抹掉
+     （以前强心是「+=」，复活半血之后再拿一次强心就把惩罚抹平了）。 */
+  applyMaxHp() {
+    const p = G.player;
+    if (!p) return;
+    const hp = TUNE.PLAYER.maxHp
+      * (1 + TUNE.MUP.vigor.pctPerLv * this.level('vigor'))
+      * (this.ctx.revived ? TUNE.DEMON.rebirth.hpMult : 1);
+    p.maxHp = Math.round(hp);
+    p.hp = Math.min(p.hp, p.maxHp);
+  },
+
+  /* 恶魔复生：致死那一刻顶回来。返回 true 表示这次死亡被吃掉了。 */
+  tryRevive() {
+    if (!this.has('rebirth') || this.ctx.revived) return false;
+    this.ctx.revived = true;
+    this.applyMaxHp();                  // 上限先减半
+    G.player.hp = G.player.maxHp;       // 再回满
+    G.player.iframe = Math.max(G.player.iframe, 1.6);
+    this.ctx.shield = 0;
+    recompute();                        // 伤害翻倍在 derive 里兑现
+    return true;
   },
 
   level(id) { return this.lv[id] || 0; },
@@ -466,10 +550,8 @@ const BUILD = {
     this.lv[id] = (this.lv[id] || 0) + n;
     this.sinceBig = c.big ? 0 : this.sinceBig + 1;
     if (id === 'vigor') {
-      /* 按等级从基线整体重算，而不是逐次累加 —— 顺带保证它幂等。
-         todo12 §3：而且【立即回满】，不是只补差额。 */
-      G.player.maxHp = Math.round(TUNE.PLAYER.maxHp * (1 + TUNE.MUP.vigor.pctPerLv * this.lv[id]));
-      G.player.hp = G.player.maxHp;
+      this.applyMaxHp();
+      G.player.hp = G.player.maxHp;      // todo12 §3：立即回满，不是只补差额
     }
     G.bus.emit('buildChanged', { id: id, levels: n });
     return n;
@@ -502,7 +584,8 @@ const BUILD = {
       * Math.pow(1 + TUNE.WUP.power.perLv, this.level('power'))
       * (this.has('overload') ? CARD_BY_ID.overload.stat(this.level('overload')).m : 1)
       * (this.has('glass') ? TUNE.DEMON.glass.out : 1)
-      * (this.has('slug') ? TUNE.DEMON.slug.dmg : 1);
+      * (this.has('slug') ? TUNE.DEMON.slug.dmg : 1)
+      * (this.ctx.revived ? TUNE.DEMON.rebirth.dmgMult : 1);
     /* 玻璃大炮的另一半在 hurtPlayer 的第一行 —— 在护盾之前乘，
        所以护盾也按 ×3 被扣掉（Bao 指定）。 */
     d.hurtMult = this.has('glass') ? TUNE.DEMON.glass.in : 1;
@@ -525,6 +608,9 @@ const BUILD = {
     if (this.has('slug')) d.magazine = 1;
 
     /* 传播 */
+    const ovf = CARD_BY_ID.overflow.stat(this.level('overflow'));
+    d.overflowKeep = ovf.keep;
+    d.overflowHops = ovf.hops;
     d.pierce = pie.count;
     d.pierceKeep = pie.keep;
     d.bounce = ric.count;
@@ -594,6 +680,32 @@ const BUILD = {
     return d;
   },
 
+  /* ------------------------------------------------------------ 护盾池 */
+  /* 总上限 = 各来源贡献之和，再被「最大生命 × capFrac」压住。 */
+  shieldCap() {
+    const M = TUNE.MUP, hp = G.player ? G.player.maxHp : TUNE.PLAYER.maxHp;
+    let cap = M.regenshield.perLv * this.level('regenshield');
+    if (this.has('wallshield')) cap += M.wallshield.max;
+    if (this.has('killshield')) cap += hp * M.killshield.capFrac;
+    if (this.has('overheal')) cap += hp * M.overheal.capFrac;
+    return Math.min(hp * TUNE.SHIELD.capFrac, cap);
+  },
+  /* 不会自然衰减的那部分上限。池子高过它才开始掉。 */
+  shieldFloor() {
+    const M = TUNE.MUP, hp = G.player ? G.player.maxHp : TUNE.PLAYER.maxHp;
+    let f = M.regenshield.perLv * this.level('regenshield');
+    if (this.has('wallshield')) f += M.wallshield.max;
+    if (this.has('overheal')) f += hp * M.overheal.capFrac;
+    return Math.min(this.shieldCap(), f);
+  },
+  addShield(v) {
+    if (v <= 0) return 0;
+    const c = this.ctx, cap = this.shieldCap();
+    const before = c.shield;
+    c.shield = Math.min(cap, c.shield + v);
+    return c.shield - before;
+  },
+
   /* 开镜程度 0~1。开镜达人的四项收益与两项代价全部按它插值 ——
      不做「开镜=开关」，否则每次抬镜都会看到数值瞬跳。 */
   adsK() {
@@ -640,13 +752,19 @@ const BUILD = {
       if (c.focusT > C.focus.resetAfter) { c.focusId = -1; c.focusStack = 0; }
     }
 
-    /* 再生盾 / 跑墙护盾 */
+    /* ---------------------------------------------------- 护盾池（todo13）
+       一个池、一个总上限。四个来源只回答两件事：
+       往池里加多少【上限】、以什么速度往池里【加值】。
+       超出「不衰减来源」的那部分算临时护盾，会掉 —— 目前只有击杀护盾。 */
+    c.shieldMax = this.shieldCap();
+    const floor = this.shieldFloor();
     const rs = this.level('regenshield');
-    c.shieldMax = TUNE.MUP.regenshield.perLv * rs + Math.min(TUNE.MUP.wallshield.max, c.wallShield || 0);
     if (rs > 0) {
       c.quietT += dt;
       if (c.quietT > TUNE.MUP.regenshield.quiet) c.shield = Math.min(c.shieldMax, c.shield + dt * 12);
     }
+    if (c.shield > floor) c.shield = Math.max(floor, c.shield - TUNE.SHIELD.tempDecay * dt);
+    if (c.shield > c.shieldMax) c.shield = c.shieldMax;
     /* 近杀回血的每秒上限 */
     c.healSecT += dt;
     if (c.healSecT >= 1) { c.healSecT = 0; c.healSec = 0; }
@@ -660,8 +778,7 @@ const BUILD = {
       const W = TUNE.MUP.wallshield, lv = this.level('wallshield');
       if (lv > 0 && c.wallDist >= W.distance) {
         c.wallDist -= W.distance;
-        c.wallShield = Math.min(W.max, (c.wallShield || 0) + W.perLv * lv);
-        c.shield = Math.min(c.shieldMax + c.wallShield, c.shield + W.perLv * lv);
+        this.addShield(W.perLv * lv);
       }
       if (c.wallRunSpan >= 8) { c.wallRunSpan = 0; G.bus.emit('wallrunDistance', { d: 8 }); }
     }
@@ -758,6 +875,18 @@ const BUILD = {
       m *= 1 + (CARD_BY_ID.root.stat(this.level('root')).m - 1) * k;
     }
 
+    /* 开门枪：只看目标是不是满血。没有代价那一面 ——
+       在 ×10 怪量下「对受伤敌人打折」根本触发不到，等于假代价。 */
+    if (this.has('opener') && e.hp >= e.maxHp) {
+      m *= 1 + TUNE.WUP.opener.perLv * this.level('opener');
+    }
+
+    /* 无伤压制：生命满格才有。护盾扛住的伤害不算掉血，
+       所以「护盾流永远满血」是这条链成立的地方，不是漏洞。 */
+    if (this.has('pristine') && p.hp >= p.maxHp) {
+      m *= CARD_BY_ID.pristine.stat(this.level('pristine')).m;
+    }
+
     /* 开镜达人：伤害那一项和站桩同类 —— 读【此刻的玩家状态】，
        所以放在这里按受害者重算，不折进 derive（§8.2 的分界线）。 */
     if (this.has('scope')) m *= 1 + TUNE.DEMON.scope.gain * this.adsK();
@@ -806,13 +935,20 @@ const BUILD = {
         this.stats.ammoSaved += back;
       }
     }
+    /* 击杀护盾：精英给得多。「精英」= Boss / 变种 / 高经验模板，
+       和结算页对「精英」的口径一致，不另立标准。 */
+    if (this.has('killshield')) {
+      const P = TUNE.MUP.killshield;
+      const elite = e.boss || e.variant || (e.tpl && e.tpl.xp >= 20);
+      this.addShield(P.perKill * this.level('killshield') * (elite ? P.eliteMult : 1));
+    }
+
     if (this.has('lifesteal') && closeKill) {
       const P = TUNE.MUP.lifesteal, c = this.ctx;
       const heal = Math.min(P.perLv * this.level('lifesteal'), P.capPerSec - c.healSec);
       if (heal > 0) {
         c.healSec += heal;
-        G.player.hp = Math.min(G.player.maxHp, G.player.hp + heal);
-        if (G.ui) G.ui.flashHeal();
+        healPlayer(heal);
       }
     }
   },
@@ -893,8 +1029,12 @@ const BUILD = {
   /* 这一次发牌要不要塞一张恶魔卡。拿过的不再出现（它们不分级）。 */
   _demon() {
     const D = TUNE.DEMON;
-    if (G.time < D.fromTime || this.demonCount() >= D.maxPerRun) return null;
-    if (!RNG.evo.chance(D.chance)) return null;
+    /* Debug 的「恶魔卡必出」只解开投放条件，不改卡的效果（todo13） */
+    const cheat = typeof DebugPanel !== 'undefined' && DebugPanel.demonAll;
+    if (!cheat) {
+      if (G.time < D.fromTime || this.demonCount() >= D.maxPerRun) return null;
+      if (!RNG.evo.chance(D.chance)) return null;
+    }
     const left = CARDS.filter(c => c.kind === 'demon' && !this.has(c.id));
     if (!left.length) return null;
     return this._offer(left[Math.floor(RNG.evo.next() * left.length)]);
@@ -937,11 +1077,11 @@ const _dashBuf = [];
 const NUMERIC = ['damage', 'fireInterval', 'magazine', 'reloadTime', 'ammoPerShot', 'pellets',
   'pierce', 'bounce', 'blastRadius', 'blastDmg', 'bulletScale', 'knockback',
   'weakpointMult', 'volleyFan', 'ocPeak', 'ocRampTime', 'pierceKeep',
-  'hurtMult', 'killload'];
+  'hurtMult', 'killload', 'overflowKeep', 'overflowHops'];
 const NUMERIC_FALLBACK = {
   damage: TUNE.GUN.damage, fireInterval: TUNE.GUN.fireInterval, magazine: TUNE.GUN.magazine,
   reloadTime: TUNE.GUN.reloadTime, ammoPerShot: 1, pellets: 1, pierce: 0, bounce: 0,
   blastRadius: 0, blastDmg: 0, bulletScale: 1, knockback: TUNE.GUN.knockback,
   weakpointMult: TUNE.GUN.weakpointMult, volleyFan: 0, ocPeak: 0, ocRampTime: 1, pierceKeep: 1,
-  hurtMult: 1, killload: 0
+  hurtMult: 1, killload: 0, overflowKeep: 0, overflowHops: 0
 };

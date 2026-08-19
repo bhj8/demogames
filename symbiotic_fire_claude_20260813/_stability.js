@@ -24,6 +24,10 @@ const STRONG = process.argv.indexOf('strong') > 0;
 const MOVING = process.argv.indexOf('move') > 0;
 /* node _stability.js 3 move weak4 —— 把机器人输出打成 1/4，模拟菜一点的玩家 */
 const WEAK = (process.argv.find(a => /^weak\d+$/.test(a)) || '').replace('weak', '');
+/* node _stability.js 1 move secs=180 cards=overflow,killshield
+   —— 只跑 3 分钟，并强制带上要验证的那几张卡。整局 43800 帧太贵的时候用它。 */
+const SECS = (process.argv.find(a => /^secs=\d+$/.test(a)) || '').split('=')[1];
+const CARDS = (process.argv.find(a => /^cards=/.test(a)) || '').split('=')[1];
 const file = 'file://' + path.resolve(__dirname, '_stability.html');
 
 (async () => {
@@ -34,7 +38,8 @@ const file = 'file://' + path.resolve(__dirname, '_stability.html');
   for (const seed of SEEDS.slice(0, n)) {
     const page = await browser.newPage();
     const t0 = Date.now();
-    await page.goto(file + '?seed=' + seed + (STRONG ? '&strong=1' : '') + (MOVING ? '&move=1' : '') + (WEAK ? '&weak=' + WEAK : ''), { timeout: 0, waitUntil: 'load' });
+    await page.goto(file + '?seed=' + seed + (STRONG ? '&strong=1' : '') + (MOVING ? '&move=1' : '') + (WEAK ? '&weak=' + WEAK : '') +
+      (SECS ? '&secs=' + SECS : '') + (CARDS ? '&cards=' + CARDS : ''), { timeout: 0, waitUntil: 'load' });
     try {
       await page.waitForFunction(() => document.title !== 'PENDING', null, { timeout: 600000 });
     } catch (e) {

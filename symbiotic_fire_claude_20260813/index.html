@@ -139,10 +139,15 @@ canvas#gl{display:block;position:fixed;inset:0}
 
 /* 左下：生命 */
 #hpwrap{position:absolute;left:26px;bottom:26px;width:264px}
-#hpbar{height:15px;background:rgba(255,255,255,.07);border:1px solid var(--line);
+#hpbar{position:relative;height:15px;background:rgba(255,255,255,.07);border:1px solid var(--line);
   border-radius:2px;overflow:hidden}
 #hpfill{height:100%;width:100%;background:linear-gradient(90deg,#3ad07a,#7ef0a8);
   transition:width .14s ease-out}
+/* 护盾叠在生命条上（todo13）。四个来源合成一个池，玩家必须看得见它 ——
+   否则整条「满血护盾」Build 在屏幕上完全没有反馈。 */
+#shieldfill{position:absolute;left:0;top:0;height:100%;width:0;
+  background:linear-gradient(90deg,#3f9bd8,#8fdcff);opacity:.92;
+  transition:width .12s ease-out}
 #hpnum{font-size:11px;letter-spacing:.09em;color:var(--dim);margin-top:5px;
   font-variant-numeric:tabular-nums}
 
@@ -417,7 +422,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
   <div id="buffbar"></div>
 
   <div id="hpwrap">
-    <div id="hpbar"><div id="hpfill"></div></div>
+    <div id="hpbar"><div id="hpfill"></div><div id="shieldfill"></div></div>
     <div id="hpnum">120 / 120</div>
   </div>
 

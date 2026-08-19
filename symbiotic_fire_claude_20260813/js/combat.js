@@ -155,6 +155,23 @@ function pickChainTarget(x, z, range, exclude) {
 /* ============================================================================
    伤害结算
    ========================================================================== */
+/* 玩家治疗的唯一入口（todo13）。
+   过量治疗要接住「超过上限的那部分」，所以治疗不能再各处自己
+   `hp = min(maxHp, hp + x)` —— 那样溢出就地丢掉了，谁也接不到。 */
+function healPlayer(amount) {
+  const p = G.player;
+  if (amount <= 0 || !p) return 0;
+  const room = Math.max(0, p.maxHp - p.hp);
+  const used = Math.min(room, amount);
+  p.hp += used;
+  const over = amount - used;
+  if (over > 0 && BUILD.has('overheal')) {
+    BUILD.addShield(over * TUNE.MUP.overheal.convert);
+  }
+  if (G.ui) G.ui.flashHeal();
+  return used;
+}
+
 function damageEnemy(e, amount, ctx, opts) {
   if (e.dead || amount <= 0) return 0;
   opts = opts || {};
@@ -185,8 +202,43 @@ function damageEnemy(e, amount, ctx, opts) {
   /* §5.1 攀爬过程中可以被玩家射落 */
   if (typeof NAV !== 'undefined' && NAV.enabled) NAV.onDamaged(e);
 
+  /* §C03 过量伤害转移：只有【打过头】的那部分才转移。
+     必须在 killEnemy 之前把溢出量记下来 —— 之后 e.hp 会被 killEnemy 归零。 */
+  const over = e.hp < 0 ? -e.hp : 0;
   if (e.hp <= 0) killEnemy(e, ctx, opts);
+  if (over > 0 && G.derived.overflowKeep > 0) overflowTransfer(e, over, ctx, opts);
   return amount;
+}
+
+/* 溢出转移。天然收敛：每跳乘 keep（<1），并且跳数有上限。
+   用一个模块级的跳数计数器而不是 ctx —— 这条链是通过 damageEnemy
+   递归展开的，计数器必须跨越整条递归，不能被派生上下文复制掉。 */
+let _ovHop = 0;
+/* 用普通对象而不是 Set：ATK._nearestNew 的排除是 `seen[e.uid]`。
+   传 Set 进去的话排除恒为 undefined，链条会反复砸同一只没死的敌人。 */
+let _ovSeen = {};
+function overflowTransfer(from, over, ctx, opts) {
+  const d = G.derived, M = TUNE.MOL_OVERFLOW;
+  if (_ovHop >= d.overflowHops) return;
+  const dmg = over * d.overflowKeep;
+  if (dmg < M.minDamage) return;
+
+  const root = _ovHop === 0;
+  if (root) { _ovSeen = {}; _ovSeen[from.uid] = 1; }
+  const next = ATK._nearestNew(from.pos, _ovSeen, M.search);
+  if (!next) { if (root) _ovHop = 0; return; }
+  _ovSeen[next.uid] = 1;
+
+  _ovHop++;
+  const m = BUILD.victimMul(next, false);
+  const hp0 = next.hp;
+  damageEnemy(next, dmg * m, ctx, { point: next.pos, overflow: true });
+  BUILD.stats.overflow = (BUILD.stats.overflow || 0) + dmg * m;
+  G.stats.hits++;
+  if (next.dead && hp0 > 0) BUILD.onKill(next, ATK._closeTo(next));
+  if (ATK.allowFx() && R.addBeam) R.addBeam(from.pos, next.pos, 0xffb84d);
+  _ovHop--;
+  if (root) _ovHop = 0;
 }
 
 function killEnemy(e, ctx, opts) {
@@ -211,8 +263,7 @@ function killEnemy(e, ctx, opts) {
   /* 创伤修复 §23 */
   if (G.derived.traumaHeal && G.stats.kills % 30 === 0) {
     const heal = G.player.maxHp * 0.02 * G.derived.traumaHeal;
-    G.player.hp = Math.min(G.player.maxHp, G.player.hp + heal);
-    G.ui.flashHeal();
+    healPlayer(heal);        // healPlayer 自己会闪治疗反馈
   }
 
   G.bus.emit('kill', { enemy: e, ctx: ctx || makeAttack('world'), opts: opts || {} });
@@ -734,5 +785,14 @@ function hurtPlayer(amount, fromPos, kind) {
   if (fromPos) ang = screenBearing(fromPos.x - p.pos.x, fromPos.z - p.pos.z, p.yaw);
   G.ui.damageFrom(ang, DMG_COLOR[kind] || '#ff4d5e');
 
-  if (p.hp <= 0) { p.hp = 0; G.lose(); }
+  if (p.hp <= 0) {
+    /* 恶魔复生：这一刻站起来，而不是读档。失败了才真的结束。 */
+    if (BUILD.tryRevive()) {
+      G.ui.toast('恶魔复生 —— 上限减半，伤害翻倍', TUNE.DEMON.css, true);
+      G.shake(0.5, null);
+      Audio2.mutation();
+      return;
+    }
+    p.hp = 0; G.lose();
+  }
 }

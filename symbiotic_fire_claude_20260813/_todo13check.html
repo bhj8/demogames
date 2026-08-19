@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>PENDING</title>
+<style>html,body{margin:0;background:#0d1117;color:#dbe7f0;font:12px/1.55 monospace}
+#out{position:fixed;inset:0;padding:12px;white-space:pre-wrap;overflow:auto;z-index:9;background:#0d1117}
+#gl{position:fixed;inset:0}u{color:#ffb020}b{color:#7ef0a8}i{color:#ff6a7a;font-style:normal}</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hud" style="display:none">
+  <div id="top"><div id="clock"></div><div id="xpwrap"><div id="xpfill"></div></div>
+  <div id="lvlrow"><b id="lvlnum"></b></div></div>
+  <div id="slots"></div><div id="bosswrap"><div id="bossname"></div><div id="bossbar"><div id="bossfill"></div></div></div>
+  <div id="toast"></div><div id="hint"></div><div id="prompt"></div><div id="buffbar"></div>
+  <div id="hpwrap"><div id="hpbar"><div id="hpfill"></div></div><div id="hpnum"></div></div>
+  <div id="gunwrap"><div id="ammo"></div><div id="ammobarwrap"><div id="ammobar"></div></div>
+  <div id="reloadwrap"><div id="reloadbar"></div></div><div id="dashwrap"><div id="dashfill"></div></div></div>
+</div>
+<div id="cross"><i></i><i></i><i></i><i></i><u></u></div><div id="hitmark"><i></i><i></i></div>
+<div id="dmgnums"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
+<div id="dmgdirs"></div><div id="threats"></div><div id="shieldvig"></div><div id="shieldflash"></div>
+<div id="floattext"></div><svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="nextdraw"></div><div id="cards"></div>
+<div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
+<div id="pause"><button id="resume"></button></div><div id="buildgraph"></div><div id="results"></div>
+<div id="debug"><div id="dbgstats"></div><div id="dbgmove"></div><div id="dbgevo"></div>
+<div id="dbgbtns"></div><div id="dbgvariant"></div><div id="dbglog"></div></div>
+<pre id="out">running…</pre>
+<script>
+window.__err = [];
+window.onerror = (m, s, l) => { window.__err.push(m + ' @' + (s || '').split('/').pop() + ':' + l); };
+</script>
+<script src="js/three.min.js"></script>
+<script src="js/tune.js"></script>
+<script src="js/core.js"></script>
+<script src="js/render.js"></script>
+<script src="js/citymap.js"></script>
+<script src="js/city-scale.js"></script>
+<script src="js/movement.js"></script>
+<script src="js/nav3d.js"></script>
+<script src="js/map-events.js"></script>
+<script src="js/attack.js"></script>
+<script src="js/build.js"></script>
+<script src="js/evolution-director.js"></script>
+<script src="js/map-build.js"></script>
+<script src="js/horde-evolution.js"></script>
+<script src="js/weapon.js"></script>
+<script src="js/combat.js"></script>
+<script src="js/game.js"></script>
+<script>
+/* ============================================================================
+   todo10 阶段 D 验收：自然反应 Build V3
+
+   §10 阶段 D 明确写了「不再跑 28 对组合完成率，改为验证统一规律」。
+   所以这里量的是三件事：
+
+     §9  强度重算 —— 每张卡在它的正确场景里是不是真的更强
+     §11.2 自然组合 —— 多发的每颗弹是不是都会爆、都会穿、都会弹
+     §11.3 弹药与 DPS —— 尤其是 §0.1 那个「齐射 465 / 基线 1140」的病灶
+
+   多种子 12 分钟稳定性单独放在 _stability.html —— 十局各跑满一整局要
+   二十分钟以上，混在这里会让这套一秒出结果的验收变得没人愿意跑。
+
+   四个灰盒靶场（§10 阶段 D 第一条）：
+     近距密集 / 长线尸群 / 分散尸群 / 单体精英。
+   同一张卡在不同靶场的表现【应该】差很多 —— 那正是「大选择」的意义。
+   ========================================================================== */
+const L = [];
+let FAIL = 0, WARN = 0;
+const say = s => L.push(s);
+const ok = (cond, msg) => { if (!cond) { FAIL++; say('  <i>FAIL</i> ' + msg); } return cond; };
+const warn = (cond, msg) => { if (!cond) { WARN++; say('  <u>WARN</u> ' + msg); } return cond; };
+const n1 = v => (Math.round(v * 10) / 10).toString();
+const pc = v => (v >= 0 ? '+' : '') + Math.round(v * 100) + '%';
+
+addEventListener('load', () => setTimeout(() => {
+  try { main(); } catch (e) { done(['THROW:' + e.message + ' | ' + (e.stack || '').split('\n')[1]]); }
+}, 300));
+
+function done(lines) {
+  document.getElementById('out').innerHTML = lines.join('\n');
+  document.title = (FAIL ? 'FAILED(' + FAIL + ')' : 'ALLPASS') + ' warn=' + WARN +
+    ' err=' + window.__err.length;
+}
+
+/* --------------------------------------------------------------- 四个靶场 */
+/* 玩家站在 (0,0,30) 朝 -Z。靶子必须放在更小的 z 上 ——
+   摆错 180° 会得到「一枪不中」的假数据，todo5 的测试上当过一次。 */
+const RANGES = {
+  dense: { name: '近距密集', desc: '5×5 阵列，最近 4m', build(add) {
+    for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++) add((c - 2) * 1.8, 26 - r * 2.2);
+  } },
+  line: { name: '长线尸群', desc: '一条 24m 纵队，正对枪线', build(add) {
+    for (let i = 0; i < 10; i++) add(0, 24 - i * 2.6);
+  } },
+  spread: { name: '分散尸群', desc: '9 只，彼此间隔 9m 以上', build(add) {
+    for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) add((c - 1) * 10, 20 - r * 10);
+  } },
+  solo: { name: '单体精英', desc: '一只，18m 外', build(add) { add(0, 12); } }
+};
+
+function buildRange(kind) {
+  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+  G.enemies.compact();
+  G.bullets.live.slice().forEach(b => G.bullets.release(b));
+  G.bullets.compact();
+  G.hazards.length = 0; G.pendings.length = 0;
+
+  const p = G.player;
+  p.pos.set(0, 0, 30); p.vel.set(0, 0, 0); p.yaw = 0; p.pitch = 0;
+  p.hp = p.maxHp = 99999;
+  R.camera.position.set(0, 1.68, 30);
+  R.camera.rotation.set(0, 0, 0);
+  R.camera.updateWorldMatrix(true, false);
+
+  /* 不死靶：量机制，不量击杀。击杀装填要单独测，所以它有自己的靶场。 */
+  const add = (x, z) => {
+    const e = G.enemies.get();
+    configureEnemy(e, ENEMIES.grunt, { x: x, y: 0, z: z }, { grace: 0 });
+    e.hp = e.maxHp = 1e7;
+    e.speed = 0; e.vel.set(0, 0, 0);
+    e.spawnGrace = 999;
+  };
+  RANGES[kind].build(add);
+  G.hash.clear();
+  G.enemies.live.forEach(e => G.hash.insert(e, e.pos.x, e.pos.z));
+}
+
+/* --------------------------------------------------------------- 一次测量 */
+/* §9.1 要求同时量：瞬时 DPS、10 秒持续 DPS、一弹匣总伤害、打空时间、
+   换弹时间占比、每秒弹药消耗、单体伤害、群体有效伤害、弱点收益。
+   全部来自游戏自己的统计，不是测试脚本另算一遍。 */
+const DT = 1 / 60;
+function measure(cards, opts) {
+  opts = opts || {};
+  const SEC = opts.sec || 10;
+  RNG.init(20260814);
+  BUILD.init(); ATK.init();
+  G.stats.dmgDealt = 0; G.stats.hits = 0; G.stats.shots = 0;
+  (cards || []).forEach(id => BUILD.take(id));
+  recompute();
+  buildRange(opts.range || 'dense');
+
+  const p = G.player, g = p.gun;
+  g.ammo = G.derived.magazine; g.reloadT = 0; g.fireT = 0; g.held = true;
+  DebugPanel.noSpread = true;
+  G.phase = 'play';
+
+  let t = 0, shots = 0, ammoUsed = 0, reloadT = 0, fireT = 0;
+  let firstMagDmg = 0, firstMagT = 0, magDone = false;
+  let burstDmg = 0, burstT = 0;
+
+  while (t < SEC) {
+    t += DT;
+    BUILD.tick(DT, p);
+    ATK.tick(DT);
+    /* 站桩要能攒起来：玩家在靶场是不动的，lastPos 每帧同步即可 */
+    if (opts.moving) { p.pos.x += 4.0 * DT; }   // 真的在跑，不是抖一下
+
+    if (g.reloadT > 0) {
+      g.reloadT -= DT; reloadT += DT;
+      if (g.reloadT <= 0) { g.reloadT = 0; g.ammo = G.derived.magazine; }
+    } else {
+      fireT += DT;
+      g.fireT -= DT;
+      if (!G.derived.infiniteMag && g.ammo <= 0) {
+        g.reloadT = G.derived.reloadTime;
+        if (!magDone) { magDone = true; firstMagT = t; firstMagDmg = G.stats.dmgDealt; }
+        BUILD.onReloadStart();
+      } else if (g.fireT <= 0) {
+        const before = g.ammo;
+        fire(); shots++; ammoUsed += Math.max(0, before - g.ammo);
+        g.fireT = effectiveFireInterval();
+      }
+    }
+    G.hash.clear();
+    G.enemies.live.forEach(e => { if (!e.dead && !e._dead) G.hash.insert(e, e.pos.x, e.pos.z); });
+    updateBullets(DT);
+    G.bullets.compact();
+    if (t <= 1.0) { burstDmg = G.stats.dmgDealt; burstT = t; }
+  }
+  g.held = false;
+  if (!magDone) { firstMagT = t; firstMagDmg = G.stats.dmgDealt; }
+
+  const st = BUILD.stats;
+  const cycle = Math.max(0.001, fireT + reloadT);
+  return {
+    dmg: Math.round(G.stats.dmgDealt),
+    dps: Math.round(G.stats.dmgDealt / SEC),
+    burst: Math.round(burstDmg / Math.max(0.001, burstT)),
+    magDmg: Math.round(firstMagDmg), magT: n1(firstMagT),
+    shots: shots, ammo: ammoUsed, ammoPerSec: n1(ammoUsed / SEC),
+    reloadShare: Math.round(reloadT / cycle * 100),
+    fireShare: Math.round(fireT / cycle * 100),
+    hits: G.stats.hits,
+    direct: Math.round(st.direct), blast: Math.round(st.blast), bounce: Math.round(st.bounce),
+    saved: st.ammoSaved,
+    rejected: ATK.budget.rejected,
+    cost: G.derived.ammoPerShot, pellets: G.derived.pellets
+  };
+}
+
+const brief = r => 'DPS ' + r.dps + '  瞬时 ' + r.burst + '  弹匣 ' + r.magDmg + '/' + r.magT + 's' +
+  '  开火 ' + r.fireShare + '%  耗弹 ' + r.cost + '/枪  命中 ' + r.hits;
+
+/* ========================================================================== */
+/*  todo13 第一批验收：护盾链 + 三张干净卡                                     */
+/*                                                                            */
+/*  只回答一件事：这一批每条数值承诺，代码里是不是真的兑现了。                  */
+/* ========================================================================== */
+function main() {
+  if (window.__err.length) { done(['BOOT_ERR:' + window.__err.join(';')]); return; }
+  window.requestAnimationFrame = () => 0;
+  G.paused = false;
+  try { audit(); } catch (e) { done(['THROW:' + e.message + ' | ' + (e.stack || '').split('\n')[1]]); return; }
+  done(L);
+}
+
+function derived(cards) {
+  RNG.init(20260816);
+  BUILD.init();
+  G.player.maxHp = TUNE.PLAYER.maxHp; G.player.hp = G.player.maxHp;
+  (cards || []).forEach(id => BUILD.take(id));
+  recompute();
+  return G.derived;
+}
+
+/* 一排不死的假敌人，用来量转移链 */
+function line(n, hp) {
+  G.enemies.live.slice().forEach(e => { e.dead = true; G.enemies.release(e); });
+  G.enemies.compact();
+  const p = G.player;
+  p.pos.set(0, 0, 30); p.yaw = 0;
+  for (let i = 0; i < n; i++) {
+    const e = G.enemies.get();
+    configureEnemy(e, ENEMIES.grunt, { x: 0, y: 0, z: 26 - i * 4 }, { grace: 999 });
+    e.hp = e.maxHp = hp; e.speed = 0; e.vel.set(0, 0, 0);
+  }
+  G.hash.clear();
+  G.enemies.live.forEach(e => G.hash.insert(e, e.pos.x, e.pos.z));
+}
+
+function audit() {
+  say('<b>C03 过量伤害转移</b>');
+  {
+    const M = TUNE.MOL_OVERFLOW;
+    const d = derived(['overflow']);
+    say('  Lv' + BUILD.level('overflow') + '　保留 ' + Math.round(d.overflowKeep * 100) + '%' +
+        '　最多 ' + d.overflowHops + ' 跳');
+    ok(Math.abs(d.overflowKeep - (M.keepAt1 + M.keepPerLv)) < 1e-6, '保留比例不对（Lv2 应是 70%）');
+
+    /* 一枪打死 10 血的怪，溢出 990。链条应该按 keep 逐跳衰减且有跳数上限 */
+    line(12, 10);
+    G.stats.dmgDealt = 0;
+    const first = G.enemies.live[0];
+    damageEnemy(first, 1000, makeAttack('primary'), { point: first.pos });
+    let dead = 0;
+    G.enemies.live.forEach(e => { if (e.dead || e._dead) dead++; });
+    say('  一枪 1000 打 10 血的怪：连带死了 ' + dead + ' 只（含首杀），跳数上限 ' + d.overflowHops);
+    ok(dead <= d.overflowHops + 1, '死亡数超过跳数上限 —— 链条没有被 hops 挡住');
+    ok(dead > 1, '溢出一个都没转移出去');
+
+    /* 链条在「打不死」的那一跳就停：没有溢出，就没有东西可以再转。
+       这是这张卡收敛的真正原因，比跳数上限更根本 —— 跳数上限只是保险丝。
+       同时验证每一跳的衰减是几何的（0.7 / 0.7² / …），没有重复砸同一只。 */
+    line(8, 400);
+    const t0 = G.enemies.live[0];
+    t0.hp = t0.maxHp = 10;
+    damageEnemy(t0, 1000, makeAttack('primary'), { point: t0.pos });
+    const hp = G.enemies.live.map(e => (e.dead || e._dead) ? 'x' : Math.round(e.hp));
+    say('  1000 打 10 血 + 一排 400 血：' + hp.slice(0, 5).join(' / ') + ' …（x=死）');
+    /* 990×0.7=693 打死第 2 只（400）→ 溢出 293×0.7=205 打第 3 只 → 打不死 → 停 */
+    const k = d.overflowKeep;
+    const want = Math.round(400 - (990 * k - 400) * k);
+    ok(hp[1] === 'x', '第 2 只没被溢出打死');
+    ok(hp[2] === want, '第 3 只剩血 ' + hp[2] + '，按几何衰减应该是 ' + want);
+    ok(hp[3] === 400, '链条没有在打不死的那一跳停下 —— 第 4 只也被打了');
+
+    /* 不打过头就没有东西可转 */
+    line(6, 500);
+    const before = G.stats.kills;
+    const e0 = G.enemies.live[0];
+    damageEnemy(e0, 100, makeAttack('primary'), { point: e0.pos });
+    let dead2 = 0;
+    G.enemies.live.forEach(e => { if (e.dead || e._dead) dead2++; });
+    ok(dead2 === 0, '没打死也发生了转移 —— 这张卡只该吃"溢出"');
+    say('  打不死的时候：转移 0 次 ' + (dead2 === 0));
+  }
+
+  say('');
+  say('<b>C04 开门枪</b>');
+  {
+    const P = TUNE.WUP.opener;
+    derived(['opener', 'opener']);
+    const lv = BUILD.level('opener');
+    const full = { pos: { x: 0, y: 0, z: 20 }, id: -1, hp: 100, maxHp: 100, radius: 0.4, height: 1.8 };
+    const hurt = { pos: { x: 0, y: 0, z: 20 }, id: -1, hp: 50, maxHp: 100, radius: 0.4, height: 1.8 };
+    const a = BUILD.victimMul(full, false), b = BUILD.victimMul(hurt, false);
+    say('  Lv' + lv + '　满血 ' + a.toFixed(2) + '　受伤 ' + b.toFixed(2));
+    ok(Math.abs(a - (1 + P.perLv * lv)) < 1e-6, '满血倍率不是 +' + Math.round(P.perLv * 100) + '%/级');
+    ok(Math.abs(b - 1) < 1e-6, '对受伤敌人不该有惩罚（Bao 去掉了代价那一面）');
+  }
+
+  say('');
+  say('<b>E05 无伤压制</b>');
+  {
+    const C = TUNE.CHOICE.pristine;
+    derived(['pristine']);
+    const lv = BUILD.level('pristine'), p = G.player;
+    const e = { pos: { x: 0, y: 0, z: 20 }, id: -1, hp: 100, maxHp: 100, radius: 0.4, height: 1.8 };
+    p.hp = p.maxHp;
+    const full = BUILD.victimMul(e, false);
+    p.hp = p.maxHp - 1;
+    const chip = BUILD.victimMul(e, false);
+    p.hp = p.maxHp;
+    say('  Lv' + lv + '　满血 ' + full.toFixed(2) + '　掉 1 点血 ' + chip.toFixed(2));
+    ok(Math.abs(full - (1 + C.gainPerLv * lv)) < 1e-6, '满血倍率不对');
+    ok(Math.abs(chip - 1) < 1e-6, '掉血之后没有立刻失效');
+  }
+
+  say('');
+  say('<b>护盾池：一个池、一个总上限</b>');
+  {
+    const S = TUNE.SHIELD, M = TUNE.MUP;
+    derived([]);
+    ok(BUILD.shieldCap() === 0, '一张护盾卡都没有时上限应该是 0');
+
+    /* 四个来源各自的贡献 */
+    const hp = TUNE.PLAYER.maxHp;
+    derived(['regenshield']);
+    const c1 = BUILD.shieldCap();
+    derived(['killshield']);
+    const c2 = BUILD.shieldCap();
+    derived(['overheal']);
+    const c3 = BUILD.shieldCap();
+    say('  再生盾 ' + c1 + '　击杀盾 ' + c2 + '（' + Math.round(M.killshield.capFrac * 100) + '%' +
+        ' 生命）　过量治疗 ' + c3 + '（' + Math.round(M.overheal.capFrac * 100) + '%' + ' 生命）');
+    ok(Math.abs(c2 - hp * M.killshield.capFrac) < 0.01, '击杀盾上限不是 30% 最大生命');
+    ok(Math.abs(c3 - hp * M.overheal.capFrac) < 0.01, '过量治疗上限不是 50% 最大生命');
+
+    /* 四个来源全拿：总上限被 capFrac 压住 */
+    derived(['regenshield', 'regenshield', 'wallshield', 'killshield', 'killshield', 'overheal', 'overheal']);
+    const cap = BUILD.shieldCap();
+    say('  四个来源全拿：总上限 ' + Math.round(cap) + '（硬顶 ' +
+        Math.round(G.player.maxHp * S.capFrac) + ' = ' + Math.round(S.capFrac * 100) + '%' + ' 最大生命）');
+    ok(Math.abs(cap - G.player.maxHp * S.capFrac) < 0.01, '总上限没有被 capFrac 压住');
+
+    /* 临时护盾会衰减，不衰减的部分不会 */
+    derived(['killshield', 'overheal']);
+    const floor = BUILD.shieldFloor();
+    BUILD.addShield(999);
+    const top = BUILD.ctx.shield;
+    for (let i = 0; i < 60; i++) BUILD.tick(1 / 60, G.player);   // 跑 1 秒
+    const after = BUILD.ctx.shield;
+    say('  衰减 1 秒：' + Math.round(top) + ' → ' + Math.round(after) +
+        '　不衰减下限 ' + Math.round(floor) + '（每秒 -' + S.tempDecay + '）');
+    ok(after < top, '临时护盾没有衰减');
+    ok(after >= floor - 0.01, '衰减穿过了不衰减下限');
+    for (let i = 0; i < 60 * 30; i++) BUILD.tick(1 / 60, G.player);
+    ok(Math.abs(BUILD.ctx.shield - floor) < 1.0, '长时间之后没有停在下限上（停在 ' +
+      Math.round(BUILD.ctx.shield) + '，下限 ' + Math.round(floor) + '）');
+  }
+
+  say('');
+  say('<b>E01 过量治疗：溢出治疗转护盾</b>');
+  {
+    derived(['overheal']);
+    const p = G.player;
+    p.hp = p.maxHp - 10;
+    BUILD.ctx.shield = 0;
+    healPlayer(50);                     // 10 点补满，40 点溢出
+    say('  少 10 血时治疗 50：生命 ' + Math.round(p.hp) + '/' + p.maxHp +
+        '　护盾 ' + Math.round(BUILD.ctx.shield));
+    ok(p.hp === p.maxHp, '没有先把生命补满');
+    ok(Math.abs(BUILD.ctx.shield - 40 * TUNE.MUP.overheal.convert) < 0.01, '溢出的 40 点没有变成护盾');
+
+    /* 没有这张卡时，溢出就是丢掉 */
+    derived([]);
+    p.hp = p.maxHp - 10; BUILD.ctx.shield = 0;
+    healPlayer(50);
+    ok(BUILD.ctx.shield === 0, '没拿过量治疗却凭空生出了护盾');
+  }
+
+  say('');
+  say('<b>C10 击杀护盾</b>');
+  {
+    const P = TUNE.MUP.killshield;
+    derived(['killshield']);
+    const lv = BUILD.level('killshield');
+    BUILD.ctx.shield = 0;
+    BUILD.onKill({ uid: 1, pos: { x: 0, y: 0, z: 0 }, dead: true, tpl: ENEMIES.grunt }, false);
+    const normal = BUILD.ctx.shield;
+    BUILD.ctx.shield = 0;
+    BUILD.onKill({ uid: 2, pos: { x: 0, y: 0, z: 0 }, dead: true, tpl: ENEMIES.charger }, false);
+    const elite = BUILD.ctx.shield;
+    say('  Lv' + lv + '　杀普通 +' + normal + '　杀精英 +' + elite + '（×' + P.eliteMult + '）');
+    ok(Math.abs(normal - P.perKill * lv) < 0.01, '普通击杀给的护盾不对');
+    ok(Math.abs(elite - normal * P.eliteMult) < 0.01, '精英击杀没有 ×' + P.eliteMult);
+  }
+
+  say('');
+  say('<b>E12 恶魔复生</b>');
+  {
+    const D = TUNE.DEMON.rebirth;
+    derived(['rebirth']);
+    const p = G.player, base = p.maxHp, dmg0 = G.derived.damage;
+    p.hp = 5; p.iframe = 0; p.dashIFrame = 0; G.over = false; G.buff = null;
+    BUILD.ctx.shield = 0;
+    hurtPlayer(9999, null, 'melee');
+    say('  致死一击后：生命 ' + Math.round(p.hp) + '/' + Math.round(p.maxHp) +
+        '（原 ' + base + '）　伤害 ' + Math.round(dmg0) + ' → ' + Math.round(G.derived.damage) +
+        '　over=' + G.over);
+    ok(G.over === false, '复活了却还是判定为死亡');
+    ok(Math.abs(p.maxHp - base * D.hpMult) < 1, '最大生命没有减半');
+    ok(p.hp === p.maxHp, '复活之后没有回满');
+    ok(Math.abs(G.derived.damage / dmg0 - D.dmgMult) < 0.01, '伤害没有翻倍');
+
+    /* 一局只有一次 */
+    p.iframe = 0; p.dashIFrame = 0;
+    hurtPlayer(9999, null, 'melee');
+    ok(G.over === true, '第二次致死没有真的死 —— 复活应该只有一次');
+    say('  第二次致死：真的结束 ' + (G.over === true));
+    G.over = false;
+
+    /* 复活之后再拿强心，不能把减半抹掉 */
+    BUILD.take('vigor');
+    const want = Math.round(TUNE.PLAYER.maxHp * (1 + TUNE.MUP.vigor.pctPerLv * BUILD.level('vigor')) * D.hpMult);
+    say('  复活后再拿强心：上限 ' + Math.round(p.maxHp) + '（应为 ' + want + '）');
+    ok(Math.abs(p.maxHp - want) < 1, '强心把复活的减半抹掉了');
+  }
+
+  say('');
+  say('<b>投放：新卡都在同一个池里，恶魔卡仍然独占第三格</b>');
+  {
+    ['overflow', 'pristine', 'opener', 'killshield', 'overheal'].forEach(id => {
+      ok(!!BUILD.cardOf(id), '卡 ' + id + ' 不存在');
+      ok(BUILD.cardOf(id).kind !== 'demon', id + ' 不该是恶魔卡');
+    });
+    ok(BUILD.cardOf('rebirth').kind === 'demon', '恶魔复生不是恶魔卡');
+    RNG.init(20260816); BUILD.init(); recompute();
+    G.time = 0;
+    const seen = {};
+    for (let i = 0; i < 600; i++) BUILD.candidates().forEach(c => { seen[c.id] = 1; });
+    ['overflow', 'pristine', 'opener', 'killshield', 'overheal'].forEach(id => {
+      ok(seen[id], id + ' 在 600 次发牌里一次都没出现过');
+    });
+    say('  600 次发牌覆盖到 ' + Object.keys(seen).length + ' 种卡');
+  }
+
+  say('');
+  ok(window.__err.length === 0, '运行期报错：' + window.__err.join(';'));
+  say(FAIL ? '<i>FAILED ' + FAIL + ' 条</i>' : '<b>ALLPASS</b>');
+}
+</script>
+</body>
+</html>

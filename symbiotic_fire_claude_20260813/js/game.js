@@ -994,8 +994,8 @@ function updateMedical(dt) {
   if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < M.pickupRadius * G.derived.pickupMult
       && (!CITY.enabled || Math.abs(p.pos.y - (m.y || 0)) < 2.4)) {
     const before = p.hp;
-    p.hp = Math.min(p.maxHp, p.hp + p.maxHp * M.healFrac);
-    G.ui.flashHeal();
+    /* 走统一治疗入口：满血时溢出的那部分由「过量治疗」接成护盾（todo13） */
+    healPlayer(p.maxHp * M.healFrac);
     G.ui.floatText('+' + Math.round(p.hp - before), '#3ad07a');
     Audio2.pickup('med');
     G.medical = null; R.medMesh.visible = false;
@@ -1477,7 +1477,7 @@ function fire() {
    ========================================================================== */
 const UI = {
   init() {
-    this.hp = $('hpfill'); this.hpNum = $('hpnum');
+    this.hp = $('hpfill'); this.hpNum = $('hpnum'); this.shieldFill = $('shieldfill');
     this.xpFill = $('xpfill'); this.lvl = $('lvlnum');
     this.clock = $('clock'); this.ammo = $('ammo'); this.ammoBar = $('ammobar');
     this.dash = $('dashfill'); this.slots = $('slots');
@@ -1517,7 +1517,12 @@ const UI = {
     this.hp.style.width = (hpk * 100) + '%';
     this.hp.style.background = hpk > 0.5 ? 'linear-gradient(90deg,#3ad07a,#7ef0a8)'
       : hpk > 0.25 ? 'linear-gradient(90deg,#e0a634,#ffd06a)' : 'linear-gradient(90deg,#d03a4a,#ff6a7a)';
-    this.hpNum.textContent = Math.ceil(p.hp) + ' / ' + Math.round(p.maxHp);
+    /* 护盾条：宽度按「护盾 / 最大生命」，所以它和生命条是同一把尺子，
+       一眼就能读出"我现在等于有多少条命"。 */
+    const sh = BUILD.ctx.shield;
+    this.shieldFill.style.width = Math.min(100, sh / p.maxHp * 100) + '%';
+    this.hpNum.textContent = Math.ceil(p.hp) + ' / ' + Math.round(p.maxHp) +
+      (sh > 0.5 ? '　+' + Math.round(sh) + ' 盾' : '');
     this.vig.style.opacity = (1 - hpk) * 0.55;
 
     this.xpFill.style.width = (EVO.progressFrac() * 100) + '%';
@@ -1795,14 +1800,15 @@ const UI = {
         return '<span class="bgm" style="color:' + c.css + '">' + c.name + ' Lv' + BUILD.lv[id] + '</span>';
       }).join('');
     const row = (k, v) => '<div class="bgrow"><span class="bgk">' + k + '</span><span>' + (v || '—') + '</span></div>';
-    const st = BUILD.stats, tot = Math.max(1, st.direct + st.blast + st.bounce);
+    const st = BUILD.stats, tot = Math.max(1, st.direct + st.blast + st.bounce + (st.overflow || 0));
     const share = (n, v) => n + ' ' + Math.round(v / tot * 100) + '%';
     el.innerHTML = '<div class="bgmods">' + grp('mol') + '</div>' +
       row('玩法选择', grp('choice')) +
       row('武器', grp('wup')) +
       row('机动生存', grp('mup')) +
       /* §7.2 结算与构筑图分别显示直接 / 爆炸 / 弹射 —— 不显示任何组合名 */
-      row('伤害来源', share('直接', st.direct) + '　' + share('爆炸', st.blast) + '　' + share('弹射', st.bounce)) +
+      row('伤害来源', share('直接', st.direct) + '　' + share('爆炸', st.blast) + '　' + share('弹射', st.bounce) +
+        (st.overflow ? '　' + share('溢出', st.overflow) : '')) +
       row('弹药', '已消耗 ' + Math.round(st.ammoSpent) + '　返还 ' + Math.round(st.ammoSaved)) +
       row('性能', ATK.debugLine());
   },
@@ -2177,7 +2183,8 @@ const DebugPanel = {
       ['弱点球', 'weak'], ['无散布枪', 'nospread'], ['全部伤害数字', 'dmg'], ['靶场', 'range'],
       ['满弹', 'fullmag'], ['清空弹匣', 'emptymag'], ['立即换弹', 'doreload'],
       ['无限供弹', 'infammo'], ['相机后坐×0', 'camrec0'], ['相机后坐×1', 'camrec1'],
-      ['枪感实验场', 'gunrange'], ['慢动作', 'slowmo']
+      ['枪感实验场', 'gunrange'], ['慢动作', 'slowmo'],
+      ['恶魔卡必出', 'demonall'], ['给一张恶魔卡', 'demon1'], ['立即致死', 'kill1']
     ].map(([t, a]) => '<button data-a="' + a + '">' + t + '</button>').join('');
     $('dbgbtns').onclick = e => {
       const a = e.target.dataset.a; if (!a) return;
@@ -2193,6 +2200,21 @@ const DebugPanel = {
         if (G.buff && G.buff.id === 'ammo') { G.buff = null; recompute(); this.log('无限供弹 off'); }
         else { applyBuff('ammo'); G.buff.t = 9999; this.log('无限供弹 ON'); }
       }
+      /* 恶魔卡一局最多 2 张、4 分钟后才进池、还要过 35% 的概率 ——
+         Bao 认可"有的局一张都不出"，但那样我们自己没法测。
+         这个开关只解开投放条件，不改卡本身的效果。 */
+      else if (a === 'demonall') {
+        this.demonAll = !this.demonAll;
+        this.log('恶魔卡必出 ' + (this.demonAll ? 'ON（无视时间/上限/概率）' : 'off'));
+      }
+      else if (a === 'demon1') {
+        const left = CARDS.filter(c => c.kind === 'demon' && !BUILD.has(c.id));
+        if (!left.length) { this.log('恶魔卡已经全拿了'); return; }
+        const c = left[Math.floor(RNG.fx.next() * left.length)];
+        BUILD.take(c.id); recompute(); emitBuildChanged(); G.ui.mutationSlots();
+        this.log('已获得恶魔卡：' + c.name);
+      }
+      else if (a === 'kill1') { hurtPlayer(1e9, null, 'melee'); this.log('已施加致死伤害'); }
       else if (a === 'slowmo') {
         BOOT.timescale = BOOT.timescale === 1 ? 0.15 : 1;
         this.log('时间倍率 ' + BOOT.timescale + ' —— 可逐帧看枪机/枪口/曳光/抛壳是否同帧');

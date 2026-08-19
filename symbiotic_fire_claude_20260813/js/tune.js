@@ -837,7 +837,21 @@ TUNE.DEMON = {
      ×11 算下来循环 DPS 只有 +8%（73.7 → 79.5），拿到手毫无感觉；
      ×16 → 115.6，即 +57%，并且天然吃快装（配满快装 +73%）。 */
   slug:    { dmg: 16 },
-  scope:   { gain: 0.60, speed: 0.45, hipSpread: 8 }
+  scope:   { gain: 0.60, speed: 0.45, hipSpread: 8 },
+  /* todo13 E12 恶魔复生：不是保险，是死亡之后正式进入第二形态。 */
+  rebirth: { hpMult: 0.5, dmgMult: 2.0 }
+};
+
+/* --- 护盾池（todo13）---
+   原来有两个来源（再生盾 / 跑墙盾），各自一套上限，加起来当总上限。
+   再加击杀护盾和过量治疗就是四套上限四个数，HUD 上根本说不清
+   「我现在有多少盾、还能涨多少」。所以合成【一个池 + 一个总上限】：
+   每个来源只回答两件事 —— 往池里加多少上限、以什么速度往里加。 */
+TUNE.SHIELD = {
+  capFrac: 0.80,             // 总上限不超过最大生命的 80%
+  /* 池子里超出「不衰减来源」那部分算临时护盾，按这个速度掉。
+     击杀护盾是唯一的临时来源：停手就掉，逼你一直在杀。 */
+  tempDecay: 14
 };
 
 /* --- §2 六个核心分子。数值全部是灰盒建议值，D 阶段用靶场调 --- */
@@ -895,6 +909,17 @@ TUNE.MOL = {
 };
 
 /* --- §3 七个大玩法选择。全部按「等级」缩放，首次到手就是 2 级 --- */
+/* --- todo13 C03 过量伤害转移 ---
+   只转移【超过敌人剩余生命的那部分】。天然收敛：每跳再乘 keep，
+   而且高射速小伤害的 Build 本来就没有溢出，白赚不到。 */
+TUNE.MOL_OVERFLOW = {
+  css: '#ffb84d', name: '过量转移',
+  keepAt1: 0.65, keepPerLv: 0.05, keepMax: 0.85,
+  hopsAt1: 3, hopsPerLv: 1, hopsMax: 8,
+  search: 12,                // 找下一个目标的半径
+  minDamage: 1               // 转移量低于这个数就断链
+};
+
 TUNE.CHOICE = {
   /* todo11 §6：两条曲线不再对称。贴脸风险高得多，收益上限就该明显更高；
      远射安全，收益压低。到手即 2 级，所以每级的量是目标值的一半。
@@ -906,7 +931,11 @@ TUNE.CHOICE = {
   lowhp:   { name: '低血', css: '#ff4d5e', threshold: 0.40, gainPerLv: 0.40 },
   root:    { name: '站桩', css: '#b0ffb0', moveEps: 0.55, delay: 0.5, rampTime: 2.5, gainPerLv: 0.50 },
   overload:{ name: '双倍装药', css: '#ff8ae0', ammoMult: 2, gainPerLv: 0.50 },
-  focus:   { name: '专注目标', css: '#9affe0', perStackPerLv: 0.05, maxStacks: 10, resetAfter: 1.0 }
+  focus:   { name: '专注目标', css: '#9affe0', perStackPerLv: 0.05, maxStacks: 10, resetAfter: 1.0 },
+  /* todo13 E05 无伤压制：生命 100% 时全伤害提高。
+     护盾扛住的伤害不算「生命受损」—— hurtPlayer 本来就先扣盾再扣血，
+     所以这条不需要额外代码，读当前生命就是对的。 */
+  pristine: { name: '无伤压制', css: '#8ff0ff', gainPerLv: 0.30 }
 };
 
 /* --- §4 七个武器小升级：允许是清楚的数值成长，不假装成新机制 --- */
@@ -921,6 +950,10 @@ TUNE.WUP = {
      Bao 的理由：「用户用输出的选项换取了续航，没问题的」——
      大弹鼓 / 弹匣卡堆出来的容量，本来就该让这张卡跟着变强。
      单根攻击的返还上限仍然是这一枪耗弹的一半，所以它永远填不满弹匣。 */
+  /* todo13 C04 开门枪：只对【满血】目标加成，没有代价。
+     原设计带「对受伤敌人 ×0.8」的反面，但在 ×10 怪量下你打到的几乎都是
+     满血怪，那个代价触发不到，等于无代价 ×2.5。Bao 决定削数值、去代价。 */
+  opener: { name: '开门枪', css: '#ffe08a', perLv: 0.35 },
   killload: { name: '击杀装填', css: '#a0ffd0', pctPerLv: 0.03 }
 };
 
@@ -937,7 +970,11 @@ TUNE.MUP = {
   slam:        { name: '落地冲击', css: '#ff9a3c', minSpeed: 12, dmgPerSpeed: 3.0, radius: 5.5 },
   wallshield:  { name: '跑墙护盾', css: '#6ac8ff', distance: 8, perLv: 18, max: 60 },
   dashhit:     { name: '冲刺撞击', css: '#ff6a4a', perLv: 22, cooldown: 1.2, push: 7 },
-  magnet:      { name: '拾取强化', css: '#a0ffd0', perLv: 0.5 }
+  magnet:      { name: '拾取强化', css: '#a0ffd0', perLv: 0.5 },
+  /* todo13 C10 击杀护盾：临时护盾，停手就掉。精英给得多。 */
+  killshield:  { name: '击杀护盾', css: '#6ac8ff', perKill: 5, eliteMult: 4, capFrac: 0.30 },
+  /* todo13 E01 过量治疗：满血之后的治疗不再浪费，转成护盾。 */
+  overheal:    { name: '过量治疗', css: '#7ef0a8', convert: 1.0, capFrac: 0.50 }
 };
 
 /* --- 地图行为的兑现（§6 的地图奖励）---
