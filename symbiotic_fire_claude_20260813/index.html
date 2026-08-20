@@ -332,20 +332,52 @@ button:hover{background:rgba(95,200,255,.22)}
 i{color:rgba(219,231,240,.28);font-style:normal}
 
 /* ------------------------------------------------------------- 调试 §36 */
+/* 结构：标题条 / 已改动 / 读数分页 / 分组 + 搜索 / 按钮 / 日志。
+   开关一定要看得出开着没有 —— 亮起来的那一条边框就是「再点一次可以取消」。 */
 #debug{position:fixed;left:14px;top:14px;z-index:40;display:none;
-  width:352px;padding:13px;background:rgba(4,7,11,.94);
-  border:1px solid rgba(120,220,255,.25);border-radius:3px;
-  font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.7}
+  width:428px;max-height:calc(100vh - 28px);overflow:auto;
+  padding:0;background:rgba(4,7,11,.95);
+  border:1px solid rgba(120,220,255,.25);border-radius:4px;
+  font-family:ui-monospace,Consolas,monospace;font-size:11px;line-height:1.6}
 #debug.on{display:block}
-#debug h4{font-size:9.5px;letter-spacing:.28em;color:#5fc8ff;
-  font-weight:600;margin:11px 0 6px}
-#debug h4:first-child{margin-top:0}
-#dbgstats{color:rgba(219,231,240,.65)}
-#dbgstats b{color:#7ef0a8;font-weight:600}
-#dbgbtns,#dbgvariant{display:flex;flex-wrap:wrap;gap:4px}
-#dbgbtns button,#dbgvariant button{font-size:10px;padding:4px 8px;letter-spacing:.04em;
-  background:rgba(255,255,255,.05);border:1px solid rgba(140,180,215,.22);border-radius:2px}
-#dbglog{color:rgba(219,231,240,.4);font-size:10px;max-height:80px;overflow:hidden}
+#debug.min{max-height:none}
+#debug.min #dbgbody{display:none}
+#dbgbar{display:flex;align-items:center;gap:9px;padding:8px 11px;
+  position:sticky;top:0;background:rgba(6,10,15,.98);
+  border-bottom:1px solid rgba(120,220,255,.18)}
+#dbgbar b{color:#5fc8ff;letter-spacing:.22em;font-size:10px}
+#dbgbar #dbgfps{color:#7ef0a8;font-weight:600}
+#dbgbar i{margin-left:auto;color:rgba(219,231,240,.3);font-size:9.5px;font-style:normal}
+#dbgbar button{font-size:10px;padding:2px 8px;background:rgba(255,255,255,.05);
+  border:1px solid rgba(140,180,215,.22);border-radius:2px}
+#dbgbody{padding:9px 11px 11px}
+#debug .dbgsep{color:rgba(120,220,255,.55);font-size:9px;letter-spacing:.22em;
+  align-self:center;margin:0 2px}
+#dbgon,#dbgbtns{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+#dbgon{padding-bottom:7px;margin-bottom:7px;border-bottom:1px solid rgba(140,180,215,.12)}
+#dbgon button.live{color:#ffd06a;border-color:#ffd06a66;background:rgba(255,208,106,.1)}
+#dbgtabs,#dbgcats{display:flex;flex-wrap:wrap;gap:4px}
+#dbgcats{margin-top:9px;padding-top:9px;border-top:1px solid rgba(140,180,215,.12)}
+#debug button{font-size:10px;padding:3px 8px;letter-spacing:.04em;color:inherit;
+  background:rgba(255,255,255,.05);border:1px solid rgba(140,180,215,.2);border-radius:2px}
+#debug button:hover{background:rgba(255,255,255,.11)}
+#dbgtabs button.on,#dbgcats button.on{color:#5fc8ff;border-color:#5fc8ff88;background:rgba(95,200,255,.13)}
+#dbgbtns button.tog.on{color:#7ef0a8;border-color:#7ef0a888;background:rgba(126,240,168,.12)}
+#dbgbtns{margin-top:6px}
+#dbgfind{width:100%;margin-top:7px;padding:4px 7px;font:11px ui-monospace,monospace;
+  color:#dbe7f0;background:rgba(255,255,255,.04);
+  border:1px solid rgba(140,180,215,.2);border-radius:2px;outline:none}
+#dbgread{margin-top:6px;min-height:104px;color:rgba(219,231,240,.62)}
+#dbgread b{color:#7ef0a8;font-weight:600}
+#debug .dbgrow{display:grid;grid-template-columns:48px 1fr;gap:9px;padding:1px 0}
+#debug .dbgrow>span:first-child{color:#5fc8ff;font-size:9.5px;
+  letter-spacing:.14em;text-align:right;padding-top:1px}
+#debug .dbgrow>div{display:flex;flex-wrap:wrap;gap:1px 11px}
+#debug .dbgrow .kv{white-space:nowrap}
+#debug .dbgrow .kvw{white-space:normal;overflow-wrap:anywhere}
+#dbglog{margin-top:9px;padding-top:7px;border-top:1px solid rgba(140,180,215,.12);
+  color:rgba(219,231,240,.42);font-size:10px}
+#dbglog i{color:rgba(219,231,240,.25);font-style:normal}
 
 /* ---- todo3 §7.10 统一进化卡面 ---- */
 #cards .qreveal{display:flex;align-items:baseline;gap:10px;justify-content:center;
@@ -368,9 +400,6 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 #cards .card.evo.q-demon{border-color:#ff3b4e88;box-shadow:0 0 34px #ff3b4e4d;
   background:linear-gradient(180deg,rgba(38,12,16,.97),rgba(13,18,26,.96))}
 #cards .card.evo.q-demon:hover{border-color:#ff3b4e}
-/* ---- todo3 §11 立体城市 + 统一进化实验面板 ---- */
-#dbgmove{font:11px/1.5 ui-monospace,monospace;color:#9fd8ff;margin-top:4px}
-#dbgevo{font:11px/1.5 ui-monospace,monospace;color:#ffd06a;margin-top:4px}
 #nextdraw{position:fixed;left:50%;top:64px;transform:translateX(-50%);
   font:12px/1.4 ui-monospace,monospace;padding:3px 10px;border-radius:11px;
   background:#0d1117cc;border:1px solid currentColor;opacity:0;transition:opacity .25s;
@@ -469,18 +498,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 
 <div id="results"></div>
 
-<div id="debug">
-  <h4>运行状态</h4>
-  <div id="dbgstats"></div>
-  <div id="dbgmove"></div>
-  <div id="dbgevo"></div>
-  <h4>控制  ( F1 开关面板 )</h4>
-  <div id="dbgbtns"></div>
-  <h4>强制生成变种</h4>
-  <div id="dbgvariant"></div>
-  <h4>日志</h4>
-  <div id="dbglog"></div>
-</div>
+<div id="debug"></div><!-- 内容由 DebugPanel.init() 生成 -->
 
 <script src="js/three.min.js"></script>
 <script src="js/tune.js"></script>

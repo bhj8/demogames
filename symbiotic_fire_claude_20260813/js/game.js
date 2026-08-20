@@ -1341,7 +1341,8 @@ addEventListener('keydown', e => {
   if (e.code === 'ShiftLeft') tryDash();
   if (e.code === 'Space') MOVE.onJump();
   if (e.code === 'F1') { DebugPanel.toggle(); e.preventDefault(); }
-  else if (BOOT.debug) handleDebugKey(e.code);
+  /* 面板开着的时候快捷键就该好使 —— 否则还得记住「必须带 ?debug=1 启动」 */
+  else if (BOOT.debug || (DebugPanel.el && DebugPanel.el.classList.contains('on'))) handleDebugKey(e.code);
   if (e.code === 'Space') e.preventDefault();
 });
 addEventListener('keyup', e => { KEY[e.code] = false; });
@@ -2380,11 +2381,18 @@ function showResults(won) {
 
 /* ============================================================================
    调试面板 §36
+   ---------------------------------------------------------------------------
+   Bao：「太难用了，混乱，信息堆叠……只有点下去，没有取消的说法。」
+   所以这一版只解决那三件事：
+   1. 开关自己会说话 —— 每个开关都能读出当前状态，开着就亮着，再点一次关掉；
+      顶部再挂一条「已改动」清单（只列和默认不同的），点一下就还原。
+   2. 读数分页 —— 六页，一次只画一页，不再把五屏文字堆成一坨。
+   3. 按钮分组 + 搜索 —— 一次只显示一组；记不住名字就直接搜。
+   面板自己生成 DOM，页面里有个空的 <div id="debug"> 就够（测试页同理）。
    ========================================================================== */
 function handleDebugKey(code) {
   const D = DebugPanel;
-  if (code === 'F1') D.toggle();
-  if (code === 'KeyG') D.god = !D.god;
+  if (code === 'KeyG') { D.god = !D.god; D.log('无敌 ' + (D.god ? 'ON' : 'off')); }
   if (code === 'KeyK') { G.enemies.live.forEach(e => { if (!e._dead && !e.boss) killEnemy(e, makeAttack('debug')); }); }
   if (code === 'Digit3') D.jump(180);
   if (code === 'Digit6') D.jump(360);
@@ -2392,177 +2400,303 @@ function handleDebugKey(code) {
   if (code === 'Digit0') D.jump(719);
 }
 const DebugPanel = {
-  el: null, god: false, showEvents: false, frames: 0, fpsT: 0, fps: 0,
+  el: null, god: false, frames: 0, fpsT: 0, fps: 0,
   showWeak: false, noSpread: false, showDmg: false, rangeMode: false, _weakGizmos: null,
+  demonAll: false, pureBuild: false, navDraw: false, freezeEnemies: false, freezeEvents: false,
+  tab: 'run', group: 'player', find: '', _readT: 9,
+
+  /* 读数分页：一次只算一页。每页一个函数，返回这一页的 HTML。 */
+  PAGES: [
+    { id: 'run', name: '运行', fn: 'pageRun' },
+    { id: 'fight', name: '战斗', fn: 'pageFight' },
+    { id: 'spawn', name: '刷怪', fn: 'pageSpawn' },
+    { id: 'move', name: '移动', fn: 'pageMove' },
+    { id: 'build', name: '构筑', fn: 'pageBuild' },
+    { id: 'supply', name: '补给', fn: 'pageSupply' }
+  ],
+
+  /* 命令表。第三项在就是开关：它读出当前真实状态，按钮据此亮灭。
+     所以「取消」不需要另做一个按钮 —— 同一个按钮再点一次就是取消。 */
+  groups() {
+    const D = this, MV = TUNE.MOVEMENT, FX = TUNE.WEAPON_FX;
+    const T = (t, a, on, css) => ({ t: t, a: a, on: on, css: css });
+    const A = (t, a, css) => ({ t: t, a: a, css: css });
+    const S = t => ({ sep: t });
+    const kinds = [['mol', '分子'], ['choice', '大选择'], ['wup', '武器升级'], ['mup', '机动升级'], ['demon', '恶魔']];
+    const cards = [];
+    kinds.forEach(k => {
+      const list = CARDS.filter(c => c.kind === k[0]);
+      if (!list.length) return;
+      cards.push(S(k[1]));
+      list.forEach(c => cards.push(A(c.name, 'give_' + c.id, c.css)));
+    });
+    return [
+      { id: 'player', name: '玩家', items: [
+        T('无敌', 'god', () => D.god), A('立即致死', 'kill1'),
+        A('满弹', 'fullmag'), A('清空弹匣', 'emptymag'), A('立即换弹', 'doreload'),
+        T('无限供弹', 'infammo', () => !!(G.buff && G.buff.id === 'ammo'))
+      ] },
+      { id: 'time', name: '时间', items: [
+        A('→3:00', 'j180'), A('→6:00', 'j360'), A('→9:00', 'j540'), A('→12:00', 'j719'),
+        A('重置种子', 'reseed'), T('冻结地图事件', 'freezeev', () => D.freezeEvents), A('热点迁移', 'ev_next')
+      ] },
+      { id: 'spawn', name: '刷怪', items: [
+        A('清怪', 'clear'), A('正后方刷怪', 'behind'), A('静止靶场', 'range'),
+        T('冻结敌人', 'freeze', () => D.freezeEnemies),
+        S('单只'), A('攀爬怪', 'sp_climber'), A('跳跃怪', 'sp_leaper'), A('远程怪', 'sp_roofcaster'),
+        A('融合精英', 'sp_fusion'),
+        S('变种')
+      ].concat(MUTATIONS.map(m => A(m.name, 'var_' + m.id, m.css))) },
+      { id: 'build', name: '构筑', items: [
+        A('立刻升级', 'evo_now'), A('给三个分子', 'grant_base'),
+        T('恶魔卡必出', 'demonall', () => D.demonAll),
+        A('给一张恶魔卡', 'demon1'),
+        T('纯化构筑', 'purebuild', () => D.pureBuild)
+      ].concat(cards) },
+      { id: 'supply', name: '补给', items: [
+        A('医疗物', 'med'), A('磁铁', 'magnet'), A('充满空投', 'drop'),
+        A('过载供弹', 'b_ammo'), A('暴走针', 'b_adren'), A('强袭盾', 'b_shield')
+      ] },
+      { id: 'gun', name: '枪感', items: [
+        T('枪感实验场', 'gunrange', () => D.rangeMode),
+        T('无散布', 'nospread', () => D.noSpread),
+        T('全部伤害数字', 'dmg', () => D.showDmg),
+        T('弱点球', 'weak', () => D.showWeak),
+        T('相机后坐', 'camrec', () => FX.cameraRecoilScale > 0),
+        T('慢动作', 'slowmo', () => BOOT.timescale !== 1)
+      ] },
+      { id: 'move', name: '移动', items: [
+        T('导航图', 'navdraw', () => D.navDraw),
+        T('坠落伤害', 'tg_fall', () => MV.fallDamage),
+        T('墙跑', 'tg_wallrun', () => MV.wallRunTime > 0),
+        T('空中冲刺', 'tg_dash', () => MV.airDashCharges > 0),
+        T('自动翻越', 'tg_vault', () => MV.vaultMaxHeight > 0.5),
+        T('稳定镜头', 'tg_stable', () => MV.stableCam),
+        S('传送'), A('→街道层', 'ly_street'), A('→中层', 'ly_mid'), A('→屋顶层', 'ly_roof')
+      ] }
+    ];
+  },
+
   init() {
     this.el = $('debug');
+    this.el.innerHTML =
+      '<div id="dbgbar"><b>调试面板</b><span id="dbgfps"></span>' +
+      '<i>F1 开关，打开即暂停，点画面继续</i><button id="dbgmin">收起</button></div>' +
+      '<div id="dbgbody">' +
+      '<div id="dbgon"></div>' +
+      '<div id="dbgtabs" class="dbgchips"></div><div id="dbgread"></div>' +
+      '<div id="dbgcats" class="dbgchips"></div>' +
+      '<input id="dbgfind" placeholder="搜索命令 / 卡名…" autocomplete="off" spellcheck="false">' +
+      '<div id="dbgbtns"></div><div id="dbglog"></div></div>';
     if (BOOT.debug) this.el.classList.add('on');
-    $('dbgbtns').innerHTML = [
-      ['无敌 G', 'god'], ['升级 L', 'level'], ['变异 M', 'mut'], ['清怪 K', 'clear'],
-      ['→3:00', 'j180'], ['→6:00', 'j360'], ['→9:00', 'j540'], ['→12:00', 'j719'],
-      ['事件流', 'events'], ['重置种子', 'reseed'],
-      ['医疗物', 'med'], ['充满空投', 'drop'],
-      ['过载供弹', 'b_ammo'], ['暴走针', 'b_adren'], ['强袭盾', 'b_shield'],
-      ['正后方刷怪', 'behind'],
-      ['弱点球', 'weak'], ['无散布枪', 'nospread'], ['全部伤害数字', 'dmg'], ['靶场', 'range'],
-      ['满弹', 'fullmag'], ['清空弹匣', 'emptymag'], ['立即换弹', 'doreload'],
-      ['无限供弹', 'infammo'], ['相机后坐×0', 'camrec0'], ['相机后坐×1', 'camrec1'],
-      ['枪感实验场', 'gunrange'], ['慢动作', 'slowmo'],
-      ['恶魔卡必出', 'demonall'], ['给一张恶魔卡', 'demon1'], ['立即致死', 'kill1'],
-      ['纯化构筑', 'purebuild']
-    ].map(([t, a]) => '<button data-a="' + a + '">' + t + '</button>').join('');
-    $('dbgbtns').onclick = e => {
-      const a = e.target.dataset.a; if (!a) return;
-      if (a === 'god') this.god = !this.god;
-      else if (a === 'clear') G.enemies.live.forEach(x => { if (!x._dead && !x.boss) killEnemy(x, makeAttack('debug')); });
-      else if (a === 'events') this.showEvents = !this.showEvents;
-      else if (a === 'reseed') { RNG.resetAll(); this.log('种子通道已重置'); }
-      else if (a === 'med') { G.medCooldown = 0; G.medPending = true; this.log('下一只非召唤物死亡将掉落医疗'); }
-      else if (a === 'drop') { G.supplyCharge = 1; G.lastDropAt = -999; G.dropQueued = true; this.log('空投已排队'); }
-      else if (a[0] === 'b' && a[1] === '_') { applyBuff(a.slice(2)); }
-      else if (a === 'doreload') { G.player.gun.ammo = 0; G.player.gun.emptyT = 99; }
-      else if (a === 'infammo') {
-        if (G.buff && G.buff.id === 'ammo') { G.buff = null; recompute(); this.log('无限供弹 off'); }
-        else { applyBuff('ammo'); G.buff.t = 9999; this.log('无限供弹 ON'); }
-      }
-      /* 恶魔卡一局最多 2 张、4 分钟后才进池、还要过 35% 的概率 ——
-         Bao 认可"有的局一张都不出"，但那样我们自己没法测。
-         这个开关只解开投放条件，不改卡本身的效果。 */
-      else if (a === 'demonall') {
-        this.demonAll = !this.demonAll;
-        this.log('恶魔卡必出 ' + (this.demonAll ? 'ON（无视时间/上限/概率）' : 'off'));
-      }
-      else if (a === 'demon1') {
-        const left = CARDS.filter(c => c.kind === 'demon' && !BUILD.has(c.id));
-        if (!left.length) { this.log('恶魔卡已经全拿了'); return; }
-        const c = left[Math.floor(RNG.fx.next() * left.length)];
-        BUILD.take(c.id); recompute(); emitBuildChanged(); G.ui.mutationSlots();
-        this.log('已获得恶魔卡：' + c.name);
-      }
-      else if (a === 'kill1') { hurtPlayer(1e9, null, 'melee'); this.log('已施加致死伤害'); }
-      /* G10 纯化构筑：只是实验，不进正式牌池（todo13 §3）。
-         第一轮不给等级翻倍 —— 先看纯大升级局本身是不是已经失控了。 */
-      else if (a === 'purebuild') {
-        this.pureBuild = !this.pureBuild;
-        this.log('纯化构筑 ' + (this.pureBuild ? 'ON（三选一只出分子与大选择）' : 'off'));
-      }
-      else if (a === 'slowmo') {
-        BOOT.timescale = BOOT.timescale === 1 ? 0.15 : 1;
-        this.log('时间倍率 ' + BOOT.timescale + ' —— 可逐帧看枪机/枪口/曳光/抛壳是否同帧');
-      }
-      else if (a === 'gunrange') {
-        /* 枪感实验场：暂停刷怪，只留墙和静止靶（普通 / 弱点 / 护甲各一） */
-        this.rangeMode = !this.rangeMode;
-        G.enemies.live.forEach(x => { if (!x._dead && !x.dead) G.enemies.release(x); });
-        G.enemies.compact();
-        if (this.rangeMode) {
-          const p = G.player;
-          const targets = [
-            { tpl: ENEMIES.grunt, off: -0.28, tag: '普通' },
-            { tpl: ENEMIES.grunt, off: 0, tag: '弱点' },
-            { tpl: G.variantTpl.ossify, off: 0.28, tag: '护甲' }
-          ];
-          targets.forEach(t => {
-            const ang = p.yaw + Math.PI + t.off;
-            const d = 13;
-            const e = configureEnemy(G.enemies.get(), t.tpl,
-              new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), { grace: 9999 });
-            e.speed = 0; e.atk = 9999; e.maxHp = e.hp = 1e9;
-            e.tpl = Object.assign({}, e.tpl, { ranged: null, charge: null });
-          });
-          G.player.gun.ammo = G.derived.magazine;
-          this.log('实验场 ON：普通 / 弱点 / 护甲 三个静止靶，刷怪已暂停');
-        } else this.log('实验场 OFF');
-      }
-      else if (a === 'fullmag') { G.player.gun.ammo = G.derived.magazine; G.player.gun.reloadT = 0; WEAPON.on('reloadEnd'); }
-      else if (a === 'emptymag') { G.player.gun.ammo = 0; }
-      else if (a === 'camrec0') { TUNE.WEAPON_FX.cameraRecoilScale = 0; TUNE.WEAPON_FX.cameraYawScale = 0; this.log('相机后坐已关闭（枪模仍然有力）'); }
-      else if (a === 'camrec1') { TUNE.WEAPON_FX.cameraRecoilScale = 0.0075; TUNE.WEAPON_FX.cameraYawScale = 0.0022; this.log('相机后坐已恢复'); }
-      else if (a === 'weak') { this.showWeak = !this.showWeak; this.log('弱点球 ' + (this.showWeak ? 'ON' : 'off')); }
-      else if (a === 'nospread') { this.noSpread = !this.noSpread; this.log('无散布枪 ' + (this.noSpread ? 'ON' : 'off')); }
-      else if (a === 'dmg') { this.showDmg = !this.showDmg; this.log('全部伤害数字 ' + (this.showDmg ? 'ON' : 'off')); }
-      else if (a === 'range') {
-        /* 静止靶场：每种敌人一只，不动不打人，用来验证弱点球对齐 */
-        const p = G.player;
-        ['grunt', 'heavy', 'spitter', 'charger', 'midboss'].forEach((k, n) => {
-          const ang = p.yaw + Math.PI + (n - 2) * 0.22;
-          const d = 14 + n * 1.5;
-          const e = configureEnemy(G.enemies.get(), ENEMIES[k],
-            new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), { grace: 9999 });
-          e.speed = 0; e.atk = 9999; e.maxHp = e.hp = 1e7; e.tpl = Object.assign({}, e.tpl, { ranged: null, charge: null });
-        });
-        this.log('靶场已生成（静止、不攻击、高血量）');
-      }
-      else if (a === 'behind') {
-        /* 正后方生成一只普通怪，验证完整提示链：接近预警 → 攻击预警 → 命中反馈 */
-        const p = G.player;
-        const ang = p.yaw;                      // yaw+PI 是正前方，所以 yaw 就是正后方
-        const d = TUNE.THREAT.warnRange - 1;
-        configureEnemy(G.enemies.get(), ENEMIES.grunt,
-          new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), {});
-        this.log('正后方 ' + d + 'm 生成普通丧尸');
-      }
-      else if (a === 'navdraw') { this.navDraw = !this.navDraw; NAV.debugDraw(this.navDraw); this.log('导航图 ' + (this.navDraw ? 'ON' : 'off')); }
-      else if (a === 'freeze') { this.freezeEnemies = !this.freezeEnemies; this.log('冻结敌人 ' + (this.freezeEnemies ? 'ON' : 'off')); }
-      else if (a === 'freezeev') { this.freezeEvents = !this.freezeEvents; this.log('冻结地图事件 ' + (this.freezeEvents ? 'ON' : 'off')); }
-      else if (a.indexOf('tp_') === 0) {
-        const lm = CITY.landmarks.find(l => l.id === a.slice(3));
-        if (lm) { MOVE.teleport(G.player, lm.x, lm.y + 2.5, lm.z); this.log('传送：' + lm.name); }
-      }
-      else if (a.indexOf('ly_') === 0) {
-        const y = { street: 1.2, mid: 7.0, roof: 19.0 }[a.slice(3)];
-        MOVE.teleport(G.player, 0, y, a.slice(3) === 'street' ? 0 : (a.slice(3) === 'mid' ? -9.5 : 0));
-        if (a.slice(3) === 'roof') MOVE.teleport(G.player, 19, 20, 19);
-        this.log('传送到 ' + a.slice(3) + ' 层');
-      }
-      else if (a.indexOf('sp_') === 0 && ENEMIES[a.slice(3)]) {
-        const pos = spawnPosition(true);
-        if (pos) { configureEnemy(G.enemies.get(), ENEMIES[a.slice(3)], pos, { highlight: 6 }); this.log('生成 ' + ENEMIES[a.slice(3)].name); }
-      }
-      else if (a === 'tg_fall') { TUNE.MOVEMENT.fallDamage = !TUNE.MOVEMENT.fallDamage; this.log('坠落伤害 ' + (TUNE.MOVEMENT.fallDamage ? 'ON' : 'off')); }
-      else if (a === 'tg_wallrun') { TUNE.MOVEMENT.wallRunTime = TUNE.MOVEMENT.wallRunTime > 0 ? 0 : 1.1; this.log('墙跑时长 ' + TUNE.MOVEMENT.wallRunTime); }
-      else if (a === 'tg_dash') { TUNE.MOVEMENT.airDashCharges = TUNE.MOVEMENT.airDashCharges ? 0 : 1; this.log('空中冲刺充能 ' + TUNE.MOVEMENT.airDashCharges); }
-      else if (a === 'tg_vault') { TUNE.MOVEMENT.vaultMaxHeight = TUNE.MOVEMENT.vaultMaxHeight > 0.5 ? 0.45 : 1.2; this.log('自动翻越高度 ' + TUNE.MOVEMENT.vaultMaxHeight); }
-      else if (a === 'tg_stable') { TUNE.MOVEMENT.stableCam = !TUNE.MOVEMENT.stableCam; this.log('稳定跑酷镜头 ' + (TUNE.MOVEMENT.stableCam ? 'ON' : 'off')); }
-      else if (a.indexOf('ev_') === 0) this.log(MAPEV.force());
-      else if (a === 'evo_now') { EVO.progress = EVO.need + 1; EVO.draw.lastChoiceTime = -999; this.log('已把进化条打满'); }
-      else if (a === 'grant_base') {
-        BUILD.allIds('mol').slice(0, 3).forEach(id => BUILD.take(id));
-        recompute(); UI.mutationSlots(); this.log('已授予三个核心分子');
-      }
-      else if (a.indexOf('give_') === 0) {
-        BUILD.take(a.slice(5)); recompute(); UI.mutationSlots();
-        this.log('已授予 ' + BUILD.cardOf(a.slice(5)).name);
-      }
-      else if (a[0] === 'j') this.jump(parseInt(a.slice(1), 10));
+    /* 恢复用的原值从 TUNE 里取，不写死 —— 关掉再打开要回到配置里的那个数 */
+    this._def = { rec: TUNE.WEAPON_FX.cameraRecoilScale, yaw: TUNE.WEAPON_FX.cameraYawScale,
+                  wallRun: TUNE.MOVEMENT.wallRunTime, dash: TUNE.MOVEMENT.airDashCharges,
+                  vault: TUNE.MOVEMENT.vaultMaxHeight };
+    $('dbgmin').onclick = () => {
+      const m = this.el.classList.toggle('min');
+      $('dbgmin').textContent = m ? '展开' : '收起';
     };
-    /* --- todo3 §11 立体城市 + 统一进化实验面板 --- */
-    {
-      $('dbgbtns').innerHTML += [
-        ['导航图', 'navdraw'], ['冻结敌人', 'freeze'], ['冻结事件', 'freezeev'],
-        ['→十字路口', 'tp_cross'], ['→停车楼', 'tp_parking'], ['→在建楼', 'tp_site'], ['→停机坪', 'tp_helipad'],
-        ['→街道层', 'ly_street'], ['→中层', 'ly_mid'], ['→屋顶层', 'ly_roof'],
-        ['刷攀爬怪', 'sp_climber'], ['刷跳跃怪', 'sp_leaper'], ['刷远程怪', 'sp_roofcaster'],
-        ['坠落伤害', 'tg_fall'], ['关墙跑', 'tg_wallrun'], ['关空冲', 'tg_dash'], ['关翻越', 'tg_vault'],
-        ['稳定镜头', 'tg_stable'],
-        ['热点迁移', 'ev_next'],
-        ['立刻升级', 'evo_now'], ['给三个分子', 'grant_base'],
-        ['给多发', 'give_volley'], ['给爆炸', 'give_blast'], ['给穿透', 'give_pierce'],
-        ['给弹射', 'give_ricochet'], ['给重弹', 'give_heavy'], ['给超频', 'give_overclock'],
-        ['给贴脸', 'give_close'], ['给远射', 'give_far'], ['给爆头', 'give_crit'],
-        ['给低血', 'give_lowhp'], ['给站桩', 'give_root'], ['给双倍装药', 'give_overload'],
-        ['给专注', 'give_focus'], ['融合精英', 'sp_fusion']
-      ].map(x => '<button data-a="' + x[1] + '">' + x[0] + '</button>').join('');
-    }
-
-    $('dbgvariant').innerHTML = MUTATIONS.map(m =>
-      '<button data-v="' + m.id + '" style="color:' + m.css + '">' + m.name + '</button>').join('');
-    $('dbgvariant').onclick = e => {
-      const v = e.target.dataset.v; if (!v) return;
-      configureEnemy(G.enemies.get(), G.variantTpl[v], spawnPosition(true), { highlight: 6 });
+    $('dbgtabs').onclick = e => {
+      const t = e.target.dataset.tab; if (!t) return;
+      this.tab = t; this._readT = 9; this.render();
     };
+    $('dbgcats').onclick = e => {
+      const g = e.target.dataset.g; if (!g) return;
+      this.group = this.group === g ? '' : g;      // 再点一次收起这一组
+      this.find = ''; $('dbgfind').value = '';
+      this.render();
+    };
+    $('dbgfind').oninput = e => { this.find = e.target.value.trim(); this.render(); };
+    $('dbgon').onclick = e => { if (e.target.dataset.a) { this.run(e.target.dataset.a); this.render(); } };
+    $('dbgbtns').onclick = e => { if (e.target.dataset.a) { this.run(e.target.dataset.a); this.render(); } };
+    /* 记下每个开关的出厂状态：顶部那条只列「和出厂不一样」的，
+       否则默认就开着的墙跑、相机后坐会天天占着位置，又变成堆叠。 */
+    this._base = {};
+    this.groups().forEach(g => g.items.forEach(it => { if (it.on) this._base[it.a] = it.on(); }));
+    this.render();
   },
-  toggle() { this.el.classList.toggle('on'); },
+
+  /* ---------------------------------------------------------------- 渲染 */
+  btn(it) {
+    if (it.sep) return '<span class="dbgsep">' + it.sep + '</span>';
+    const on = it.on ? !!it.on() : false;
+    return '<button data-a="' + it.a + '" class="' + (it.on ? 'tog' : '') + (on ? ' on' : '') + '"' +
+      (it.css ? ' style="color:' + it.css + '"' : '') + '>' +
+      (it.on ? (on ? '● ' : '○ ') : '') + it.t + '</button>';
+  },
+  render() {
+    const gs = this.groups();
+    /* 顶部一条：现在有哪些开关被我调过。点一下就还原 —— 不用再回分组里找。 */
+    const live = [];
+    gs.forEach(g => g.items.forEach(it => {
+      if (it.on && this._base && it.on() !== this._base[it.a]) live.push(it);
+    }));
+    $('dbgon').innerHTML = live.length
+      ? '<span class="dbgsep">已改动</span>' +
+        live.map(it => '<button data-a="' + it.a + '" class="live">' + it.t +
+          (it.on() ? ' 开' : ' 关') + ' ↺</button>').join('')
+      : '<span class="dbgsep">全部为默认状态</span>';
+    $('dbgtabs').innerHTML = this.PAGES.map(p =>
+      '<button data-tab="' + p.id + '" class="' + (this.tab === p.id ? 'on' : '') + '">' + p.name + '</button>').join('');
+    $('dbgcats').innerHTML = gs.map(g =>
+      '<button data-g="' + g.id + '" class="' + (this.group === g.id && !this.find ? 'on' : '') + '">' + g.name + '</button>').join('');
+    let items;
+    if (this.find) {
+      const k = this.find;
+      items = [];
+      gs.forEach(g => g.items.forEach(it => { if (!it.sep && (it.t.indexOf(k) >= 0 || it.a.indexOf(k) >= 0)) items.push(it); }));
+      if (!items.length) items = [{ sep: '没有匹配的命令' }];
+    } else {
+      const g = gs.filter(x => x.id === this.group)[0];
+      items = g ? g.items : [{ sep: '选一个分组' }];
+    }
+    $('dbgbtns').innerHTML = items.map(it => this.btn(it)).join('');
+    /* 存一份「按钮 → 状态函数」，update() 每帧对照它决定要不要重画 */
+    this._tog = {};
+    gs.forEach(g => g.items.forEach(it => { if (it.on) this._tog[it.a] = it.on; }));
+    this._readT = 9;
+  },
+
+  /* ---------------------------------------------------------------- 命令 */
+  run(a) {
+    if (a === 'god') { this.god = !this.god; this.log('无敌 ' + (this.god ? 'ON' : 'off')); }
+    else if (a === 'clear') G.enemies.live.forEach(x => { if (!x._dead && !x.boss) killEnemy(x, makeAttack('debug')); });
+    else if (a === 'reseed') { RNG.resetAll(); this.log('种子通道已重置'); }
+    else if (a === 'med') { G.medCooldown = 0; G.medPending = true; this.log('下一只非召唤物死亡将掉落医疗'); }
+    else if (a === 'magnet') { G.spawnMagnet(G.player.pos); this.log('已在脚下放一个磁铁'); }
+    else if (a === 'drop') { G.supplyCharge = 1; G.lastDropAt = -999; G.dropQueued = true; this.log('空投已排队'); }
+    else if (a[0] === 'b' && a[1] === '_') { applyBuff(a.slice(2)); }
+    else if (a === 'doreload') { G.player.gun.ammo = 0; G.player.gun.emptyT = 99; }
+    else if (a === 'infammo') {
+      if (G.buff && G.buff.id === 'ammo') { G.buff = null; recompute(); this.log('无限供弹 off'); }
+      else { applyBuff('ammo'); G.buff.t = 9999; this.log('无限供弹 ON'); }
+    }
+    /* 恶魔卡一局最多 2 张、4 分钟后才进池、还要过 35% 的概率 ——
+       Bao 认可「有的局一张都不出」，但那样我们自己没法测。
+       这个开关只解开投放条件，不改卡本身的效果。 */
+    else if (a === 'demonall') {
+      this.demonAll = !this.demonAll;
+      this.log('恶魔卡必出 ' + (this.demonAll ? 'ON（无视时间/上限/概率）' : 'off'));
+    }
+    else if (a === 'demon1') {
+      const left = CARDS.filter(c => c.kind === 'demon' && !BUILD.has(c.id));
+      if (!left.length) { this.log('恶魔卡已经全拿了'); return; }
+      const c = left[Math.floor(RNG.fx.next() * left.length)];
+      BUILD.take(c.id); recompute(); emitBuildChanged(); G.ui.mutationSlots();
+      this.log('已获得恶魔卡：' + c.name);
+    }
+    else if (a === 'kill1') { hurtPlayer(1e9, null, 'melee'); this.log('已施加致死伤害'); }
+    /* G10 纯化构筑：只是实验，不进正式牌池（todo13 §3）。
+       第一轮不给等级翻倍 —— 先看纯大升级局本身是不是已经失控了。 */
+    else if (a === 'purebuild') {
+      this.pureBuild = !this.pureBuild;
+      this.log('纯化构筑 ' + (this.pureBuild ? 'ON（三选一只出分子与大选择）' : 'off'));
+    }
+    else if (a === 'slowmo') {
+      BOOT.timescale = BOOT.timescale === 1 ? 0.15 : 1;
+      this.log('时间倍率 ' + BOOT.timescale + ' —— 可逐帧看枪机/枪口/曳光/抛壳是否同帧');
+    }
+    else if (a === 'gunrange') {
+      /* 枪感实验场：暂停刷怪，只留墙和静止靶（普通 / 弱点 / 护甲各一） */
+      this.rangeMode = !this.rangeMode;
+      G.enemies.live.forEach(x => { if (!x._dead && !x.dead) G.enemies.release(x); });
+      G.enemies.compact();
+      if (this.rangeMode) {
+        const p = G.player;
+        const targets = [
+          { tpl: ENEMIES.grunt, off: -0.28, tag: '普通' },
+          { tpl: ENEMIES.grunt, off: 0, tag: '弱点' },
+          { tpl: G.variantTpl.ossify, off: 0.28, tag: '护甲' }
+        ];
+        targets.forEach(t => {
+          const ang = p.yaw + Math.PI + t.off;
+          const d = 13;
+          const e = configureEnemy(G.enemies.get(), t.tpl,
+            new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), { grace: 9999 });
+          e.speed = 0; e.atk = 9999; e.maxHp = e.hp = 1e9;
+          e.tpl = Object.assign({}, e.tpl, { ranged: null, charge: null });
+        });
+        G.player.gun.ammo = G.derived.magazine;
+        this.log('实验场 ON：普通 / 弱点 / 护甲 三个静止靶，刷怪已暂停');
+      } else this.log('实验场 OFF');
+    }
+    else if (a === 'fullmag') { G.player.gun.ammo = G.derived.magazine; G.player.gun.reloadT = 0; WEAPON.on('reloadEnd'); }
+    else if (a === 'emptymag') { G.player.gun.ammo = 0; }
+    else if (a === 'camrec') {
+      const on = TUNE.WEAPON_FX.cameraRecoilScale > 0;
+      TUNE.WEAPON_FX.cameraRecoilScale = on ? 0 : this._def.rec;
+      TUNE.WEAPON_FX.cameraYawScale = on ? 0 : this._def.yaw;
+      this.log('相机后坐 ' + (on ? 'off（枪模仍然有力）' : 'ON'));
+    }
+    else if (a === 'weak') { this.showWeak = !this.showWeak; this.log('弱点球 ' + (this.showWeak ? 'ON' : 'off')); }
+    else if (a === 'nospread') { this.noSpread = !this.noSpread; this.log('无散布枪 ' + (this.noSpread ? 'ON' : 'off')); }
+    else if (a === 'dmg') { this.showDmg = !this.showDmg; this.log('全部伤害数字 ' + (this.showDmg ? 'ON' : 'off')); }
+    else if (a === 'range') {
+      /* 静止靶场：每种敌人一只，不动不打人，用来验证弱点球对齐 */
+      const p = G.player;
+      ['grunt', 'heavy', 'spitter', 'charger', 'midboss'].forEach((k, n) => {
+        const ang = p.yaw + Math.PI + (n - 2) * 0.22;
+        const d = 14 + n * 1.5;
+        const e = configureEnemy(G.enemies.get(), ENEMIES[k],
+          new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), { grace: 9999 });
+        e.speed = 0; e.atk = 9999; e.maxHp = e.hp = 1e7; e.tpl = Object.assign({}, e.tpl, { ranged: null, charge: null });
+      });
+      this.log('靶场已生成（静止、不攻击、高血量）');
+    }
+    else if (a === 'behind') {
+      /* 正后方生成一只普通怪，验证完整提示链：接近预警 → 攻击预警 → 命中反馈 */
+      const p = G.player;
+      const ang = p.yaw;                      // yaw+PI 是正前方，所以 yaw 就是正后方
+      const d = TUNE.THREAT.warnRange - 1;
+      configureEnemy(G.enemies.get(), ENEMIES.grunt,
+        new THREE.Vector3(p.pos.x + Math.sin(ang) * d, 0, p.pos.z + Math.cos(ang) * d), {});
+      this.log('正后方 ' + d + 'm 生成普通丧尸');
+    }
+    else if (a === 'navdraw') { this.navDraw = !this.navDraw; NAV.debugDraw(this.navDraw); this.log('导航图 ' + (this.navDraw ? 'ON' : 'off')); }
+    else if (a === 'freeze') { this.freezeEnemies = !this.freezeEnemies; this.log('冻结敌人 ' + (this.freezeEnemies ? 'ON' : 'off')); }
+    else if (a === 'freezeev') { this.freezeEvents = !this.freezeEvents; this.log('冻结地图事件 ' + (this.freezeEvents ? 'ON' : 'off')); }
+    else if (a.indexOf('ly_') === 0) {
+      const k = a.slice(3);
+      if (k === 'roof') MOVE.teleport(G.player, 19, 20, 19);
+      else MOVE.teleport(G.player, 0, k === 'street' ? 1.2 : 7.0, k === 'street' ? 0 : -9.5);
+      this.log('传送到 ' + k + ' 层');
+    }
+    else if (a.indexOf('sp_') === 0 && ENEMIES[a.slice(3)]) {
+      const pos = spawnPosition(true);
+      if (pos) { configureEnemy(G.enemies.get(), ENEMIES[a.slice(3)], pos, { highlight: 6 }); this.log('生成 ' + ENEMIES[a.slice(3)].name); }
+    }
+    else if (a.indexOf('var_') === 0) {
+      const pos = spawnPosition(true);
+      if (pos) { configureEnemy(G.enemies.get(), G.variantTpl[a.slice(4)], pos, { highlight: 6 }); this.log('生成变种 ' + a.slice(4)); }
+    }
+    else if (a === 'tg_fall') { TUNE.MOVEMENT.fallDamage = !TUNE.MOVEMENT.fallDamage; this.log('坠落伤害 ' + (TUNE.MOVEMENT.fallDamage ? 'ON' : 'off')); }
+    else if (a === 'tg_wallrun') { TUNE.MOVEMENT.wallRunTime = TUNE.MOVEMENT.wallRunTime > 0 ? 0 : this._def.wallRun; this.log('墙跑时长 ' + TUNE.MOVEMENT.wallRunTime); }
+    else if (a === 'tg_dash') { TUNE.MOVEMENT.airDashCharges = TUNE.MOVEMENT.airDashCharges ? 0 : this._def.dash; this.log('空中冲刺充能 ' + TUNE.MOVEMENT.airDashCharges); }
+    else if (a === 'tg_vault') { TUNE.MOVEMENT.vaultMaxHeight = TUNE.MOVEMENT.vaultMaxHeight > 0.5 ? 0.45 : this._def.vault; this.log('自动翻越高度 ' + TUNE.MOVEMENT.vaultMaxHeight); }
+    else if (a === 'tg_stable') { TUNE.MOVEMENT.stableCam = !TUNE.MOVEMENT.stableCam; this.log('稳定跑酷镜头 ' + (TUNE.MOVEMENT.stableCam ? 'ON' : 'off')); }
+    else if (a.indexOf('ev_') === 0) this.log(MAPEV.force());
+    else if (a === 'evo_now') { EVO.progress = EVO.need + 1; EVO.draw.lastChoiceTime = -999; this.log('已把进化条打满'); }
+    else if (a === 'grant_base') {
+      BUILD.allIds('mol').slice(0, 3).forEach(id => BUILD.take(id));
+      recompute(); UI.mutationSlots(); this.log('已授予三个核心分子');
+    }
+    else if (a.indexOf('give_') === 0) {
+      BUILD.take(a.slice(5)); recompute(); UI.mutationSlots();
+      this.log('已授予 ' + BUILD.cardOf(a.slice(5)).name);
+    }
+    else if (a[0] === 'j') this.jump(parseInt(a.slice(1), 10));
+  },
+
+  /* 打开面板就把鼠标放出来 —— 锁着指针根本点不到按钮（解锁会顺带暂停，符合预期） */
+  toggle() {
+    const on = !this.el.classList.contains('on');
+    this.el.classList.toggle('on', on);
+    if (on) {
+      if (document.pointerLockElement) document.exitPointerLock();
+      this.render();
+    }
+  },
   /* 跳时间：把跳过的变异事件按 RNG 自动补齐，保证状态一致 */
   jump(t) {
     if (t <= G.time) return;
@@ -2589,8 +2723,9 @@ const DebugPanel = {
   },
   log(s) {
     const l = $('dbglog');
-    l.innerHTML = '<div>' + s + '</div>' + l.innerHTML;
-    if (l.children.length > 8) l.removeChild(l.lastChild);
+    if (!l) return;
+    l.innerHTML = '<div><i>' + fmtTime(G.time || 0) + '</i> ' + s + '</div>' + l.innerHTML;
+    if (l.children.length > 6) l.removeChild(l.lastChild);
   },
   /* 把每只敌人的弱点球画出来 —— 判据要求"弱点球与可见头部对齐"必须眼见为实 */
   updateWeakGizmos() {
@@ -2621,116 +2756,131 @@ const DebugPanel = {
     for (let i = n; i < this._weakGizmos.length; i++) this._weakGizmos[i].visible = false;
   },
 
+  /* ------------------------------------------------------------ 读数六页 */
+  row(label, pairs) {
+    return '<div class="dbgrow"><span>' + label + '</span><div>' +
+      /* 短的整块不断行；长的（原因表、构筑串）允许换行，否则会被面板宽度切掉 */
+      pairs.map(p => '<span class="' + (String(p[1]).length > 24 ? 'kvw' : 'kv') + '">' + (p[0] ? p[0] + ' ' : '') +
+        '<b' + (p[2] ? ' style="color:' + p[2] + '"' : '') + '>' + p[1] + '</b></span>').join('') +
+      '</div></div>';
+  },
+  /* 计数字典写成 a:1 b:2，0 的不写 —— JSON.stringify 出来的那一长串没人读得下去 */
+  brief(o) {
+    const k = Object.keys(o || {}).filter(x => o[x]);
+    return k.length ? k.map(x => x + ':' + o[x]).join(' ') : '-';
+  },
+  pageRun() {
+    const exp = expectedLevel(G.time), diff = exp - G.player.level;
+    return this.row('画面', [['fps', this.fps], ['敌', G.enemies.count], ['弹', G.bullets.count],
+        ['特效', R.rings.count + R.puffs.count + R.sparks.count + R.bolts.count], ['危险区', G.hazards.count]]) +
+      this.row('节奏', [['期望等级', exp.toFixed(1)], ['实际', G.player.level],
+        ['差', diff.toFixed(1), Math.abs(diff) > TUNE.PACING.deadband ? '#ffd06a' : '#7ef0a8'],
+        ['需求倍率', (G.pacingMult || 1).toFixed(2)], ['xp/s', (G.xpRate || 0).toFixed(1)]]) +
+      this.row('世界', [['时间', fmtTime(G.time)], ['种子', RNG.master], ['经验球', G.xp.length],
+        ['地图事件', MAPEV.statusText()]]);
+  },
+  pageFight() {
+    const hitRate = G.stats.hits ? Math.round((G.stats.weakHits || 0) / G.stats.hits * 100) : 0;
+    const sector = UI._sectorScore ? Array.prototype.slice.call(UI._sectorScore)
+      .map((v, i) => ({ v: v, i: i })).sort((a, b) => b.v - a.v).slice(0, 3)
+      .filter(x => x.v > 0.01).map(x => x.i + ':' + x.v.toFixed(1)).join(' ') || '-' : '-';
+    const d = G.derived;
+    return this.row('命中', [['命中', G.stats.hits], ['弱点命中', G.stats.weakHits || 0, '#ffd24a'],
+        ['弱点击杀', G.stats.weakKills || 0, '#ff9a4a'], ['爆头率', hitRate + '%']]) +
+      this.row('伤害', [['直接', Math.round(BUILD.stats.direct)], ['尸爆', Math.round(BUILD.stats.corpse)],
+        ['弹射', Math.round(BUILD.stats.bounce)]]) +
+      this.row('弹药', [['耗弹/发', d.ammoPerShot], ['弹丸', d.pellets], ['贯穿', d.pierce], ['弹射', d.bounce],
+        ['花', Math.round(BUILD.stats.ammoSpent)], ['省', Math.round(BUILD.stats.ammoSaved)]]) +
+      this.row('触发', [['本帧', G.procThisFrame], ['深度上限', d.maxDepth], ['预算', ATK.debugLine()]]) +
+      this.row('挨打', [['受伤', G.hurtCount], ['近战落空', G.meleeWhiffs], ['威胁扇区', sector]]) +
+      this.row('枪械', [['kick', WEAPON.kickZ.x.toFixed(3)], ['climb', WEAPON.climb.toFixed(3)],
+        ['bolt', WEAPON.boltLocked ? 'LOCK' : WEAPON.boltSpring.x.toFixed(3)],
+        ['reload', WEAPON.reload.active ? 'P' + WEAPON.reload.phase : '-'],
+        ['ads', WEAPON.pose.ads.toFixed(2)], ['弹壳', WEAPON.stats.shells]]);
+  },
+  pageSpawn() {
+    const s = Director.spawnStat, n = Math.max(1, s.n);
+    const layers = { street: 0, mid: 0, roof: 0 };
+    let traversing = 0;
+    G.enemies.live.forEach(e => {
+      if (e._dead || e.dead) return;
+      layers[CITY.layerOf(e.pos.y)]++;
+      if (e.nav && e.nav.link) traversing++;
+    });
+    return this.row('导演', [['目标在场', Director.target || 0], ['当前', G.enemies.count],
+        ['间隔', (Director.interval || 0).toFixed(2) + 's'],
+        ['变种占比', Math.round(Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation) * 100) + '%']]) +
+      this.row('落点', [['次数', s.n], ['平均', (s.sum / n).toFixed(1) + 'm'],
+        ['最近', s.min === 1e9 ? '-' : s.min.toFixed(1) + 'm'],
+        ['20m 内', Math.round(s.near20 / n * 100) + '%'], ['背后', Math.round(s.rear / n * 100) + '%']]) +
+      this.row('分层', [['街', layers.street], ['中', layers.mid], ['顶', layers.roof],
+        ['通过连接中', traversing], ['累计', NAV.stats.traversals], ['射落', NAV.stats.shotOffWall]]) +
+      this.row('导航', [['刷怪点拒绝', NAV.stats.spawnRejected], ['原因', this.brief(NAV.stats.rejectReason)],
+        ['导航失败', NAV.stats.navFail], ['不可达资源', G.stats.unreachable || 0]]) +
+      this.row('共同进化', [['', typeof HORDE !== 'undefined' ? HORDE.describe() : '-']]);
+  },
+  pageMove() {
+    const p = G.player, st = MOVE.st, camp = NAV.camp;
+    const sup = CITY.supportY(p.pos.x, p.pos.z, p.radius, p.pos.y + 0.2, 1.2, 0.4);
+    const ceil = CITY.ceilingY(p.pos.x, p.pos.z, p.radius, p.pos.y + 0.1);
+    const layers = MOVE.stats ? MOVE.stats.layerTime : { street: 0, mid: 0, roof: 0 };
+    const m = MOVE.stats || {};
+    return this.row('位置', [['xyz', p.pos.x.toFixed(1) + ',' + p.pos.y.toFixed(1) + ',' + p.pos.z.toFixed(1)],
+        ['速度', Math.hypot(p.vel.x, p.vel.z).toFixed(1)], ['vy', p.vel.y.toFixed(1)],
+        ['层', MOVE.pose.layer], ['状态', MOVE.pose.state, '#7ef0a8'], ['冲刺充能', st ? st.dashCharge : 0]]) +
+      this.row('贴合', [['脚下支撑', sup === -Infinity ? '无' : sup.toFixed(2)],
+        ['头顶', ceil === Infinity ? '∞' : ceil.toFixed(1)],
+        ['墙面法线', st && st.state === 'wallrun' ? st.wallN.x.toFixed(2) + ',' + st.wallN.z.toFixed(2) : '-']]) +
+      this.row('动作', [['翻越', m.vault], ['抓边', m.mantle], ['墙跑', m.wallRun], ['登墙', m.wallClimb],
+        ['空冲', m.airDash], ['滑铲', m.slide], ['滑索', m.zip], ['跳板', m.pad]]) +
+      this.row('战斗中', [['移动射击', m.shotsMoving || 0], ['移动击杀', m.killsMoving || 0], ['滞空击杀', m.killsAirborne || 0]]) +
+      this.row('停留', [['街', layers.street.toFixed(0) + 's'], ['中', layers.mid.toFixed(0) + 's'],
+        ['顶', layers.roof.toFixed(0) + 's'], ['连接使用', this.brief(m.linkUse)]]) +
+      this.row('antiCamp', [['阶段', camp.stage, camp.stage ? '#ff8a4a' : '#8899aa'],
+        ['手段', camp.method], ['停留', camp.t.toFixed(1) + 's']]);
+  },
+  pageBuild() {
+    const d = EVO.draw;
+    return this.row('进化', [['选择', d.evolutionIndex + '/' + TUNE.BUILD.targetCount],
+        ['距上次', (G.time - d.lastChoiceTime).toFixed(1) + 's'],
+        ['进度', EVO.progress.toFixed(0) + '/' + EVO.need.toFixed(0)]]) +
+      this.row('构筑', [['', BUILD.hudText() || '空']]) +
+      this.row('状态卡', [['', BUILD.stateText() || '-']]) +
+      this.row('下一抽', [['修正', typeof MAPBUILD !== 'undefined' ? MAPBUILD.statusText() : '-']]);
+  },
+  pageSupply() {
+    return this.row('医疗', [['need', G.medNeed.toFixed(1) + '/' + TUNE.MEDICAL.needThreshold],
+        ['冷却', Math.max(0, G.medCooldown).toFixed(0) + 's'], ['场上', G.medical ? 'Y' : '-'],
+        ['待掉落', G.medPending ? '是' : '-', G.medPending ? '#3ad07a' : '']]) +
+      this.row('空投', [['充能', Math.round(G.supplyCharge * 100) + '%'],
+        ['距上次', (G.time - G.lastDropAt).toFixed(0) + 's'], ['次数', G.dropCount || 0],
+        ['排队', G.dropQueued ? '是' : '-', G.dropQueued ? '#5fe0ff' : '']]) +
+      this.row('Buff', [['', G.buff ? G.buff.id + ' ' + G.buff.t.toFixed(1) + 's' : '-']]) +
+      this.row('磁铁', [['场上', G.magnet ? 'Y' : '-'], ['待掉落', G.magPending ? '是' : '-', G.magPending ? '#3ad07a' : '']]);
+  },
+
   update(dt, raw) {
     this.frames++; this.fpsT += raw;
     this.updateWeakGizmos();
     if (this.fpsT >= 0.5) { this.fps = Math.round(this.frames / this.fpsT); this.frames = 0; this.fpsT = 0; }
     if (!this.el.classList.contains('on')) return;
-    $('dbgstats').innerHTML =
-      '<b>' + this.fps + '</b> fps &nbsp; 敌 <b>' + G.enemies.count + '</b>' +
-      ' &nbsp; 弹 <b>' + G.bullets.count + '</b> &nbsp; 特效 <b>' +
-      (R.rings.count + R.puffs.count + R.sparks.count + R.bolts.count) + '</b>' +
-      ' &nbsp; 危险区 <b>' + G.hazards.count + '</b>' +
-      '<br>期望 <b>' + expectedLevel(G.time).toFixed(1) + '</b> 实际 <b>' + G.player.level +
-      '</b> 差 <b style="color:' + (Math.abs(expectedLevel(G.time) - G.player.level) > TUNE.PACING.deadband ? '#ffd06a' : '#7ef0a8') + '">' +
-      (expectedLevel(G.time) - G.player.level).toFixed(1) + '</b>' +
-      ' &nbsp; 需求倍率 <b>' + (G.pacingMult || 1).toFixed(2) + '</b>' +
-      ' &nbsp; xp/s <b>' + (G.xpRate || 0).toFixed(1) + '</b>' +
-      '<br>目标在场 <b>' + (Director.target || 0) + '</b> &nbsp; 刷怪间隔 <b>' + (Director.interval || 0).toFixed(2) + 's</b> &nbsp; 触发/帧 <b>' + G.procThisFrame + '</b> &nbsp; 深度上限 <b>' + G.derived.maxDepth + '</b>' +
-      ' &nbsp; 经验球 <b>' + G.xp.length + '</b>' +
-      '<br>医疗need <b>' + G.medNeed.toFixed(1) + '/' + TUNE.MEDICAL.needThreshold + '</b>' +
-      ' 冷却 <b>' + Math.max(0, G.medCooldown).toFixed(0) + 's</b>' +
-      ' 场上 <b>' + (G.medical ? 'Y' : '-') + '</b>' + (G.medPending ? ' <b style="color:#3ad07a">待掉落</b>' : '') +
-      '<br>空投 <b>' + Math.round(G.supplyCharge * 100) + '%</b>' +
-      ' 距上次 <b>' + (G.time - G.lastDropAt).toFixed(0) + 's</b>' +
-      ' 次数 <b>' + (G.dropCount || 0) + '</b>' + (G.dropQueued ? ' <b style="color:#5fe0ff">排队中</b>' : '') +
-      ' Buff <b>' + (G.buff ? G.buff.id + ' ' + G.buff.t.toFixed(1) + 's' : '-') + '</b>' +
-      '<br>枪械 kick <b>' + WEAPON.kickZ.x.toFixed(3) + '</b>' +
-      ' climb <b>' + WEAPON.climb.toFixed(3) + '</b>' +
-      ' bolt <b>' + (WEAPON.boltLocked ? 'LOCK' : WEAPON.boltSpring.x.toFixed(3)) + '</b>' +
-      ' reload <b>' + (WEAPON.reload.active ? 'P' + WEAPON.reload.phase : '-') + '</b>' +
-      ' ads <b>' + WEAPON.pose.ads.toFixed(2) + '</b>' +
-      '<br>弹壳 <b>' + WEAPON.stats.shells + '</b>' +
-      '<br>弱点命中 <b style="color:#ffd24a">' + (G.stats.weakHits || 0) + '</b>' +
-      ' 弱点击杀 <b style="color:#ff9a4a">' + (G.stats.weakKills || 0) + '</b>' +
-      ' 命中 <b>' + G.stats.hits + '</b>' +
-      ' 爆头率 <b>' + (G.stats.hits ? Math.round((G.stats.weakHits || 0) / G.stats.hits * 100) : 0) + '%</b>' +
-      '<br>受伤 <b>' + G.hurtCount + '</b> 次  近战落空 <b>' + G.meleeWhiffs + '</b> 次' +
-      ' &nbsp; 威胁扇区 <b>' + (UI._sectorScore ? Array.prototype.slice.call(UI._sectorScore)
-        .map((v, i) => ({ v: v, i: i })).sort((a, b) => b.v - a.v).slice(0, 3)
-        .filter(x => x.v > 0.01).map(x => x.i + ':' + x.v.toFixed(1)).join(' ') || '-' : '-') + '</b>' +
-      '<br>刷怪 <b>' + Director.spawnStat.n + '</b> 次　平均 <b>' +
-        (Director.spawnStat.sum / Math.max(1, Director.spawnStat.n)).toFixed(1) + 'm</b>' +
-        '　最近 <b>' + (Director.spawnStat.min === 1e9 ? '-' : Director.spawnStat.min.toFixed(1)) + 'm</b>' +
-        '　20m 内 <b>' + Math.round(Director.spawnStat.near20 / Math.max(1, Director.spawnStat.n) * 100) + '%</b>' +
-        '　背后 <b>' + Math.round(Director.spawnStat.rear / Math.max(1, Director.spawnStat.n) * 100) + '%</b>' +
-      '<br>变种占比 <b>' + Math.round(Math.min(TUNE.VARIANT.cap, G.variantPool.length * TUNE.VARIANT.perMutation) * 100) + '%</b>' +
-      ' &nbsp; ' + (BUILD.stateText() || '无状态卡') +
-      '<br>无敌 <b style="color:' + (this.god ? '#7ef0a8' : '#8899aa') + '">' + (this.god ? 'ON' : 'off') + '</b>' +
-      ' &nbsp; 种子 <b>' + RNG.master + '</b>';
-
-    /* --- §11.1 空间与战斗 --- */
-    {
-      const p = G.player, st = MOVE.st;
-      const sup = CITY.supportY(p.pos.x, p.pos.z, p.radius, p.pos.y + 0.2, 1.2, 0.4);
-      const camp = NAV.camp;
-      const layers = MOVE.stats ? MOVE.stats.layerTime : { street: 0, mid: 0, roof: 0 };
-      const enemyLayers = { street: 0, mid: 0, roof: 0 };
-      let traversing = 0;
-      G.enemies.live.forEach(e => {
-        if (e._dead || e.dead) return;
-        enemyLayers[CITY.layerOf(e.pos.y)]++;
-        if (e.nav && e.nav.link) traversing++;
-      });
-      $('dbgmove').innerHTML =
-        '位置 <b>' + p.pos.x.toFixed(1) + ',' + p.pos.y.toFixed(1) + ',' + p.pos.z.toFixed(1) + '</b>' +
-        ' 速度 <b>' + Math.hypot(p.vel.x, p.vel.z).toFixed(1) + '</b> vy <b>' + p.vel.y.toFixed(1) + '</b>' +
-        ' 层 <b>' + MOVE.pose.layer + '</b> 状态 <b style="color:#7ef0a8">' + MOVE.pose.state + '</b>' +
-        ' 冲刺充能 <b>' + (st ? st.dashCharge : 0) + '</b>' +
-        '<br>脚下支撑 <b>' + (sup === -Infinity ? '无' : sup.toFixed(2)) + '</b>' +
-        ' 头顶 <b>' + (function () { const c = CITY.ceilingY(p.pos.x, p.pos.z, p.radius, p.pos.y + 0.1); return c === Infinity ? '∞' : c.toFixed(1); })() + '</b>' +
-        ' 墙面法线 <b>' + (st && st.state === 'wallrun' ? st.wallN.x.toFixed(2) + ',' + st.wallN.z.toFixed(2) : '-') + '</b>' +
-        '<br>敌人分层 街<b>' + enemyLayers.street + '</b> 中<b>' + enemyLayers.mid + '</b> 顶<b>' + enemyLayers.roof + '</b>' +
-        ' 通过连接中 <b>' + traversing + '</b> 累计 <b>' + NAV.stats.traversals + '</b> 射落 <b>' + NAV.stats.shotOffWall + '</b>' +
-        '<br>刷怪点拒绝 <b>' + NAV.stats.spawnRejected + '</b> ' + JSON.stringify(NAV.stats.rejectReason) +
-        ' 导航失败 <b>' + NAV.stats.navFail + '</b>' +
-        '<br>antiCamp <b style="color:' + (camp.stage ? '#ff8a4a' : '#8899aa') + '">' + camp.stage + '</b>' +
-        ' 手段 <b>' + camp.method + '</b> 停留 <b>' + camp.t.toFixed(1) + 's</b>' +
-        '<br>各层停留 街<b>' + layers.street.toFixed(0) + 's</b> 中<b>' + layers.mid.toFixed(0) + 's</b> 顶<b>' + layers.roof.toFixed(0) + 's</b>' +
-        ' 连接使用 ' + JSON.stringify(MOVE.stats ? MOVE.stats.linkUse : {}) +
-        '<br>移动中射击 <b>' + (MOVE.stats ? MOVE.stats.shotsMoving : 0) + '</b>' +
-        ' 移动中击杀 <b>' + (MOVE.stats ? MOVE.stats.killsMoving : 0) + '</b>' +
-        ' 滞空击杀 <b>' + (MOVE.stats ? MOVE.stats.killsAirborne : 0) + '</b>' +
-        ' 翻越<b>' + MOVE.stats.vault + '</b> 抓边<b>' + MOVE.stats.mantle + '</b> 墙跑<b>' + MOVE.stats.wallRun + '</b>' +
-        ' 登墙<b>' + MOVE.stats.wallClimb + '</b> 空冲<b>' + MOVE.stats.airDash + '</b> 滑铲<b>' + MOVE.stats.slide + '</b>' +
-        ' 滑索<b>' + MOVE.stats.zip + '</b> 跳板<b>' + MOVE.stats.pad + '</b>' +
-        '<br>地图事件 <b>' + MAPEV.statusText() + '</b>' +
-        ' 不可达资源 <b>' + (G.stats.unreachable || 0) + '</b>';
-    }
-
-    /* --- §11.2 进化与构筑 --- */
-    {
-      const d = EVO.draw, ld = EVO._lastDraw || {};
-      $('dbgevo').innerHTML =
-        '选择 <b>' + d.evolutionIndex + '</b>/目标' + TUNE.BUILD.targetCount +
-        ' 距上次 <b>' + (G.time - d.lastChoiceTime).toFixed(1) + 's</b>' +
-        ' 进度 <b>' + EVO.progress.toFixed(0) + '/' + EVO.need.toFixed(0) + '</b>' +
-        '<br>构筑 <b>' + (BUILD.hudText() || '空') + '</b>' +
-        '<br>状态 <b>' + (BUILD.stateText() || '-') + '</b>' +
-        ' 下一抽修正 <b>' + (typeof MAPBUILD !== 'undefined' ? MAPBUILD.statusText() : '-') + '</b>' +
-        '<br>性能 <b>' + ATK.debugLine() + '</b>' +
-        ' 耗弹/发 <b>' + G.derived.ammoPerShot + '</b>' +
-        ' 弹丸 <b>' + G.derived.pellets + '</b>' +
-        ' 贯穿 <b>' + G.derived.pierce + '</b> 弹射 <b>' + G.derived.bounce + '</b>' +
-        '<br>伤害 直接<b>' + Math.round(BUILD.stats.direct) + '</b>' +
-        ' 尸爆<b>' + Math.round(BUILD.stats.corpse) + '</b>' +
-        ' 弹射<b>' + Math.round(BUILD.stats.bounce) + '</b>' +
-        ' 弹药 花<b>' + Math.round(BUILD.stats.ammoSpent) + '</b>' +
-        ' 省<b>' + Math.round(BUILD.stats.ammoSaved) + '</b>' +
-        '<br>共同进化 <b>' + (typeof HORDE !== 'undefined' ? HORDE.describe() : '-') + '</b>';
+    $('dbgfps').textContent = this.fps + ' fps';
+    if (this.el.classList.contains('min')) return;
+    /* 读数按 8Hz 刷 —— 每帧重排一屏文字既看不清也没必要 */
+    this._readT += raw;
+    if (this._readT < 0.125) return;
+    this._readT = 0;
+    const p = this.PAGES.filter(x => x.id === this.tab)[0] || this.PAGES[0];
+    $('dbgread').innerHTML = this[p.fn]();
+    /* 开关也可能被键盘或游戏内部改掉，亮灭要跟着走 */
+    const btns = $('dbgbtns').querySelectorAll('button.tog');
+    for (let i = 0; i < btns.length; i++) {
+      const fn = this._tog[btns[i].dataset.a];
+      if (fn && fn() !== btns[i].classList.contains('on')) { this.render(); break; }
     }
   }
 };
+
 Object.defineProperty(G.hazards, 'count', { get() { return this.length; } });
 
 /* ============================================================================
