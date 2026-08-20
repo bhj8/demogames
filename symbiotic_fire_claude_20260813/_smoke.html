@@ -304,7 +304,7 @@ addEventListener('load', () => {
     err = guard(() => {
       DebugPanel.god = true; DebugPanel.noSpread = true;
       G.time = 0;                                    // 回到开局血量，验证首轮数值
-      G.mods = {}; G.mutations = []; G.mutationSet = {}; recompute();
+      BUILD.init(); recompute();                   // 回到空构筑
       const rows = [];
       ['grunt', 'heavy', 'spitter', 'charger', 'midboss'].forEach(kind => {
         G.enemies.live.forEach(e => { if (!e._dead && !e.dead) G.enemies.release(e); });
@@ -456,8 +456,9 @@ addEventListener('load', () => {
     err = guard(() => {
       G.enemies.live.forEach(e => { if (!e._dead && !e.dead) G.enemies.release(e); });
       G.enemies.compact();
-      MUTATIONS.forEach(m => { if (!G.mutationSet[m.id]) { G.mutations.push(m.id); G.mutationSet[m.id] = true; } });
-      ['caliber', 'caliber', 'bolt', 'catalyst', 'spread', 'cascade', 'twin'].forEach(id => { G.mods[id] = (G.mods[id] || 0) + 1; });
+      G.variantPool = MUTATIONS.map(m => m.id);    // 变种全部进池
+      ['volley', 'volley', 'pierce', 'ricochet', 'heavy', 'power', 'overclock']
+        .forEach(id => BUILD.take(id));
       recompute();
       for (let i = 0; i < 90; i++) {
         const a = i * 0.37, r = 6 + (i % 9) * 1.6;
@@ -479,20 +480,19 @@ addEventListener('load', () => {
     });
     if (err) { report(['LOAD_ERR:' + err]); return; }
 
-    /* 强制拿满 4 个共同变异，并把变种放进池子 */
+    /* 把教学队列里的变种立刻放出来，验证首只变种的脚本化生成 */
     err = guard(() => {
-      ['blast', 'fission', 'conduct', 'ossify'].forEach(id => { takeMutation(id); G.phase = 'play'; });
+      G.phase = 'play';
       G.tutorialQueue.forEach(q => q.t = 0.01);
       step(60);
     });
     if (err) { report(['MUT_ERR:' + err]); return; }
-    out.push('mutations=' + G.mutations.length);
     out.push('variantPool=' + G.variantPool.length);
 
     /* 触发链压力：大量改装 + 密集怪 */
     err = guard(() => {
-      ['caliber', 'caliber', 'bolt', 'catalyst', 'spread', 'cascade', 'hunter', 'aftershock', 'feedback', 'twin']
-        .forEach(id => { G.mods[id] = (G.mods[id] || 0) + 1; });
+      ['corpse', 'overflow', 'wallbounce', 'crit', 'close', 'power', 'power']
+        .forEach(id => BUILD.take(id));
       recompute();
       for (let i = 0; i < 90; i++) {
         const a = i * 0.7, r = 4 + (i % 7);
@@ -505,7 +505,8 @@ addEventListener('load', () => {
     if (err) { report(['CHAIN_ERR:' + err]); return; }
     out.push('kills=' + G.stats.kills);
     out.push('procs=' + G.stats.procs);
-    out.push('splits=' + G.stats.splits + ',blasts=' + G.stats.blasts + ',bolts=' + G.stats.bolts);
+    out.push('blasts=' + G.stats.blasts + ',bolts=' + G.stats.bolts +
+      ',尸爆=' + Math.round(BUILD.stats.corpse) + ',弹射=' + Math.round(BUILD.stats.bounce));
     out.push('alive=' + G.enemies.count);
 
     /* 每种变种都强制生成一次，检查模型/骨板/尸爆路径 */
