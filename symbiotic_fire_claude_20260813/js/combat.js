@@ -18,6 +18,7 @@ const G = {
   enemies: null, bullets: null, acids: null,
   xp: [], hazards: [], pendings: [],
   wells: [],                         // 坍缩炮的引力井（todo13）
+  magnet: null, magPending: false, magNextAt: undefined,   // 磁铁掉落
   stats: { kills: 0, shots: 0, hits: 0, procs: 0, dmgDealt: 0, dmgTaken: 0, blasts: 0, bolts: 0 },
   derived: null,
   conductCounter: 0,
@@ -286,6 +287,11 @@ function killEnemy(e, ctx, opts) {
   if (G.medPending && !e.minion && !G.medical) {
     G.medPending = false;
     G.spawnMedical(e.pos);
+  }
+  /* 磁铁走同一条投放路线 */
+  if (G.magPending && !e.minion && !G.magnet) {
+    G.magPending = false;
+    G.spawnMagnet(e.pos);
   }
 
   /* 创伤修复 §23 */
@@ -629,8 +635,35 @@ function updateBullets(dt) {
     }
     b.pos.addScaledVector(b.dir, b.speed * dt);
 
-    /* 出界或撞掩体 */
-    if (Math.abs(b.pos.x) > R.arenaHalf || Math.abs(b.pos.z) > R.arenaHalf || b.pos.y < 0.02) {
+    /* 出界：地图边缘不反弹，到边就没了 */
+    if (Math.abs(b.pos.x) > R.arenaHalf || Math.abs(b.pos.z) > R.arenaHalf) {
+      if (b.core) spawnWell(b.pos, b.core);
+      R.spark(b.pos, null, 0x9fb4c8);
+      retireBullet(b); continue;
+    }
+    /* 打地板。楼板与屋顶本身是 AABB，走下面 segBlocked 那条；
+       但【世界地面】是一张平面，不在 CITY.solids 里，所以要单独接一下 ——
+       否则「墙面反弹」在最常见的一种表面上反而不生效（Bao 指出）。 */
+    if (b.pos.y < 0.02) {
+      if (b.wallLeft > 0) {
+        b.wallLeft--;
+        /* 求线段与 y=0.02 平面的交点，从那里反弹，法线是 +Y */
+        const dy = b.pos.y - b.prev.y;
+        const k = Math.abs(dy) > 1e-6 ? (0.02 - b.prev.y) / dy : 0;
+        _wallHit.x = lerp(b.prev.x, b.pos.x, k);
+        _wallHit.y = 0.02;
+        _wallHit.z = lerp(b.prev.z, b.pos.z, k);
+        b.dir.y = -b.dir.y;
+        b.dir.normalize();
+        const nu = TUNE.MOL_WALL.nudge;
+        b.pos.set(_wallHit.x + b.dir.x * nu, _wallHit.y + b.dir.y * nu, _wallHit.z + b.dir.z * nu);
+        b.prev.copy(b.pos);
+        b.hopDmg = (b.hopDmg || b.dmg) * G.derived.wallGain;
+        b.dmg = b.hopDmg;
+        b.hitList.clear();
+        R.spark(_wallHit, b.dir, 0x9fd8ff);
+        continue;
+      }
       if (b.core) spawnWell(b.pos, b.core);
       R.spark(b.pos, null, 0x9fb4c8);
       retireBullet(b); continue;

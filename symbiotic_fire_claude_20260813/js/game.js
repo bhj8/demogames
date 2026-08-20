@@ -995,6 +995,57 @@ function gainXp(v) {
    两个系统职责不同：医疗是逆风兜底，空投是高频短时爽点 + 逼玩家改变路线。
    ========================================================================== */
 
+/* ---- 磁铁掉落（todo13 回访）----
+   投放路线和医疗包一模一样：到点挂 magPending，由下一只非召唤物敌人掉出。
+   捡到就把【全图】经验一次性拉过来 —— 这是 ×10 怪量之后才需要的东西：
+   经验球会散在你回不去的楼上楼下和刚打完的街区里。 */
+G.spawnMagnet = function (atPos) {
+  const M = TUNE.MAGNET;
+  const pos = atPos.clone();
+  R.collide(pos, 0.6, pos.y + 0.2, pos.y + 1.6);
+  if (CITY.enabled) {
+    pos.y = CITY.dropTo(pos.x, pos.z, pos.y + 0.6, 0.6);
+    if (!CITY.standable(pos.x, pos.z, pos.y + 0.2, 0.6)) {
+      const sp = CITY.spawnPoints.length ? CITY.spawnPoints[RNG.event.int(CITY.spawnPoints.length)] : null;
+      if (sp) pos.set(sp.x, sp.y, sp.z);
+    }
+  }
+  G.magnet = { x: pos.x, y: pos.y, z: pos.z, t: 0, life: M.lifetime };
+  R.magMesh.position.set(pos.x, pos.y, pos.z);
+  R.magMesh.visible = true;
+  G.stats.magDropped = (G.stats.magDropped || 0) + 1;
+};
+
+function updateMagnet(dt) {
+  const M = TUNE.MAGNET, p = G.player;
+  /* 排队：第一次不早于 firstAt，之后每 interval±jitter 一次 */
+  if (G.magNextAt === undefined) G.magNextAt = M.firstAt;
+  if (!G.magPending && !G.magnet && G.time >= G.magNextAt) {
+    G.magPending = true;
+    G.magNextAt = G.time + M.interval + RNG.event.range(-M.jitter, M.jitter);
+  }
+
+  const m = G.magnet;
+  if (!m) return;
+  m.t += dt;
+  R.magCore.rotation.y += dt * 3.0;
+  if (m.t >= m.life) { G.magnet = null; R.magMesh.visible = false; return; }
+  R.magMesh.visible = m.life - m.t > 5 ? true : (Math.sin(m.t * 18) > -0.3);
+  if (Math.hypot(p.pos.x - m.x, p.pos.z - m.z) < M.pickupRadius * G.derived.pickupMult
+      && (!CITY.enabled || Math.abs(p.pos.y - (m.y || 0)) < 2.4)) {
+    G.magnet = null;
+    R.magMesh.visible = false;
+    /* 全图经验立刻转成「回家」状态 —— 跨层追踪那套逻辑现成的，
+       不另写一条飞行路径。 */
+    let n = 0;
+    for (let i = 0; i < G.xp.length; i++) { G.xp[i].home = true; n++; }
+    G.ui.floatText('磁铁 · 吸走 ' + n + ' 颗经验', '#c58aff');
+    G.ui.toast('磁铁：全图经验正在飞向你', '#c58aff');
+    Audio2.pickup('med');
+    G.shake(0.12, null);
+  }
+}
+
 /* ---- 医疗掉落 ---- */
 G.spawnMedical = function (atPos) {
   const M = TUNE.MEDICAL;
@@ -1656,7 +1707,7 @@ const UI = {
     this.buffEl = $('buffbar');
     this.reloadWrap = $('reloadwrap'); this.reloadBar = $('reloadbar');
     this.crossEl = $('cross'); this._lastAmmo = -1;
-    this.medMark = $('medmark'); this.dropMark = $('dropmark');
+    this.medMark = $('medmark'); this.dropMark = $('dropmark'); this.magMark = $('magmark');
     this._arcs = Array.prototype.slice.call(document.querySelectorAll('#threatarcs path'));
     this.hitMarkEl = $('hitmark');
     /* 伤害数字池：9 发/秒 + 高密度下不能每帧新建 DOM */
@@ -1866,6 +1917,7 @@ const UI = {
        所以两个都是「在场就一直指」。 */
     put(this.medMark, G.medical, !!G.medical);
     put(this.dropMark, G.airdrop, !!G.airdrop);
+    put(this.magMark, G.magnet, !!G.magnet);
   },
 
   /* 交互提示：目前只有滑索。不计时 —— 在范围内就一直亮着（todo12 §3） */
@@ -2225,6 +2277,8 @@ G.hpScale = function () { return 1 + (G.time / 60) * TUNE.SPAWN.hpScalePerMin; }
 function cleanupWorldPickups() {
   clearAirdrop();
   R.medMesh.visible = false;
+  R.magMesh.visible = false;
+  G.magnet = null; G.magPending = false; G.magNextAt = undefined;
   G.ui.shieldVig(0);
 }
 
@@ -2797,6 +2851,7 @@ function frame(now) {
       HORDE.update(dt);
       MAPBUILD.update(dt);
       updateMedical(dt);
+      updateMagnet(dt);
       updateAirdrop(dt);
       updateBuff(dt);
       runTutorialQueue(dt);

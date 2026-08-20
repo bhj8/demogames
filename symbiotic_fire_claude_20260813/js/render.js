@@ -343,6 +343,28 @@ const R = {
     this.medMesh.visible = false;
     this.scene.add(this.medMesh);
 
+    /* 磁铁：紫色，和绿色医疗、青绿经验球都区分得开。
+       形状用两根短柱做成 U 形，远远看去就是一块磁铁。 */
+    this.magMesh = new T.Group();
+    const magMat = new T.MeshLambertMaterial({ color: 0xc58aff, emissive: 0x6a2fb0, emissiveIntensity: 0.9 });
+    const tipMat = new T.MeshBasicMaterial({ color: 0xffe6a8 });
+    const leg = (x, mat) => {
+      const m = new T.Mesh(g.box, mat);
+      m.scale.set(0.18, 0.55, 0.18); m.position.set(x, 0.85, 0);
+      this.magMesh.add(m); return m;
+    };
+    leg(-0.22, magMat); leg(0.22, magMat);
+    const yoke = new T.Mesh(g.box, magMat);
+    yoke.scale.set(0.62, 0.18, 0.18); yoke.position.y = 1.18;
+    this.magMesh.add(yoke);
+    const t1 = new T.Mesh(g.box, tipMat); t1.scale.set(0.2, 0.12, 0.2); t1.position.set(-0.22, 0.56, 0);
+    const t2 = new T.Mesh(g.box, tipMat); t2.scale.set(0.2, 0.12, 0.2); t2.position.set(0.22, 0.56, 0);
+    this.magMesh.add(t1); this.magMesh.add(t2);
+    this.magCore = yoke;
+    this.magMesh.add(this._beacon(0xc58aff));
+    this.magMesh.visible = false;
+    this.scene.add(this.magMesh);
+
     /* 空投舱 */
     this.podMesh = new T.Group();
     const pod = new T.Mesh(g.box, new T.MeshLambertMaterial({ color: 0x3d4a58 }));

@@ -20,7 +20,7 @@
 <div id="dmgnums"></div><div id="vignette"></div><div id="hurtflash"></div><div id="healflash"></div>
 <div id="dmgdirs"></div><div id="threats"></div><div id="shieldvig"></div><div id="shieldflash"></div>
 <div id="floattext"></div><svg id="threatarcs" viewBox="0 0 400 400"><path/><path/><path/></svg>
-<div id="medmark"><span></span></div><div id="dropmark"><span></span></div>
+<div id="medmark"><span></span></div><div id="dropmark"><span></span></div><div id="magmark"><span></span></div>
 <div id="nextdraw"></div><div id="cards"></div>
 <div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
 <div id="pause"><button id="resume"></button></div><div id="buildgraph"></div><div id="results"></div>
@@ -755,6 +755,73 @@ function audit() {
     const k2 = {};
     for (let i = 0; i < 100; i++) BUILD.candidates().forEach(c => { k2[c.kind] = 1; });
     ok(!!(k2.wup || k2.mup), '关掉纯化模式之后小升级没有回来');
+  }
+
+  say('');
+  say('<b>回访 · 打地板也要反弹</b>');
+  {
+    derived(['wallbounce']);
+    /* 世界地面是一张平面，不在 CITY.solids 里 —— 所以它走的不是 segBlocked
+       那条路，而是「y < 0.02 就退场」那条。这一条盯着它有没有被接进反弹。 */
+    G.bullets.live.slice().forEach(b => G.bullets.release(b)); G.bullets.compact();
+    const p = G.player;
+    p.pos.set(0, 0, 0);
+    const b = spawnBullet({ x: 0, y: 3, z: 0 }, new THREE.Vector3(0, -1, 0.2).normalize(),
+                          10, makeAttack('primary'), { pierce: 0 });
+    const left0 = b.wallLeft;
+    let bounced = false;
+    for (let i = 0; i < 30 && !b._dead; i++) {
+      updateBullets(1 / 60);
+      if (!b._dead && b.dir.y > 0) { bounced = true; break; }
+    }
+    say('  朝地面打：反弹次数 ' + left0 + ' → ' + b.wallLeft + '　方向翻正 ' + bounced +
+        '　子弹还活着 ' + !b._dead);
+    ok(bounced === true, '打到地板没有反弹 —— 地面走的不是 segBlocked 那条路');
+    ok(b.wallLeft === left0 - 1, '反弹了但没有消耗反弹次数');
+
+    /* 没有这张卡时，打地板照旧消失 */
+    derived([]);
+    G.bullets.live.slice().forEach(x => G.bullets.release(x)); G.bullets.compact();
+    const b2 = spawnBullet({ x: 0, y: 3, z: 0 }, new THREE.Vector3(0, -1, 0.2).normalize(),
+                           10, makeAttack('primary'), { pierce: 0 });
+    for (let i = 0; i < 30 && !b2._dead; i++) updateBullets(1 / 60);
+    ok(b2._dead === true, '没有墙面反弹却在地板上弹起来了');
+  }
+
+  say('');
+  say('<b>回访 · 磁铁</b>');
+  {
+    const M = TUNE.MAGNET;
+    derived([]);
+    const p = G.player;
+    p.pos.set(0, 0, 0);
+    G.magnet = null; G.magPending = false; G.magNextAt = undefined;
+
+    /* 排队时机：firstAt 之前不排 */
+    G.time = M.firstAt - 5;
+    updateMagnet(1 / 60);
+    ok(G.magPending === false, 'firstAt 之前就排了磁铁');
+    G.time = M.firstAt + 1;
+    updateMagnet(1 / 60);
+    ok(G.magPending === true, 'firstAt 之后没有排磁铁');
+
+    /* 掉出来之后，捡到要把【全图】经验都拉过来 */
+    G.spawnMagnet(new THREE.Vector3(0, 0, 0));
+    ok(!!G.magnet, '磁铁没有生成');
+    G.xp.length = 0;
+    for (let i = 0; i < 30; i++) {
+      G.xp.push({ x: 60 + i, y: 0.4, z: -70, base: 0, v: 2, t: 0, home: false,
+                  layer: 'roof', leftT: 0, bob: 0 });
+    }
+    const homed0 = G.xp.filter(c => c.home).length;
+    updateMagnet(1 / 60);            // 玩家就站在磁铁上，这一帧应当捡到
+    const homed1 = G.xp.filter(c => c.home).length;
+    say('  捡到磁铁：正在飞向玩家的经验 ' + homed0 + ' → ' + homed1 + ' / ' + G.xp.length +
+        '　（这些球在 130m 外的屋顶上）');
+    ok(G.magnet === null, '走到磁铁上却没有捡起来');
+    ok(homed1 === G.xp.length, '磁铁没有把全图经验都拉过来');
+    G.xp.length = 0;
+    G.time = 0; G.magPending = false; G.magNextAt = undefined;
   }
 
   say('');
