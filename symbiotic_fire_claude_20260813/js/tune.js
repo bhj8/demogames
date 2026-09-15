@@ -7,11 +7,11 @@
 const TUNE = {
   /* A / FACETED：只控制美术，不修改战斗、碰撞或输入。 */
   ART: {
-    sky: 0xc9b9a7, fog: 0xb1b4b3, fogNear: 130, fogFar: 520,
+    sky: 0xc9b9a7, fog: 0xb3b5a7, fogNear: 95, fogFar: 390,
     skyLight: 0xc5d8ed, groundLight: 0x555865, ambient: 0.62,
     sunColor: 0xffdfb5, sunIntensity: 1.40, ground: 0x555d66,
     sunPosition: [70, 100, -180],
-    skyTop: '#94b3cb', skyHorizon: '#edceb0',
+    skyTop: '#819eab', skyHorizon: '#ddd0ac',
     shadow: { opacity: 0.27, color: 0x26384c, capacity: 2048, groundY: 0.17 },
     gait: { frequency: 5.5, stride: 0.30, lift: 0.16, armSwing: 0.10 },
     palette: {
@@ -21,9 +21,13 @@ const TUNE = {
       walk: 0x929692, shop: 0xb0a18b, garage: 0x8393a0,
       office: 0x738b9e, site: 0xaa987a, filler: 0x81909b,
       far: 0x8996a3, line: 0xd2c7ac, window: 0x3a4c5a,
-      trim: 0xa5afb2
+      trim: 0xa5afb2, masonry: 0x656b61, sill: 0xbcb7a6,
+      glass: 0x475b60, rust: 0x89644b, seam: 0x61665e,
+      paint: 0xc1ae79, grime: 0x414b44
     },
     facade: { spacing: 4.8, width: 1.65, height: 1.8, depth: 0.06, margin: 2.4 },
+    cityDetail: { baySpacing: 9.6, signHeight: 4.25, jointSpacing: 2.25, weatherStrength: .20 },
+    enemyMotion: { sway: .012, breath: .005, attackLean: .075, lighting: .44 },
     weapon: { steel: 0x647583, dark: 0x303c47, darker: 0x202b34, bone: 0xd6c8a5,
       hipYaw: 0.16, hipRoll: -0.06 },
     variantBody: 0x79866b, variantGlow: 0.025

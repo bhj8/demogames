@@ -26,6 +26,8 @@ body.shot #out{display:none}</style>
 <div id="menu"><button id="start"></button><div id="seedlabel"></div></div>
 <div id="pause"><button id="resume"></button></div><div id="buildgraph"></div><div id="results"></div>
 <div id="debug"></div>
+<div id="prompt"></div><div id="magmark"><span></span></div>
+<div id="shieldfill"></div>
 <pre id="out">running…</pre>
 <script>
 window.__err = [];
@@ -34,7 +36,7 @@ window.onerror = (m, s, l, c, e) => { window.__err.push(m + ' @' + (s || '').spl
 <script src="js/three.min.js"></script>
 <script src="js/tune.js"></script>
 <script src="js/core.js"></script>
-<script src="js/render.js"></script>
+<script src="js/enemy-atlas.js"></script><script src="js/enemy-art.js"></script><script src="js/render.js"></script>
 <script src="js/citymap.js"></script>
 <script src="js/city-scale.js"></script>
 <script src="js/movement.js"></script>

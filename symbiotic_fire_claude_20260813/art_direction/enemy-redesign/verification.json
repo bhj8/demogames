@@ -1,0 +1,53 @@
+{
+  "pass": true,
+  "kinds": [
+    "grunt",
+    "heavy",
+    "spitter",
+    "charger",
+    "midboss",
+    "king",
+    "climber",
+    "leaper",
+    "roofcaster",
+    "blast",
+    "fission",
+    "overclock",
+    "ossify",
+    "conduct",
+    "giant"
+  ],
+  "plateStates": [
+    2,
+    1,
+    0
+  ],
+  "solids": 34,
+  "density": [
+    {
+      "enemies": 120,
+      "calls": 175,
+      "triangles": 45422
+    },
+    {
+      "enemies": 900,
+      "calls": 955,
+      "triangles": 288782
+    }
+  ],
+  "geometryTriangles": 288,
+  "textures": 18,
+  "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 2070 SUPER (0x00001E84) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "checks": [
+    "15 assets loaded",
+    "front/right/back/left directions",
+    "3 armor hits preserve HP and remove plates",
+    "pooled material reset",
+    "fire/reload/weapon animation",
+    "moving gait",
+    "shadow pooling",
+    "120/900 render stress",
+    "unchanged collision world"
+  ],
+  "regression": true
+}

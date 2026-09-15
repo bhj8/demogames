@@ -1,0 +1,127 @@
+{
+  "pass": true,
+  "viewport": [
+    1440,
+    900
+  ],
+  "comparisons": [
+    {
+      "group": 0,
+      "individual": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "batch": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "pixelsOverTwoLevels": 0,
+      "maxChannelDelta": 1,
+      "meanChannelDelta": 0.000009002057613168725
+    },
+    {
+      "group": 1,
+      "individual": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "batch": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "pixelsOverTwoLevels": 0,
+      "maxChannelDelta": 2,
+      "meanChannelDelta": 0.00004603909465020576
+    },
+    {
+      "group": 2,
+      "individual": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "batch": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "pixelsOverTwoLevels": 0,
+      "maxChannelDelta": 2,
+      "meanChannelDelta": 0.0000066872427983539096
+    },
+    {
+      "group": 3,
+      "individual": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "batch": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "pixelsOverTwoLevels": 0,
+      "maxChannelDelta": 1,
+      "meanChannelDelta": 0.000009259259259259259
+    },
+    {
+      "group": 4,
+      "individual": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "batch": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "pixelsOverTwoLevels": 0,
+      "maxChannelDelta": 1,
+      "meanChannelDelta": 0.000028806584362139917
+    },
+    {
+      "group": 5,
+      "individual": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "batch": {
+        "calls": 47,
+        "triangles": 55758
+      },
+      "pixelsOverTwoLevels": 0,
+      "maxChannelDelta": 1,
+      "meanChannelDelta": 0.000009002057613168725
+    }
+  ],
+  "checks": [
+    "frustum culling",
+    "camera reversal",
+    "capacity fallback",
+    "pooled atlas migration",
+    "released batches empty"
+  ],
+  "density": [
+    {
+      "mixed": false,
+      "batching": false,
+      "calls": 944,
+      "triangles": 335622
+    },
+    {
+      "mixed": false,
+      "batching": true,
+      "calls": 45,
+      "triangles": 335622
+    },
+    {
+      "mixed": true,
+      "batching": false,
+      "calls": 944,
+      "triangles": 335622
+    },
+    {
+      "mixed": true,
+      "batching": true,
+      "calls": 59,
+      "triangles": 335622
+    }
+  ],
+  "errors": []
+}

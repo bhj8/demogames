@@ -59,10 +59,127 @@ const CITYSCALE = {
     this._skyline(C);                // 远景，不可碰撞
     this._scaleProps(C);             // 尺度参照：路灯与门（全部不参与碰撞）
     this._dressFacades(C);
+    this._finishDistricts(C);
     return this;
   },
 
   /* ---------------------------------------------------------------- 地面 */
+  styleMaterial(material, kind) {
+    if (!material.isMeshLambertMaterial || ['window','glass'].includes(kind)) return;
+    const ground = ['road','walk'].includes(kind), strength=TUNE.ART.cityDetail.weatherStrength;
+    material.onBeforeCompile = s => {
+      s.vertexShader='varying vec3 cityPosition;\n'+s.vertexShader;
+      s.vertexShader=s.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\ncityPosition=(modelMatrix*vec4(position,1.0)).xyz;');
+      s.fragmentShader='varying vec3 cityPosition;\nfloat cityHash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}\nfloat cityNoise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(cityHash(i),cityHash(i+vec2(1,0)),f.x),mix(cityHash(i+vec2(0,1)),cityHash(i+vec2(1,1)),f.x),f.y);}\n'+s.fragmentShader;
+      s.fragmentShader=s.fragmentShader.replace('#include <color_fragment>',`#include <color_fragment>
+        vec2 p=${ground?'cityPosition.xz':'vec2(cityPosition.x+cityPosition.z,cityPosition.y)'};
+        float broad=cityNoise(p*vec2(.28,.065));
+        float grain=cityNoise(p*7.0);
+        float stain=${ground?'cityNoise(p*.65)':'(1.0-smoothstep(0.0,4.0,cityPosition.y))*cityNoise(p*vec2(1.7,.2))'};
+        diffuseColor.rgb*=1.0-${strength.toFixed(3)}*(.55+broad+stain)+.075*grain;
+      `);
+    };
+    material.customProgramCacheKey=()=>ground?'city-ground-weather-v1':'city-wall-weather-v1';
+  },
+
+  _finishDistricts(C) {
+    const D=TUNE.ART.cityDetail,F=TUNE.ART.facade;
+    const box=(x,y,z,w,h,d,mat)=>C.addBox(x,y,z,w,h,d,{noCollide:true,surf:SURF.DECOR,mat});
+    const panel=(x,y,z,w,h,yaw,mat)=>{
+      const m=new THREE.Matrix4().makeRotationY(yaw);m.scale(new THREE.Vector3(w,h,1));m.setPosition(x,y,z);
+      (C._parts[mat]||(C._parts[mat]=[])).push({geo:R.geo.plane,mat:m});
+    };
+    const labels={shops:['旧城商街','OLD TOWN / 01'],garage:['东区停车楼','PARKING / 02'],office:['联合办公区','OFFICES / 03']};
+    for(const b of this.blocks){
+      if(b.zone==='site'){
+        for(const y of [7.5,15,22.5]){
+          box(55,y-.32,16.02,46,.16,.10,'rust');box(32.02,y-.32,39,.10,.16,46,'rust');
+        }
+        const c=document.createElement('canvas');c.width=1024;c.height=256;const ctx=c.getContext('2d');
+        ctx.fillStyle='#b7a678';ctx.fillRect(0,0,1024,256);ctx.fillStyle='#383e35';ctx.font='bold 72px "Microsoft YaHei",sans-serif';
+        ctx.fillText('工程暂停 · 禁止进入',55,113);ctx.font='30px sans-serif';ctx.fillText('CONSTRUCTION / 04',58,192);
+        const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;
+        const m=new THREE.Mesh(new THREE.PlaneGeometry(12,3),new THREE.MeshBasicMaterial({map:t}));m.position.set(55,4.2,30.84);m.rotation.y=Math.PI;C.group.add(m);
+      }
+      if(!b.facade)continue;
+      const cx=(b.x0+b.x1)/2,cz=(b.z0+b.z1)/2,w=b.x1-b.x0,d=b.z1-b.z0;
+      // Shallow wall-mounted detail does not obstruct the movement network.
+      for(const z of [b.z0-.09,b.z1+.09]){
+        box(cx,1.25,z,w,2.4,.09,'masonry');
+        for(let x=b.x0+1;x<b.x1;x+=D.baySpacing)box(x,b.h/2,z,.22,b.h,.10,'sill');
+        for(let y=this.S.floorSpacing;y<b.h-.4;y+=this.S.floorSpacing){
+          for(let x=b.x0+F.margin;x<b.x1-F.margin;x+=F.spacing){
+            box(x,y-F.height-.07,z,F.width+.28,.13,.28,'sill');
+            box(x,y-F.height/2,z,.065,F.height,.14,'trim');
+            // A restrained selection of dusty panes breaks uniform black holes.
+            if(Math.floor(x*3+y*7)%3===0)panel(x,y-F.height/2,z+(z<cz?-.025:.025),F.width*.88,F.height*.78,z<cz?Math.PI:0,'glass');
+          }
+        }
+      }
+      for(const x of [b.x0-.09,b.x1+.09]){
+        box(x,1.25,cz,.09,2.4,d,'masonry');
+        for(let z=b.z0+1;z<b.z1;z+=D.baySpacing)box(x,b.h/2,z,.10,b.h,.22,'sill');
+        for(let y=this.S.floorSpacing;y<b.h-.4;y+=this.S.floorSpacing)
+          for(let z=b.z0+F.margin;z<b.z1-F.margin;z+=F.spacing){box(x,y-F.height-.07,z,.28,.13,F.width+.28,'sill');box(x,y-F.height/2,z,.14,F.height,.065,'trim');}
+      }
+      // Street-facing, closed storefronts preserve the existing solid walls.
+      const front=b.z1<0?b.z1+.18:b.z0-.18,yaw=b.z1<0?0:Math.PI;
+      panel(cx,1.15,front+.02*(yaw?-1:1),1.35,2.25,yaw,'grime');
+      box(cx-.72,1.2,front,.12,2.4,.16,'sill');box(cx+.72,1.2,front,.12,2.4,.16,'sill');box(cx,2.4,front,1.56,.14,.16,'sill');
+      if(b.zone==='shops')for(let x=b.x0+3;x<b.x1-2;x+=4.8){
+        panel(x,1.45,front,3.6,2.65,yaw,'glass');
+        for(let y=.4;y<2.8;y+=.3)box(x,y,front,3.6,.04,.04,'trim');
+        box(x,3.08,front,4,.30,.55,'rust');
+      }
+      const label=labels[b.zone];
+      if(b.zone==='garage')for(let x=36;x<76;x+=3){
+        box(x,b.h+.012,-25,.08,.015,6,'paint');box(x,b.h+.012,-52,.08,.015,6,'paint');
+      }
+      if(label){
+        const canvas=document.createElement('canvas');canvas.width=1024;canvas.height=256;
+        const ctx=canvas.getContext('2d');ctx.fillStyle='#263a37';ctx.fillRect(0,0,1024,256);
+        ctx.fillStyle='#c8b98c';ctx.fillRect(26,24,8,204);ctx.font='bold 72px "Microsoft YaHei",sans-serif';ctx.fillText(label[0],65,115);
+        ctx.font='30px sans-serif';ctx.fillStyle='#a2b2aa';ctx.fillText(label[1],68,190);
+        const tex=new THREE.CanvasTexture(canvas);tex.encoding=THREE.sRGBEncoding;
+        const sign=new THREE.Mesh(new THREE.PlaneGeometry(Math.min(w-2,9),2.25),new THREE.MeshBasicMaterial({map:tex}));
+        sign.position.set(cx,D.signHeight,front+(yaw?-.14:.14));sign.rotation.y=yaw;C.group.add(sign);
+      }
+    }
+    // Flush pavement joints and gutter strips, leaving the carriageway open.
+    const S=this.S,edge=S.mainRoad/2-S.walk;
+    for(const sd of [-1,1]){
+      for(const [a,b] of [[-S.halfX,-S.crossRoad/2],[S.crossRoad/2,S.halfX]]){
+        box((a+b)/2,.158,sd*(edge+.12),b-a,.014,.18,'sill');
+        box((a+b)/2,.045,sd*(edge-.25),b-a,.012,.30,'grime');
+        for(let x=a+D.jointSpacing;x<b;x+=D.jointSpacing)box(x,.158,sd*(edge+S.walk/2),.025,.014,S.walk,'seam');
+      }
+    }
+    for(let x=-S.halfX+6;x<S.halfX;x+=18){
+      if(Math.abs(x)<12)continue;
+      // Drainage grates are flat, and batched by material.
+      for(const sd of [-1,1])for(let n=0;n<7;n++)box(x+n*.12,.062,sd*(edge-.4),.045,.015,.48,'masonry');
+    }
+    // Dress the existing solid roadblocks as stacked quarantine containers.
+    for(const axis of ['x','z'])for(const sd of [-1,1]){
+      const face=sd*((axis==='x'?S.halfX:S.halfZ)-9)-sd*.025;
+      const width=(axis==='x'?S.mainRoad:S.crossRoad)+6;
+      for(let u=-width/2+.5;u<width/2;u+=1.2){
+        if(axis==='x')box(face,4.5,u,.08,8.8,.08,'rust');else box(u,4.5,face,.08,8.8,.08,'rust');
+      }
+      for(const y of [3,6]){
+        if(axis==='x')box(face,y,0,.10,.12,width,'prop');else box(0,y,face,width,.12,.10,'prop');
+      }
+      const c=document.createElement('canvas');c.width=1024;c.height=256;const ctx=c.getContext('2d');
+      ctx.fillStyle='#b5a271';ctx.fillRect(0,0,1024,256);ctx.fillStyle='#293c37';
+      ctx.font='bold 76px "Microsoft YaHei",sans-serif';ctx.fillText('隔离封锁线',68,112);
+      ctx.font='32px sans-serif';ctx.fillText('QUARANTINE  /  NO ENTRY',74,190);
+      const t=new THREE.CanvasTexture(c);t.encoding=THREE.sRGBEncoding;
+      const m=new THREE.Mesh(new THREE.PlaneGeometry(8,2),new THREE.MeshBasicMaterial({map:t}));
+      m.position.set(axis==='x'?face-sd*.08:0,4.5,axis==='z'?face-sd*.08:0);
+      m.rotation.y=axis==='x'?-sd*Math.PI/2:(sd>0?Math.PI:0);C.group.add(m);
+    }
+  },
+
   _dressFacades(C) {
     const F = TUNE.ART.facade;
     const panel = (x, y, z, w, h, yaw, mat) => {
@@ -344,6 +461,10 @@ const CITYSCALE = {
   /* §2.1：远景楼群不可碰撞、不可伪装成可达区域。 */
   _skyline(C) {
     const S = this.S;
+    const panel=(x,y,z,w,h,yaw)=>{
+      const m=new THREE.Matrix4().makeRotationY(yaw);m.scale(new THREE.Vector3(w,h,1));m.setPosition(x,y,z);
+      (C._parts.window||(C._parts.window=[])).push({geo:R.geo.plane,mat:m});
+    };
     for (let i = 0; i < 46; i++) {
       const a = (i / 46) * Math.PI * 2 + 0.13;
       const d = 190 + (i % 6) * 42;
@@ -351,6 +472,14 @@ const CITYSCALE = {
       const w = 26 + (i % 5) * 12;
       C.addBox(Math.cos(a) * d, h / 2, Math.sin(a) * d, w, h, w,
         { noCollide: true, mat: 'far', surf: SURF.DECOR });
+      const cx=Math.cos(a)*d,cz=Math.sin(a)*d;
+      C.addBox(cx,h+2,cz,w*.58,4,w*.58,{noCollide:true,mat:'far',surf:SURF.DECOR});
+      for(let y=5;y<h-2;y+=5){
+        for(const side of [-1,1]){
+          panel(cx,y,cz+side*(w/2+.16),w*.92,1.4,side>0?0:Math.PI);
+          panel(cx+side*(w/2+.16),y,cz,w*.92,1.4,side*Math.PI/2);
+        }
+      }
     }
   },
 
@@ -363,14 +492,14 @@ const CITYSCALE = {
     for (let x = -S.halfX + 14; x < S.halfX - 10; x += 26) {
       [-1, 1].forEach(sd => {
         const z = sd * (carMain + S.walk * 0.75);
-        C.addBox(x, 2.6, z, 0.22, 5.2, 0.22, { noCollide: true, mat: 'line', surf: SURF.DECOR });
-        C.addBox(x + sd * 0.9, 5.15, z, 2.0, 0.16, 0.22, { noCollide: true, mat: 'line', surf: SURF.DECOR });
+        C.addBox(x, 2.6, z, 0.14, 5.2, 0.14, { noCollide: true, mat: 'prop', surf: SURF.DECOR });
+        C.addBox(x, .35, z, .25, .7, .25, { noCollide: true, mat: 'prop', surf: SURF.DECOR });
+        C.addBox(x + sd * 0.65, 5.15, z, 1.45, 0.12, 0.18, { noCollide: true, mat: 'prop', surf: SURF.DECOR });
+        C.addBox(x + sd * 1.15, 5.12, z, .65, 0.16, 0.42, { noCollide: true, mat: 'prop', surf: SURF.DECOR });
+        C.addBox(x + sd * 1.15, 5.03, z, .52, 0.025, 0.30, { noCollide: true, mat: 'line', surf: SURF.DECOR });
       });
     }
-    /* 商街门洞：2.2m 高，是全图最直接的人体尺度参照 */
-    for (let x = -96; x < -12; x += 7) {
-      C.addBox(x, 1.1, -15.9, 1.6, 2.2, 0.2, { noCollide: true, mat: 'road', surf: SURF.DECOR });
-    }
+    // Closed doors are mounted on actual building facades in _finishDistricts.
   },
 
   /* ====================================================================== */
