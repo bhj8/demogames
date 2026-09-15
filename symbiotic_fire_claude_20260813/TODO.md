@@ -1,250 +1,105 @@
-# SYMBIOTIC FIRE · 唯一的活计划
-
-> 整合自 todo.md ~ todo6.md。**这份是唯一要执行的清单**；
-> todo1~6 保留为设计原稿与决策依据，不再逐条勾选，也不再当作待办。
-> 冲突一律按**数字大的为准**（后面的设计推翻前面的）。
-> 维护者：Claude ｜ 最后整合：2026-08-14
-
----
-
-## 0. 已推翻 / 已作废的条目（不要再回头做）
-
-| 来源 | 条目 | 作废原因 |
-|---|---|---|
-| todo3 | 70×70m 三层立体城市（中央连廊环、四层脚手架、六跳板四滑索） | todo4 §0 整体推翻，地图重做 |
-| todo3 | 六种共同变异 / 15 组连接 / 15 组融合 | todo5 §0 推翻，改为 8 个可组合模块 |
-| todo3 | 等级三选一 + 四次固定病毒事件（两套弹窗） | todo3 §4.2 自己收敛成统一进化三选一 |
-| todo3 | 动态几何切换（地图事件开关楼板/连廊） | todo4 §8 改为「热点迁移」，几何不再乱动 |
-| todo4 | 主干道 26~30m 作为主要战斗街道 | todo6 §2.2 改为战斗街道 10~16m，只留一条 22~28m 主干道 |
-| todo4 | 「先按 220×180 全域均匀铺路线」 | todo6 §2.1 改为 3~4 个 35~50m 紧凑战斗单元 |
-| todo1~6 | **所有独立分支、功能开关与回退入口** | Bao 2026-08-14：项目不要冗余功能。已全部删除 |
-
-> 最后一条是全局性的：todo3 §1、todo4 §1、todo5 §10、todo6 §1 里所有
-> 「新建分支 / 加开关 / 保留回退」的条目**一律作废**。隔离靠 git 历史，不靠运行时分支。
-
----
-
-## 1. 已完成（保留在此仅为交代边界，不再动）
-
-- **todo.md**：背后威胁三阶段预警、自适应医疗、半动态空投、弱点/爆头闭环 —— 代码全部在，验收框当年没勾。
-- **todo2.md**：枪械表现层（可驱动骨架、两条后坐通道、分阶段换弹、池化抛壳曳光）—— 剩声音分层，见 M6。
-- **todo3.md**：统一进化三选一、品质概率、保底、共同进化映射 —— 地图部分已作废。
-- **todo4.md 阶段 A**：220×180m 城市尺度灰盒、四个功能区、真斜面坡道、远景天际线。
-- **todo5.md**：8 个可组合模块、统一弹丸谱系、五道硬上限、卡池审计、按模块归因。
-
----
-
-## M1 · 机动尺度（todo6 §3 / §4）
-
-**为什么排第一**：todo4 剩下的阶段全是往地图里铺路线，而 todo6 的结论是
-「玩家的一次动作配不上这张地图」。先定动作单位，再按新单位铺路线；
-反过来做的话，阶段 B 铺出来的间距会全部按旧机动算，改完还得重铺。
-
-- [x] 动作距离改到 todo6 §3 的目标：地面冲刺 5~6.5m、空中冲刺 6~8m、
-      跑墙 12~18m、墙面攀升 4~6m、完整动作链 25~35m。
-- [x] 常驻跑速只小幅调整 —— 大跨越来自动作，不来自「全局速度乘二」。
-- [x] 连续动量：滑铲跳继承滑铲水平速度；进入跑墙不硬重置速度；
-      出跑墙保留大部分出口动量；空中冲刺是在已有方向上追加/修正，不覆盖。
-- [x] 高速落地接滑铲保留明显速度，普通落地逐渐回到战斗移动速度。
-- [x] 速度上限与衰减规则：防止动作叠加无限加速。
-- [x] 输入宽容 120~180ms：输入缓存、离地宽容、接墙宽容。
-- [x] 撞墙、擦边、低速误触不把玩家完全停住。
-- [x] 移动 Debug：速度、状态、动量、离地时间、连续动作数、起终点距离。
-- [x] 所有距离/时长/动量继承参数进 `TUNE.MOVEMENT`，不散落在状态机里。
-- [x] 动势模块读同一份动量状态（todo6 §6）——不得退化成「移动后伤害 +X%」。
-
-**实测**（`_movecheck.html`，ALLPASS）：量的是**引擎里的真实位移**，不是配置里的速度×时长。
-
-| 动作 | 实测 | todo6 §3 目标 |
-|---|---:|---:|
-| 地面冲刺 | 6.13m | 5~6.5m |
-| 空中冲刺 | 7.80m | 6~8m |
-| 跑墙 | 14.92m | 12~18m |
-| 墙面攀升 | 5.01m | 4~6m |
-| 完整动作链 | 32.0m | 25~35m |
-
-连续动量：滑铲 11.7 m/s → 跳后仍有 11.5（保留 98%）→ 0.67s 后 11.2；
-12 次连续冲刺峰值 23.0 ≤ 上限 26；松手滞空 4s 后动量衰减回 4.4。
-
----
-
-## M2 · 战斗单元与路线语法（todo6 §2 / §5 + todo4 §4）
-
-- [x] 把 220×180m 重排成 **3~4 个 35~50m 的战斗单元**，单元内有地面/中层/屋顶。
-- [x] 战斗街道压到 10~16m；保留一条 22~28m 主干道作为大场面空间。
-- [x] 常用建筑间跨越 6~10m（一次明确动作能完成）；垂直换层每段 4~8m。
-- [x] 压缩靠**移动大体块 / 缩短空行程 / 收可玩边界**，不靠堆箱子小平台栏杆。
-- [x] 远景高楼与天际线保留，城市巨大感不许因玩法压缩而消失。
-- [x] 每个单元 2~3 条完整路线，每条必须四段齐全：
-      **入口 → 持续 → 出口 → 兑现**。缺「兑现」的是表演路线，删掉。
-- [x] 任意主要战斗位置 3 秒内能找到至少一个脱困入口。
-- [x] 关键动作之间留 2~5 秒观察与射击时间。
-- [x] 同时只呈现 2~3 个主要方向。
-- [x] 宏观转场设施 2~3 条，跨越 40~70m，落点直接进入新的战斗状态。
-- [x] 滑索/气流不能是永久安全区，也不能只是跳过一段无聊路。
-- [x] 玩家正常机动跨越一个战斗单元约 8~15 秒。
-
-**实测**（`_scalecheck.html`，全部 PASS）：
-
-| 项 | 实测 | 目标 |
-|---|---|---|
-| 主干道（唯一大场面） | 26m | 22~28m |
-| 战斗街道 | 14m | 10~16m |
-| 战斗单元 | 4 个 | 3~4 个 |
-| 单元内体块间距 | 商街 8m / 办公 8m | 6~12m（一次动作够得着） |
-| 宏观转场 | 3 条：53 / 59.9 / 65.6m | 2~3 条，各 40~70m |
-| 长边徒步 | 31.1s | 25~35s（城市尺度没被压缩掉） |
-
-垂直换层已切成 4~8m 一段：办公塔露台 9→16→23→30→36，
-在建大楼楼板 7.5→15→22.5，停车楼检修平台 7.5，商街雨棚 2.8。
-
-**路线语法**：10 条路线登记在 `city-scale.js` 的 `ROUTES` 里，
-四段（入口 / 持续 / 出口 / 兑现）全部显式写出来，`_scalecheck` 逐条查 ——
-不是「我觉得这条路线挺好」，而是缺一段就 FAIL。
-
-| 单元 | 路线 | 持续段 |
-|---|---|---|
-| 商街 | 屋顶奔跑 / 小巷穿行 | 3.4s / 2.4s |
-| 停车楼 | 长坡 / 检修平台 | 3.7s / 2.4s |
-| 办公区 | 裙楼长墙跑 / 塔楼露台 / 塔楼背面立面 | 3.6s / 2.1s / 2.7s |
-| 在建大楼 | 楼板对角 / 东缘柱线 / 西缘柱线 | 3.3s / 3.0s / 2.9s |
-
-脱困入口：贴着战斗单元的 47 个刷怪点，全部在 24.7m（3 秒跑 + 一次冲刺）
-以内能碰到某条路线的入口、出口或持续段端点。
-
-这一轮顺手改掉了三处「写着是路线、跑起来不是」的东西：
-
-- 办公裙楼墙跑原本登记在 z=20，那是盒子内部 4m 处，根本不在墙面上 → 改到面外 z=15.4。
-- 办公塔与在建大楼的路线入口全部挤在靠十字路口那一侧，
-  绕到背面就是一堵死墙 → 各补一条背街面的路线，塔楼立面也改成可跑墙。
-- 检修平台、塔楼露台的持续段原本只登记了中间一小截（1.8s / 0.8s），
-  读起来像路线、跑起来是一次侧跳 → 按平台/露台的真实全长重新登记。
-
----
-
-## M3 · 导航、刷怪与资源（todo4 阶段 C §7）
-
-- [x] 敌人分层导航接上新单元结构：街道/中层/屋顶三层各有到达方式。
-- [x] 刷怪点按层分布，且从街口、巷口、车辆或建筑转角外出现。
-- [x] 玩家快速跨区时：部分旧尸潮继续追击，目标区前方补充新压力 —— 转场后不能无怪可打。
-- [x] 攀爬怪 / 跳跃怪 / 远程怪分别承担追击与驱赶，普通怪不需要走通所有高空路线。
-- [x] 经验与补给按层给出风险收益差：地面收益最高，屋顶是捷径不是安全区。
-- [x] 防站桩（anti-camp）按新单元尺度重新标定。
-
----
-
-**实测**（`_movecheck.html` 的 M3/M5 段，ALLPASS）：
-
-- 刷怪点分层 **街 42 / 中 9 / 顶 10**（阶段 A 时全部 61 个都是街面）
-- 玩家在停车楼顶站 40 秒：场上 51 只，**15 只爬到同一高度**，防站桩升到阶段 3（远程压制）
-- 分层经验倍率 街 1.0 / 中 0.78 / 顶 0.62 —— 屋顶是捷径，不是农场
-- 高速跨越 26m/3s 触发转场补压，目标方向前方补 4 只（`Director._transfer`）
-
----
-
-## M4 · 热点迁移（todo4 §8，取代动态几何）
-
-- [x] 12 分钟内地图压力**在单元之间迁移**，而不是切换楼板与连廊。
-- [x] 热点有明确预告、明确收益、明确离开代价。
-- [x] 热点迁移与空投/医疗/进化的时钟不打架（复用统一事件队列的延迟规则）。
-- [x] 迁移不制造「必须跑三十秒才有怪打」的空窗。
-
----
-
-**实现**：`js/map-events.js` 整个重写。原来那套「开关楼板与连廊」的动态几何
-事件依赖 todo3 地图里的 craneA/billboard/facade 等动态组，在城市尺度地图上
-根本不存在 —— 它已经是一整个文件的死代码。现在它是热点导演：
-地图几何不动，动的是「哪里最危险、哪里最值钱」。
-
-- 热点 = 战斗单元，中心由 `CITYSCALE.blocks` 现算，地图一改就跟着改
-- 首个热点 75s 后开始迁移，之后每 105s 一次，提前 8s 预告
-- 迁移是 6 秒渐变（旧的降温、新的升温），不是硬切
-- 热点内刷怪权重 +0.55、经验 ×1.35 —— 留在危险的地方要有回报
-
-**实测**（`_movecheck.html` M4 段）：整局迁移 7 次，覆盖 4 个单元；
-每 2 秒采样一次玩家 45m 内的敌人数，**最少 14 只，353 次采样零空窗**。
-
----
-
-## M5 · 机动改变战斗（todo6 §6）
-
-- [x] 上中层/屋顶后获得侧射、纵向穿透或整理尸潮的机会（不是单纯躲开）。
-- [x] 跳回街面能切进高密度经验区，而不是单纯失去高度。
-- [x] 所有主要路线用基础能力即可完成；机动 Build 只改效率与收益，不是通行证。
-- [x] 后续机动模块产生战斗反馈（高速装填/落地冲击/跑墙护盾/滞空齐射），
-      而不是只加移速百分比。
-
----
-
-（M5 的实测与 M3 合并在上面那张表里：屋顶不再是安全区、分层经验形成取舍、
-转场后目标方向补压力。「动势」模块本身就是「机动产生战斗反馈」的落地。）
-
----
-
-## M6 · 反馈、可读性与归因（todo2 §8 + todo3 §8 剩余）
-
-- [x] 射速提高时枪声保持离散节奏，不糊成持续蜂鸣。
-- [x] 普通命中 / 弱点命中 / 击杀三层与枪声错层混音，三者都能听见。
-- [x] 爆炸等派生特效不得盖过玩家输入的首要确认音。
-- [x] 派生效果的声音分层：根攻击 / 派生 / 终点，三层可分辨且同帧合并。
-- [x] 构筑因果的视觉表达：玩家能看出「这次伤害是哪个模块造成的」。
-- [x] 暂停面板的构筑图：当前模块、已成立组合、节点与规则一屏可读。
-- [x] 升级后无需打开面板，也能从枪的运动与声音察觉变化。
-
----
-
-**实测**（`_movecheck.html` M6 段）：
-
-- 三条总线增益 枪 0.85 / 命中确认 0.95 / 派生 0.42 —— 派生压不过确认音
-- 枪体尾音按真实射击间隔截断：基础 0.111s → 满超频 0.066s，每一发仍是「一发」
-- 命中色跟着来源模块走：重型根弹 `#ff5f3c` / 分裂弹 `#b060ff`
-- 构筑图六行齐全（todo10 后改为：分子等级 / 玩法选择 / 武器 / 机动 / 伤害来源 / 弹药 / 性能，不再有组合名）
-
-> 音色好不好听、三层是否真的"都能听见"，只能由人耳判定 —— 脚本只能证明
-> 路由、优先级与合并窗口是对的。
-
----
-
-## M7 · 收尾
-
-- [x] 更新 README 与各审计页的复跑说明。
-- [x] 把 todo1~6 里已经由代码满足的验收条目核对并回填（`todo.md` 25 条全部回填）。
-- [x] 明确列出只能由真人试玩判定的条目，不替 Bao 打勾（见文末）。
-
-**当前测试矩阵**（全绿）：
-
-| 页面 / 脚本 | 覆盖 | 结果 |
-|---|---|---|
-| `_movecheck.html` | M1 动作尺度 / M3·M5 分层压力 / M4 热点迁移 / M6 反馈分层 + 整局 | ALLPASS |
-| `_modcheck.html` | 8 模块 · 28 对组合 · 五道硬上限 · 卡池审计 + 整局 | ALLPASS |
-| `_scalecheck.html` | 城市尺度 · 战斗单元 · 转场长度 | 全 PASS |
-| `_bughunt.html` | 贴墙起跳的悬空卡死 | CLEAN |
-| `testsim_evo.js` | 10,000 局的节奏 / 品质 / 保底 / 候选合法性 | PASS |
-
----
-
-## todo10 推翻了这份计划的 Build 层（2026-08-14）
-
-上面 M1~M7 里关于**武器与选项**的部分已经被 `todo10.md` 整体推翻。
-地图、机动、刷怪、热点迁移那几块不受影响，仍然有效。
-
-被推翻的：可组合武器模块（8 模块 / S-A 反应矩阵 / 28 对逐对实现 /
-融合命名 / 品质四档及其保底）。理由是试玩暴露的三条：
-升级不够强甚至变弱、卡牌看不懂、那是配方表不是化学系统。
-
-取而代之的是**六个核心分子 + 一套统一攻击规律**，组合结果自己长出来。
-实现记录与全部裁决见 `todo10.md` §14。
-
-下面这一节里第 1 条（超频/动势的 S 级评级）随之作废 ——
-V3 里根本没有 S 级这个概念。
-
----
-
-## 只能由 Bao 决定 / 判定的（我不会替你做）
-
-1. ~~超频 / 动势的 S 级评级~~ —— **已随 todo10 作废**（V3 没有 S 级反应这个概念）。
-2. **todo4 §11.2 的四问**：像不像城市 / 高楼是否真的巨大 / 主要路线是否一眼可见 /
-   登高是否改变战斗。
-3. **todo5 §12 的人工试玩**：三秒内看见什么、十秒内认不认得出新形态、
-   能不能一句话描述本局武器、十局体感。
-4. **todo6 §7 阶段 A 的视频验收**：基础移动是否明显更流畅。
+# SYMBIOTIC FIRE · Active TODO
+
+> Scope: `symbiotic_fire_claude_20260813`.
+> Last organized: 2026-09-15.
+> Historical completed plans live in `todo_archive/`.
+
+This is the only active TODO for the 2026-08-13 FPS survivor demo. Old `todo*.md`
+files are design history, implementation records, or superseded plans; do not use
+them as live work queues.
+
+## Current State
+
+- The demo is a Three.js browser prototype, not a Godot project.
+- The latest committed gameplay branch has completed the main implementation
+  chain through `todo13`: supply loop, threat warnings, gun feel, city movement,
+  Build V3, demon cards, corpse explosion, overflow fixes, magnet drops, and
+  ricochet-on-ground.
+- The open work is no longer broad feature implementation. It is consolidation,
+  verification, playtest judgment, tuning, and visual-production handoff.
+- Art optimization is being handled separately; do not mix its code changes into
+  this TODO cleanup branch.
+
+## P0 · Make Project State Trustworthy
+
+- [ ] Update `README.md` so file lists and rerun commands match the current code.
+      It still references removed files such as `js/weapon-modules.js`,
+      `js/attack-graph.js`, and `js/module-pool.js`; the current equivalents are
+      `js/build.js` and `js/attack.js`.
+- [ ] Either repair or retire `testsim_evo.js`. It currently loads removed
+      todo5-era files, so `node testsim_evo.js` fails before doing useful work.
+- [ ] Fix `_stability.js` dependency discovery for Windows. It currently assumes
+      Playwright at `/opt/node22/lib/node_modules/playwright`, which does not
+      exist on this machine.
+- [ ] Document one current verification path that works on Bao's Windows machine:
+      browser check pages, `_stability.js`, or a replacement script. The command
+      must not depend on stale Linux paths.
+- [ ] Re-run the automatic checks after the above fixes and record the fresh
+      results in `README.md`.
+
+## P0 · Bao Playtest Checklist
+
+These are intentionally not checked by automation. They need human eyes, ears,
+and hands.
+
+- [ ] City readability: does it feel like a city, do the large buildings read as
+      large, are main routes visible, and does going high change combat instead
+      of just pausing combat?
+- [ ] Movement feel: basic movement, dash, slide, wall run, climb, zipline, and
+      chained movement should feel clearly smoother than the old small-map scale.
+- [ ] Combat readability: within three seconds, can a player tell what their gun
+      changed into after upgrades?
+- [ ] Build readability: after one run, can the player describe the weapon in
+      ordinary language without opening implementation notes?
+- [ ] Enemy readability: can the player distinguish normal, weakpoint, armor,
+      elite, variant, and boss threats under high density?
+- [ ] Audio mix: gunshots, hit confirmation, weakpoint, kill confirmation, and
+      derived effects should all remain audible without becoming noise.
+- [ ] Ten-run feel test: different builds should feel meaningfully different,
+      not just numerically different.
+
+## P1 · Gameplay Tuning After Playtest
+
+- [ ] Decide whether evolution pacing should convert stronger play into more
+      builds. Current self-calibrating XP pricing can cancel extra XP; this
+      especially affects `精英世界` because XP x2.5 may not create more upgrades.
+- [ ] Tune `EVOLUTION.rateWeight` or the XP anchor only after Bao decides the
+      intended pacing: stable build count versus reward for higher kill output.
+- [ ] Tune middle boss and final boss HP. Existing values were implementation
+      guesses and need real 12-minute playtest judgment.
+- [ ] Revisit late-game density only after the above pacing decision. Do not hide
+      pacing problems by changing spawn numbers first.
+- [ ] Check whether demon cards are tempting enough as rule rewrites, especially
+      `开镜达人`, `轨道炮`, `坍缩炮`, `延迟清算`, `捕食代谢`, and `精英世界`.
+
+## P1 · Debug And Test UX
+
+- [ ] Make debug panel entry and useful test buttons obvious in the README:
+      `F1`, `?debug=1`, force demon card, pure build, instant death, spawn tests,
+      gun feel checks, and any current playtest route.
+- [ ] Add or document a focused manual test route for gun feel: static targets,
+      no-spread gun, slow motion if available, reload phase checks, and weakpoint
+      feedback checks.
+- [ ] Record what automation can prove versus what Bao must judge. The old TODOs
+      repeatedly mix those two, which makes "done" look less done than it is.
+
+## P2 · Visual Production Handoff
+
+Do not work this section while the separate art-optimization task owns visual
+code. Use it only after that branch/worktree is ready to merge or review.
+
+- [ ] Pick the visual direction Bao wants to continue.
+- [ ] Build one playable vertical slice before replacing everything: base gun,
+      one normal enemy, one variant enemy, one street segment, one route marker,
+      and one card treatment.
+- [ ] Validate the slice in fixed before/after screenshots, grayscale enemy
+      silhouette checks, high-density readability, and frame cost.
+- [ ] Confirm weakpoint and armor visuals still align with actual hit logic after
+      enemy shape changes.
+
+## Archived
+
+- Completed and superseded TODO documents are in `todo_archive/`.
+- `todo_archive/COMPLETED.md` summarizes what is considered done.
+- If a new issue is found while reading an archived file, copy it into this file
+  as a new active item instead of editing the archive.
