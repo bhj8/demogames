@@ -4,11 +4,13 @@
 
 > 喂养你的枪，也喂养尸潮。每次进化，你和丧尸一起变强。
 
-![gameplay](shot_play.png)
+![gameplay](art_direction/city-finish/runtime/street.png)
+
+[场景实机截图与自审](art_direction/city-finish/REVIEW.md) · [15 类怪物三视图与自审](art_direction/enemy-redesign/REVIEW.md) · [怪物核对页](_enemy-art.html)
 
 ## 玩
 
-打开 `index.html` 即可（或 GitHub Pages 直接访问）。零资源文件，所有几何体、材质、音效均运行时生成。
+通过本地 HTTP 服务或 GitHub Pages 打开 `index.html`。敌人使用 `assets/enemies/` 中的多方向角色图，场景几何、表面材质和音效运行时生成；不要用 `file://` 直接打开，以免浏览器阻止纹理加载。
 
 | 操作 | 键 |
 |---|---|

@@ -183,6 +183,7 @@ const CITY = {
       mesh.frustumCulled = false;
       this.group.add(mesh);
     }
+    for (const k in mats) CITYSCALE.styleMaterial(mats[k], k);
     this._parts = null;
     this._mats = mats;
     if (this._slopeMeshes) {
@@ -531,11 +532,10 @@ const CITY = {
 /* 滑索钢索的可视化在材质就绪后补挂 —— 保持 _buildDevices 里只登记数据 */
 CITY._mountZips = function () {
   if (!this._zipPend) return;
+  const cableMaterial=new THREE.LineBasicMaterial({color:0xbc884c});
   this._zipPend.forEach(z => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.1, 1), this._mats.device);
-    m.position.set((z.ax + z.bx) / 2, (z.ay + z.by) / 2, (z.az + z.bz) / 2);
-    m.lookAt(z.bx, z.by, z.bz);
-    m.scale.z = Math.hypot(z.bx - z.ax, z.by - z.ay, z.bz - z.az);
+    const geometry=new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(z.ax,z.ay,z.az),new THREE.Vector3(z.bx,z.by,z.bz)]);
+    const m=new THREE.Line(geometry,cableMaterial);
     CITY.group.add(m);
   });
   this._zipPend = null;

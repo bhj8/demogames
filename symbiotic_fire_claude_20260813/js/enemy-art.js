@@ -28,10 +28,23 @@ const ENEMY_ART = {
     if (!m.userData.directional) {
       const art = m.userData.directional = { rect: { value: new THREE.Vector4(0, 0, 1/3, 1) },
         pixel: { value: new THREE.Vector2(1/1536,1/1024) },
+        attack: { value: 0 }, side: { value: 0 },
         flip: { value: 0 }, plates: { value: 3 }, bone: { value: 0 }, theme: { value: new THREE.Color(0) }, themeOn: { value: 0 } };
       const gaitCompile = m.onBeforeCompile;
       m.onBeforeCompile = shader => {
         gaitCompile(shader);
+        const motion = TUNE.ART.enemyMotion;
+        shader.uniforms.enemyAttack = art.attack; shader.uniforms.enemySide = art.side;
+        shader.vertexShader = 'uniform float enemyAttack; uniform float enemySide;\n'+shader.vertexShader;
+        shader.vertexShader = shader.vertexShader.replace('#include <project_vertex>', `
+          float torso = smoothstep(.38,.82,position.y);
+          transformed.x += sin(artTime*.5)*torso*artMotion*${motion.sway.toFixed(4)};
+          transformed.x += sin(stepPhase)*leg*artMotion*enemySide*.16;
+          transformed.y += sin(artTime*.45)*torso*${motion.breath.toFixed(4)};
+          transformed.y -= torso*enemyAttack*${motion.attackLean.toFixed(4)};
+          transformed.x *= 1.0+torso*enemyAttack*.045;
+          #include <project_vertex>
+        `);
         shader.uniforms.artRect = art.rect; shader.uniforms.artFlip = art.flip;
         shader.uniforms.artPixel = art.pixel;
         shader.uniforms.artPlates = art.plates; shader.uniforms.artBone = art.bone;
@@ -50,7 +63,7 @@ const ENEMY_ART = {
           diffuseColor *= painted;
         `);
         shader.fragmentShader = shader.fragmentShader.replace('#include <output_fragment>', `
-          outgoingLight = mix(diffuseColor.rgb, outgoingLight, .28) + totalEmissiveRadiance * .55;
+          outgoingLight = mix(diffuseColor.rgb, outgoingLight, ${TUNE.ART.enemyMotion.lighting.toFixed(3)}) + totalEmissiveRadiance * .55;
           #include <output_fragment>
         `);
       };
@@ -60,6 +73,7 @@ const ENEMY_ART = {
     a.pixel.value.set(1/ENEMY_ATLAS[id].width,1/ENEMY_ATLAS[id].height);
     a.bone.value = id === 'ossify' ? 1 : 0; a.plates.value = e.plates || 0;
     a.themeOn.value = 0; a.flip.value = 0; m.needsUpdate = true;
+    a.attack.value = 0;
   },
   setTheme(e, id) {
     const a = e.bodyMat.userData.directional;
@@ -79,6 +93,7 @@ const ENEMY_ART = {
     e.body.rotation.y = toCamera-e.grp.rotation.y;
     e.body.visible = !!e.bodyMat.map.image;
     a.plates.value = e.plates;
+    a.attack.value = ['windup','leapwind','spit','slam','melee'].includes(e.state) ? .65 : e.state === 'charge' ? 1 : 0;
     e.mark.visible = false;
     e.plateMeshes.forEach(p => { p.material.visible = false; });
   },
@@ -89,6 +104,7 @@ const ENEMY_ART = {
     e.bodyMat.map = this.texture(id);
     a.pixel.value.set(1/spec.width,1/spec.height);
     a.rect.value.set(...f.uv); a.flip.value = view === 1 && flip ? 1 : 0;
+    a.side.value = view === 1 ? 1 : 0;
     e.body.scale.set(f.aspect, 1, 1); e.artView = view;
   }
 };
