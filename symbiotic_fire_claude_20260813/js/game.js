@@ -92,10 +92,8 @@ function configureEnemy(e, tpl, pos, opts) {
   e.summonCd = tpl.summon ? tpl.summon.cooldown : 0;
   e.slamAt = null; e.chargeDir = { x: 0, z: 1 };
 
-  const kind = tpl.boss ? 'boss' : (tpl.id === 'heavy' ? 'heavy' : tpl.id === 'spitter' ? 'spitter' :
-    tpl.id === 'charger' ? 'charger' : (['blast', 'conduct', 'overclock'].includes(tpl.variant) ? tpl.variant : 'grunt'));
-  e.body.geometry = R.zombieGeo(kind);
-  e.bodyMat.color.setHex(tpl.variant ? TUNE.ART.variantBody : tpl.color);
+  const kind = tpl.king ? 'king' : tpl.boss ? 'midboss' : (tpl.variant || tpl.id);
+  ENEMY_ART.configure(e, ENEMY_ATLAS[kind] ? kind : 'grunt');
   e.bodyMat.emissive.setHex(tpl.variant ? MUT[tpl.variant].color : 0x000000);
   e.bodyMat.emissiveIntensity = tpl.variant ? TUNE.ART.variantGlow : 0;
 
@@ -724,7 +722,7 @@ function updateBoss(e, dt, dist, nx, nz) {
       e.phase = target;
       e.phaseT = 1.5;
       const id = themes[e.phase - 1];
-      e.bodyMat.color.setHex(MUT[id].color);
+      ENEMY_ART.setTheme(e, id);
       e.markMat.color.setHex(MUT[id].color);
       e.markMat.emissive.setHex(MUT[id].color);
       e.mark.geometry = R.variantMarkGeo(id);
@@ -834,7 +832,7 @@ G.spawnMinion = function (parent, ox, oz, hpRatio) {
   });
   e.grp.scale.multiplyScalar(0.72);
   e.radius *= 0.72; e.height *= 0.72;
-  e.bodyMat.color.setHex(MUT.fission.color);
+  ENEMY_ART.setTheme(e, 'fission');
   e.bodyMat.emissive.setHex(MUT.fission.color);
   e.bodyMat.emissiveIntensity = 0.3;
 };
@@ -2892,6 +2890,8 @@ Object.defineProperty(G.hazards, 'count', { get() { return this.length; } });
 function boot() {
   RNG.init(BOOT.seed);
   R.init($('gl'));
+  // Warm the shared atlases while the menu is visible, before enemies appear.
+  Object.keys(ENEMY_ATLAS).forEach(id => ENEMY_ART.texture(id));
   WEAPON.build(R.gunScene, R.geo);
   UI.init();
 

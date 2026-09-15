@@ -1,0 +1,26 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>怪物实机资产核对</title>
+<style>*{box-sizing:border-box}body{margin:0;background:#ddd9cf;color:#30352e;font:15px system-ui}header{padding:20px 32px;display:flex;align-items:center;gap:24px;border-bottom:1px solid #bbb8ac}header b{margin-right:auto}select{font:inherit;padding:6px 12px}a{color:#3d5645}canvas{display:block;width:100%}footer{display:grid;grid-template-columns:repeat(3,1fr);text-align:center;padding:12px;letter-spacing:3px}small{display:block;padding:8px 32px 20px;color:#606457}</style></head><body>
+<header><b>SYMBIOTIC FIRE · 游戏资产核对</b><select id="kind"></select><label id="armorLabel" hidden>骨甲 <select id="armor"><option>3</option><option>2</option><option>1</option><option>0</option></select></label><label><input id="motion" type="checkbox">移动表现</label><a id="reference" target="_blank">原始三视图</a><a href="index.html">进入游戏</a></header>
+<script src="js/three.min.js"></script><script src="js/tune.js"></script><script src="js/core.js"></script><script src="js/enemy-atlas.js"></script><script src="js/enemy-art.js"></script><script src="js/render.js"></script>
+<script>
+const names={grunt:'普通感染者',heavy:'重型感染者',spitter:'喷吐者',charger:'冲撞者',midboss:'肉山',king:'尸王',climber:'攀爬者',leaper:'跳跃者',roofcaster:'屋顶投射者',blast:'爆裂变种',fission:'分裂变种',overclock:'超频变种',ossify:'骨甲变种',conduct:'导电变种',giant:'巨化变种'};
+const scene=new THREE.Scene();scene.background=new THREE.Color(0xddd9cf);
+const renderer=new THREE.WebGLRenderer({antialias:true,preserveDrawingBuffer:true});renderer.outputEncoding=THREE.sRGBEncoding;renderer.setPixelRatio(1);document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(TUNE.ART.skyLight,TUNE.ART.groundLight,TUNE.ART.ambient));
+const sun=new THREE.DirectionalLight(TUNE.ART.sunColor,TUNE.ART.sunIntensity);sun.position.set(-3,6,5);scene.add(sun);
+const material=new THREE.MeshLambertMaterial();R.attachGait(material,0);
+const model=new THREE.Mesh(ENEMY_ART.geometry(),material);scene.add(model);
+const enemy={body:model,bodyMat:material,plates:3};
+const camera=new THREE.OrthographicCamera(-.43,.43,.65,-.65,.01,10);camera.position.set(0,.5,3);camera.lookAt(0,.5,0);
+function renderModel(id,time=0){
+ if(enemy.artKind!==id){ENEMY_ART.configure(enemy,id);reference.href='art_direction/enemy-redesign/references/'+id+'.png';}
+ armorLabel.hidden=id!=='ossify';enemy.plates=Number(armor.value);material.userData.directional.plates.value=enemy.plates;
+ material.userData.gait.time.value=time;material.userData.gait.motion.value=motion.checked?1:0;
+ const w=innerWidth,h=Math.min(800,innerHeight-150);renderer.setSize(w,h,false);renderer.setScissorTest(true);
+ for(let i=0;i<3;i++){ENEMY_ART.view(enemy,i,false);renderer.setViewport(i*w/3,0,w/3,h);renderer.setScissor(i*w/3,0,w/3,h);camera.left=-(w/3/h)*.65;camera.right=-camera.left;camera.updateProjectionMatrix();renderer.render(scene,camera);}
+}
+Object.keys(names).filter(id=>ENEMY_ATLAS[id]).forEach(id=>{const o=document.createElement('option');o.value=id;o.textContent=names[id];kind.appendChild(o)});
+kind.value=new URLSearchParams(location.search).get('kind')||'grunt';
+function tick(t){renderModel(kind.value,t*.006);requestAnimationFrame(tick)}requestAnimationFrame(tick);
+</script><footer><span>正面 · FRONT</span><span>侧面 · SIDE</span><span>背面 · BACK</span></footer>
+<small>使用与游戏相同的资产、材质和移动表现。实现为多方向角色图（2.5D），保留三维场景与碰撞；并非完整三维模型。</small></body></html>

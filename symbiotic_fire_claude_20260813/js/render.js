@@ -238,6 +238,7 @@ const R = {
     let count = 0;
     for (const e of G.enemies.live) {
       if (e._dead || e.dead || !e.grp.visible) continue;
+      ENEMY_ART.sync(e, this.camera);
       const gait = e.bodyMat.userData.gait;
       if (gait) {
         if (dt > 0 && e._artPosition) {
@@ -271,126 +272,9 @@ const R = {
   },
 
   /* ------------------------------------------------------------ 敌人模型 */
-  _zombieGeoCache: {},
-  zombieGeo(kind) {
-    if (this._zombieGeoCache[kind]) return this._zombieGeoCache[kind];
-    const g = this.geo, parts = [];
-    const push = (geo, x, y, z, sx, sy, sz, rz) => parts.push({ geo: geo,
-      mat: mat4(x, y, z, sx, sy, sz, rz), color: y < 0.75 ? 0xadb7a8 : 0xffffff });
-
-    if (kind === 'heavy') {
-      push(g.facet, 0, 1.28, 0, 1.40, 1.45, 0.95);
-      push(g.facet, 0, 2.05, 0.04, 0.62, 0.62, 0.62);
-      [-1, 1].forEach(s => {
-        push(g.facet, s * 0.63, 1.58, 0, 0.62, 0.66, 0.72);
-        push(g.taper, s * 0.78, 1.08, 0.18, 0.46, 0.98, 0.48, -s * 0.16);
-        push(g.facet, s * 0.86, 0.58, 0.20, 0.48, 0.46, 0.52);
-        push(g.taper, s * 0.32, 0.38, 0, 0.46, 0.72, 0.46);
-        push(g.facet, s * 0.32, 0.08, 0.12, 0.45, 0.19, 0.60);
-      });
-      parts.push({ geo: g.oct, mat: mat4(0, 2.01, 0.31, 0.40, 0.24, 0.10), color: 0x26343c });
-    } else if (kind === 'spitter') {
-      push(g.facet, 0, 1.08, -0.02, 0.70, 1.1, 0.64);
-      push(g.facet, 0, 1.76, 0.16, 0.5, 0.44, 0.56);
-      push(g.facet, 0, 1.42, 0.34, 0.40, 0.50, 0.44);
-      parts.push({ geo: g.oct, mat: mat4(0, 1.65, 0.41, 0.28, 0.17, 0.17), color: 0x26343c });
-      [-1, 1].forEach(s => {
-        push(g.taper, s * 0.40, 1.1, 0.1, 0.20, 0.95, 0.22, s * 0.28);
-        push(g.facet, s * 0.52, 0.65, 0.14, 0.22, 0.28, 0.24);
-        push(g.taper, s * 0.2, 0.35, 0, 0.26, 0.62, 0.26);
-        push(g.facet, s * 0.2, 0.07, 0.10, 0.26, 0.15, 0.40);
-      });
-    } else if (kind === 'charger') {
-      push(g.facet, 0, 1.35, 0, 1.30, 1.30, 1.05);
-      push(g.facet, 0, 1.55, 0.62, 0.72, 0.6, 0.5);      // 前倾冲撞头
-      push(g.cone, 0, 1.55, 1.0, 0.5, 0.7, 0.5);
-      [-1, 1].forEach(s => {
-        push(g.facet, s * 0.60, 1.55, 0.05, 0.62, 0.72, 0.68);
-        push(g.taper, s * 0.72, 1.0, 0.3, 0.38, 0.96, 0.42, -s * 0.22);
-        push(g.facet, s * 0.82, 0.55, 0.3, 0.40, 0.34, 0.46);
-        push(g.taper, s * 0.3, 0.38, 0, 0.36, 0.76, 0.36);
-        push(g.facet, s * 0.3, 0.08, 0.12, 0.36, 0.18, 0.52);
-      });
-    } else if (kind === 'boss') {
-      push(g.facet, 0, 1.9, 0, 2.3, 2.2, 1.6);
-      push(g.facet, 0, 3.15, 0.1, 1.0, 0.95, 1.0);
-      [-1, 1].forEach(s => {
-        push(g.facet, s * 1.0, 2.40, 0, 1.10, 1.05, 1.20);
-        push(g.taper, s * 1.35, 1.70, 0.2, 0.76, 1.50, 0.76, -s * 0.20);
-        push(g.facet, s * 1.50, 0.98, 0.24, 0.80, 0.68, 0.90);
-        push(g.taper, s * 0.50, 0.52, 0, 0.65, 1.05, 0.65);
-        push(g.facet, s * 0.50, 0.10, 0.18, 0.65, 0.22, 0.90);
-      });
-      parts.push({ geo: g.oct, mat: mat4(0, 3.1, 0.55, 0.65, 0.40, 0.16), color: 0x26343c });
-      push(g.cone, -0.7, 3.3, 0, 0.34, 0.7, 0.34);
-      push(g.cone, 0.7, 3.3, 0, 0.34, 0.7, 0.34);
-    } else { /* grunt: broad shoulders, narrow waist, hanging angular arms.
-                Head centre/extent retained for the existing weak-point sphere. */
-      const width = kind === 'blast' ? 1.15 : kind === 'conduct' ? 0.76 : kind === 'overclock' ? 0.83 : 1;
-      push(g.facet, 0, 1.22, -0.02, 0.88 * width, 0.87, 0.56);
-      push(g.facet, 0, 0.80, -0.02, 0.48, 0.42, 0.40);
-      push(g.facet, 0, 1.78, 0.02, 0.44, 0.48, 0.44);
-      parts.push({ geo: g.oct, mat: mat4(0, 1.75, 0.205, 0.30, 0.22, 0.08), color: 0x26343c });
-      [-1, 1].forEach(s => {
-        parts.push({ geo: g.oct, mat: mat4(s * 0.070, 1.79, 0.238, 0.070, 0.033, 0.025, -s * 0.2), color: 0xf5e5aa });
-        push(g.facet, s * 0.39 * width, 1.39, 0, 0.38, 0.38, 0.40);
-        push(g.taper, s * 0.48 * width, 1.13, 0.04, 0.27 * width, 0.51, 0.29, s * 0.24);
-        push(g.taper, s * 0.54 * width, 0.76, 0.13, 0.21, 0.41, 0.23, -s * 0.12);
-        push(g.facet, s * 0.54 * width, 0.53, 0.15, 0.21, 0.27, 0.22);
-        push(g.taper, s * 0.19, 0.50, -0.01, 0.29, 0.51, 0.32, -s * 0.10);
-        push(g.taper, s * 0.21, 0.20, 0.01, 0.19, 0.37, 0.22);
-        push(g.facet, s * 0.21, 0.07, 0.09, 0.26, 0.15, 0.40);
-      });
-    }
-    /* 模型按 height=1 归一化，实例再乘 template.height */
-    const geo = mergeGeom(parts);
-    const norm = { grunt: 1.98, heavy: 2.4, spitter: 2.0, charger: 2.35, boss: 4.0 }[kind] || 1.98;
-    geo.scale(1 / norm, 1 / norm, 1 / norm);
-    this._zombieGeoCache[kind] = geo;
-    return geo;
-  },
-
-  /* 变种标记 —— §30 唯一颜色 + 唯一轮廓，禁止只靠文本区分 */
-  variantMarkGeo(mutId) {
-    const key = 'vm_' + mutId;
-    if (this._zombieGeoCache[key]) return this._zombieGeoCache[key];
-    const g = this.geo, parts = [];
-    const push = (geo, x, y, z, sx, sy, sz, rz) => parts.push({ geo: geo, mat: mat4(x, y, z, sx, sy, sz, rz) });
-    if (mutId === 'blast') {          // 膨胀橙腹囊
-      push(g.facet, 0, 1.16, 0.22, 0.78, 0.78, 0.66);
-    } else if (mutId === 'fission') { // 紫色双核心 + 中缝
-      push(g.facet, -0.22, 1.22, 0.24, 0.34, 0.34, 0.3);
-      push(g.facet, 0.22, 1.22, 0.24, 0.34, 0.34, 0.3);
-      push(g.box, 0, 1.15, 0.2, 0.05, 1.0, 0.3);
-    } else if (mutId === 'overclock') { // 红色血管束（细长）
-      push(g.box, 0, 1.35, 0.24, 0.1, 0.9, 0.1);
-      push(g.box, -0.24, 1.3, 0.2, 0.07, 0.7, 0.07, 0.3);
-      push(g.box, 0.24, 1.3, 0.2, 0.07, 0.7, 0.07, -0.3);
-      push(g.sph, 0, 1.78, 0.14, 0.3, 0.3, 0.3);
-    } else if (mutId === 'conduct') { // 青色神经节
-      push(g.oct, 0, 1.65, 0.20, 0.23, 0.36, 0.22);
-      [-1, 1].forEach(s => {
-        push(g.taper, s * 0.24, 1.95, 0, 0.12, 0.40, 0.12, -s * 0.5);
-        push(g.oct, s * 0.34, 2.18, 0, 0.12, 0.30, 0.12);
-      });
-    } else if (mutId === 'giant') {   // 黄色核心
-      push(g.oct, 0, 1.2, 0.28, 0.55, 0.7, 0.5);
-    } else {                          // ossify 的骨板是独立可破坏部件，这里只放脊背
-      push(g.box, 0, 1.2, -0.24, 0.5, 1.0, 0.12);
-    }
-    const geo = mergeGeom(parts);
-    geo.scale(1 / 1.98, 1 / 1.98, 1 / 1.98);
-    this._zombieGeoCache[key] = geo;
-    return geo;
-  },
-
-  plateGeo() {
-    if (this._zombieGeoCache.plate) return this._zombieGeoCache.plate;
-    const geo = new T.BoxGeometry(0.62, 0.2, 0.14);
-    geo.scale(1 / 1.98, 1 / 1.98, 1 / 1.98);
-    this._zombieGeoCache.plate = geo;
-    return geo;
-  },
+  zombieGeo() { return ENEMY_ART.geometry(); },
+  variantMarkGeo() { return ENEMY_ART.geometry(); },
+  plateGeo() { return ENEMY_ART.geometry(); },
 
   /* 枪械模型已迁到 js/weapon.js（todo2 §1：表现层与伤害层解耦） */
 
