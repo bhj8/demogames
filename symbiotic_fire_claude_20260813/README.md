@@ -8,6 +8,8 @@
 
 [场景实机截图与自审](art_direction/city-finish/REVIEW.md) · [15 类怪物三视图与自审](art_direction/enemy-redesign/REVIEW.md) · [怪物核对页](_enemy-art.html)
 
+[最新：怪物合批优化与实机对照](art_direction/instanced-enemies/REVIEW.md)——900 只混合怪物的绘制调用从 944 次降至 59 次，保留方向、动作与破甲表现；修正胸口染色的方形边缘。
+
 ## 玩
 
 通过本地 HTTP 服务或 GitHub Pages 打开 `index.html`。敌人使用 `assets/enemies/` 中的多方向角色图，场景几何、表面材质和音效运行时生成；不要用 `file://` 直接打开，以免浏览器阻止纹理加载。

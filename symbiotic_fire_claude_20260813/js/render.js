@@ -259,6 +259,7 @@ const R = {
     }
     this.contactShadows.count = count;
     this.contactShadows.instanceMatrix.needsUpdate = true;
+    ENEMY_ART.renderBatches(G.enemies.live, this.scene, this.camera);
     this._artTime = G.time;
   },
 

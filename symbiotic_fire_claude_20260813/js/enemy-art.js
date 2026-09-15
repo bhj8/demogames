@@ -1,8 +1,10 @@
 /* Directional sprites in a 3D world, not full 3D models. Shared geometry/atlases;
- * per-enemy uniforms. Alpha-tested depth preserves building occlusion. */
+ * per-instance animation. Alpha-tested depth preserves building occlusion. */
 'use strict';
 const ENEMY_ART = {
   textures: {}, geometryCache: null,
+  batching: true, batches: {}, batchMatrix: new THREE.Matrix4(),
+  batchFrustum: new THREE.Frustum(), batchProjection: new THREE.Matrix4(), batchSphere: new THREE.Sphere(),
   geometry() {
     if (!this.geometryCache) {
       const g = new THREE.PlaneGeometry(1, 1, 8, 18);
@@ -58,8 +60,11 @@ const ENEMY_ART = {
           key=max(key,border*smoothstep(.002,.05,min(painted.r,painted.b)-painted.g));
           painted.a *= 1.0-key;
           painted.rb = mix(painted.rb,min(painted.rb,vec2(painted.g*1.25)),key);
-          float chest = step(.59,vUv.y)*step(vUv.y,.83)*step(abs(vUv.x-.5),.23);
-          painted.rgb += artTheme * artThemeOn * chest * .26;
+          // Feather the mutation tint and retain the painted muscle/armor value.
+          // A hard rectangular mask reads like a sticker on the character.
+          float chest = 1.0-smoothstep(.15,1.0,length((vUv-vec2(.5,.71))/vec2(.23,.14)));
+          float paintedValue = max(painted.r,max(painted.g,painted.b));
+          painted.rgb += artTheme * artThemeOn * chest * paintedValue * .18;
           diffuseColor *= painted;
         `);
         shader.fragmentShader = shader.fragmentShader.replace('#include <output_fragment>', `
@@ -67,7 +72,7 @@ const ENEMY_ART = {
           #include <output_fragment>
         `);
       };
-      m.customProgramCacheKey = () => 'directional-enemy-gait-v1';
+      m.customProgramCacheKey = () => 'directional-enemy-gait-v2';
     }
     const a = m.userData.directional;
     a.pixel.value.set(1/ENEMY_ATLAS[id].width,1/ENEMY_ATLAS[id].height);
@@ -106,5 +111,77 @@ const ENEMY_ART = {
     a.rect.value.set(...f.uv); a.flip.value = view === 1 && flip ? 1 : 0;
     a.side.value = view === 1 ? 1 : 0;
     e.body.scale.set(f.aspect, 1, 1); e.artView = view;
+    e.artTexture = id;
+  },
+
+  makeBatch(id, scene) {
+    const capacity = Math.max(TUNE.SPAWN.aliveCap, TUNE.ART.shadow.capacity);
+    const geometry = this.geometry().clone(), attributes = {};
+    for (const [name,size] of Object.entries({instanceArtRect:4,instanceAnimation:4,instanceSide:1,instanceTheme:3,instanceGlow:3})) {
+      const a=new THREE.InstancedBufferAttribute(new Float32Array(capacity*size),size);
+      a.setUsage(THREE.DynamicDrawUsage); geometry.setAttribute(name,a); attributes[name]=a;
+    }
+    const material=new THREE.MeshLambertMaterial();R.attachGait(material,0);
+    const proxy={body:{geometry:null},bodyMat:material,plates:3};this.configure(proxy,id);
+    const compile=material.onBeforeCompile;
+    material.onBeforeCompile=shader=>{
+      compile(shader);
+      // Feed the existing shader with per-instance data; the atlas, lighting,
+      // chroma key and gait math stay identical to the individual renderer.
+      shader.vertexShader=shader.vertexShader
+        .replace('uniform float artTime;','').replace('uniform float artMotion;','')
+        .replace('uniform float enemyAttack;','').replace('uniform float enemySide;','')
+        .replace(/\bartTime\b/g,'instanceAnimation.x').replace(/\bartMotion\b/g,'instanceAnimation.y')
+        .replace(/\benemyAttack\b/g,'instanceAnimation.w').replace(/\benemySide\b/g,'instanceSide');
+      const vary='varying vec4 batchRect; varying float batchFlip; varying vec3 batchTheme; varying vec3 batchGlow;\n';
+      shader.vertexShader='attribute vec4 instanceArtRect; attribute vec4 instanceAnimation; attribute float instanceSide; attribute vec3 instanceTheme; attribute vec3 instanceGlow;\n'+vary+shader.vertexShader;
+      shader.vertexShader=shader.vertexShader.replace('#include <begin_vertex>',`#include <begin_vertex>
+        batchRect=instanceArtRect;batchFlip=instanceAnimation.z;batchTheme=instanceTheme;batchGlow=instanceGlow;
+      `);
+      shader.fragmentShader=shader.fragmentShader
+        .replace('uniform vec4 artRect;','').replace('uniform float artFlip;','')
+        .replace('uniform vec3 artTheme;','').replace('uniform float artThemeOn;','')
+        .replace(/\bartRect\b/g,'batchRect').replace(/\bartFlip\b/g,'batchFlip')
+        .replace(/\bartTheme\b/g,'batchTheme').replace(/\bartThemeOn\b/g,'1.0');
+      shader.fragmentShader=vary+shader.fragmentShader;
+      shader.fragmentShader=shader.fragmentShader.replace('#include <emissivemap_fragment>','#include <emissivemap_fragment>\ntotalEmissiveRadiance += batchGlow;');
+    };
+    material.customProgramCacheKey=()=> 'directional-enemy-instanced-v2';
+    const mesh=new THREE.InstancedMesh(geometry,material,capacity);
+    mesh.name='enemy-batch:'+id;mesh.count=0;mesh.frustumCulled=false;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(mesh);
+    return this.batches[id]={mesh,attributes,capacity,used:0};
+  },
+
+  renderBatches(enemies, scene, camera) {
+    for(const batch of Object.values(this.batches))batch.used=0;
+    camera.updateMatrixWorld();
+    this.batchProjection.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
+    this.batchFrustum.setFromProjectionMatrix(this.batchProjection);
+    if(this.batching)for(const e of enemies){
+      if(e._dead||e.dead||!e.grp.visible||!e.body.visible)continue;
+      e.grp.updateMatrix();e.body.updateMatrix();
+      this.batchMatrix.multiplyMatrices(e.grp.matrix,e.body.matrix);
+      this.batchSphere.copy(e.body.geometry.boundingSphere);this.batchSphere.radius*=1.12;
+      this.batchSphere.applyMatrix4(this.batchMatrix);
+      if(e.body.frustumCulled&&!this.batchFrustum.intersectsSphere(this.batchSphere)){e.body.visible=false;continue;}
+      const id=e.artTexture,b=this.batches[id]||this.makeBatch(id,scene);
+      if(b.mesh.parent!==scene)scene.add(b.mesh);
+      if(b.used>=b.capacity)continue; // Keep individual rendering beyond capacity.
+      const i=b.used++,a=e.bodyMat.userData.directional,g=e.bodyMat.userData.gait;
+      b.mesh.setMatrixAt(i,this.batchMatrix);
+      const rect=a.rect.value;b.attributes.instanceArtRect.setXYZW(i,rect.x,rect.y,rect.z,rect.w);
+      b.attributes.instanceAnimation.setXYZW(i,g.time.value,g.motion.value,a.flip.value,a.attack.value);
+      b.attributes.instanceSide.setX(i,a.side.value);
+      const theme=a.theme.value,k=a.themeOn.value;b.attributes.instanceTheme.setXYZ(i,theme.r*k,theme.g*k,theme.b*k);
+      const glow=e.bodyMat.emissive,intensity=e.bodyMat.emissiveIntensity;b.attributes.instanceGlow.setXYZ(i,glow.r*intensity,glow.g*intensity,glow.b*intensity);
+      e.body.visible=false;
+    }
+    for(const b of Object.values(this.batches)){
+      b.mesh.count=b.used;b.mesh.visible=b.used>0;
+      if(!b.used)continue;
+      b.mesh.instanceMatrix.updateRange.offset=0;b.mesh.instanceMatrix.updateRange.count=b.used*16;b.mesh.instanceMatrix.needsUpdate=true;
+      for(const a of Object.values(b.attributes)){a.updateRange.offset=0;a.updateRange.count=b.used*a.itemSize;a.needsUpdate=true;}
+    }
   }
 };
