@@ -171,6 +171,11 @@ const CITY = {
       band:     new THREE.MeshBasicMaterial({ color: 0x35e0ff }),                 // 可墙跑
       device:   new THREE.MeshBasicMaterial({ color: 0xff8a1e })                  // 滑索/跳板/锚点
     };
+    // Shared palette retains material batching, with two facade materials only.
+    for (const k in TUNE.ART.palette) {
+      if (mats[k]) mats[k].color.setHex(TUNE.ART.palette[k]);
+      else mats[k] = new THREE.MeshLambertMaterial({ color: TUNE.ART.palette[k] });
+    }
     for (const k in this._parts) {
       const list = this._parts[k];
       if (!list.length) continue;

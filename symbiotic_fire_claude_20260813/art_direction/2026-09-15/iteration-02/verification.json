@@ -1,0 +1,29 @@
+{
+  "pass": true,
+  "solids": 34,
+  "shaderPrograms": 15,
+  "density": [
+    {
+      "enemies": 120,
+      "calls": 171,
+      "triangles": 44680
+    },
+    {
+      "enemies": 900,
+      "calls": 951,
+      "triangles": 284920
+    }
+  ],
+  "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 2070 SUPER (0x00001E84) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+  "checks": [
+    "all enemy meshes compile",
+    "six organs",
+    "fire",
+    "reload",
+    "support hand",
+    "gait",
+    "shadow pooling",
+    "120 / 900 enemies"
+  ],
+  "regression": true
+}

@@ -67,12 +67,13 @@ const WEAPON = {
     const body = new T.Group();
     root.add(body);
 
-    const steel = new T.MeshLambertMaterial({ color: 0x40474f });
-    const dark = new T.MeshLambertMaterial({ color: 0x22262b });
-    const darker = new T.MeshLambertMaterial({ color: 0x191c21 });
+    const A = TUNE.ART.weapon;
+    const steel = new T.MeshLambertMaterial({ color: A.steel });
+    const dark = new T.MeshLambertMaterial({ color: A.dark });
+    const darker = new T.MeshLambertMaterial({ color: A.darker });
 
     const box = (parent, mat, x, y, z, sx, sy, sz, rx) => {
-      const m = new T.Mesh(geo.box, mat);
+      const m = new T.Mesh(geo.chamfer, mat);
       m.position.set(x, y, z); m.scale.set(sx, sy, sz);
       if (rx) m.rotation.x = rx;
       parent.add(m); return m;
@@ -85,10 +86,32 @@ const WEAPON = {
     };
 
     /* 机匣与固定件 */
-    box(body, dark, 0, 0, 0, 0.085, 0.10, 0.46);
+    box(body, dark, 0, 0, 0, 0.11, 0.12, 0.46);
     box(body, darker, 0, 0.005, 0.26, 0.06, 0.07, 0.13);        // 枪托
     box(body, dark, 0, -0.10, 0.19, 0.05, 0.13, 0.06);          // 握把
     box(body, steel, 0, 0.062, -0.06, 0.03, 0.03, 0.20);        // 导轨
+    // Two broad fixed collars give the base gun an identity; merge as one draw.
+    const collars = [];
+    [-0.15, -0.31].forEach(z => {
+      collars.push({ geo: geo.chamfer, mat: mat4(-0.070, 0, z, 0.028, 0.16, 0.055, -0.22) });
+      collars.push({ geo: geo.chamfer, mat: mat4(0.070, 0, z, 0.028, 0.16, 0.055, 0.22) });
+      collars.push({ geo: geo.chamfer, mat: mat4(0, 0.073, z, 0.13, 0.028, 0.055) });
+    });
+    body.add(new T.Mesh(mergeGeom(collars), new T.MeshLambertMaterial({ color: A.bone })));
+    // Wide angular fore-end and sights make the profile legible during motion.
+    box(body, darker, 0, -0.015, -0.32, 0.12, 0.12, 0.25);
+    box(body, steel, 0, 0.08, -0.36, 0.024, 0.035, 0.038);
+    box(body, darker, 0, 0.085, 0.09, 0.045, 0.045, 0.035);
+    const glove = darker;
+    const gripHand = new T.Mesh(geo.facet, glove);
+    gripHand.position.set(0.028, -0.09, 0.18); gripHand.scale.set(0.095, 0.11, 0.12);
+    body.add(gripHand);
+    const wrist = new T.Mesh(geo.taper, steel);
+    wrist.position.set(0.06, -0.16, 0.26); wrist.scale.set(0.095, 0.20, 0.11);
+    wrist.rotation.x = -0.8; body.add(wrist);
+    const supportHand = new T.Mesh(geo.facet, glove);
+    supportHand.position.set(-0.018, -0.075, -0.27); supportHand.scale.set(0.10, 0.11, 0.14);
+    body.add(supportHand);
 
     /* 枪管与主枪口节点 */
     cyl(body, steel, 0, 0.012, -0.42, 0.032, 0.42);
@@ -161,9 +184,8 @@ const WEAPON = {
     };
     organ('blast', o => {
       const m = om(MUT.blast.color);
-      [[-0.075, -0.02, -0.16], [0.075, -0.02, -0.16], [0, -0.05, -0.30]].forEach(([x, y, z]) => {
-        const s = new T.Mesh(geo.sphHi, m); s.position.set(x, y, z); s.scale.setScalar(0.085); o.add(s);
-      });
+      const s = new T.Mesh(geo.facet, m);
+      s.position.set(-0.078, 0, -0.23); s.scale.set(0.10, 0.10, 0.14); o.add(s);
     });
     organ('fission', o => {
       const m = om(MUT.fission.color);
@@ -182,10 +204,10 @@ const WEAPON = {
       });
     });
     organ('ossify', o => {
-      const m = om(0xcfc6b2); m.emissiveIntensity = 0.06;
-      [[-0.10, 0, -0.10, 0.02, 0.11, 0.34], [0.10, 0, -0.10, 0.02, 0.11, 0.34], [0, 0.075, -0.20, 0.09, 0.02, 0.22]]
+      const m = om(A.bone); m.emissiveIntensity = 0.06;
+      [[-0.075, 0, -0.08, 0.035, 0.15, 0.075], [0.075, 0, -0.08, 0.035, 0.15, 0.075], [0, 0.080, -0.08, 0.13, 0.025, 0.075]]
         .forEach(([x, y, z, sx, sy, sz]) => {
-          const p = new T.Mesh(geo.box, m); p.position.set(x, y, z); p.scale.set(sx, sy, sz); o.add(p);
+          const p = new T.Mesh(geo.chamfer, m); p.position.set(x, y, z); p.scale.set(sx, sy, sz); o.add(p);
         });
     });
     organ('conduct', o => {
@@ -206,12 +228,23 @@ const WEAPON = {
       const br = new T.Mesh(geo.box, m); br.position.set(0, -0.06, -0.20); br.scale.set(0.13, 0.03, 0.16); o.add(br);
     });
 
+    // Fixed furniture is batched by material. Animated parts remain independent.
+    const fixed = new Map();
+    body.children.slice().forEach(mesh => {
+      if (!mesh.isMesh || mesh === supportHand || mesh.material.map) return;
+      mesh.updateMatrix();
+      if (!fixed.has(mesh.material)) fixed.set(mesh.material, []);
+      fixed.get(mesh.material).push({ geo: mesh.geometry, mat: mesh.matrix.clone() });
+      body.remove(mesh);
+    });
+    fixed.forEach((parts, material) => body.add(new T.Mesh(mergeGeom(parts), material)));
+
     root.scale.setScalar(W.rigScale);
     scene.add(root);
 
     this.rig = root;
     this.parts = {
-      body: body, bolt: bolt, magazine: magazine, hand: hand,
+      body: body, bolt: bolt, magazine: magazine, hand: hand, supportHand: supportHand,
       muzzlePrimary: muzzlePrimary, muzzleSecondary: muzzleSecondary, secondaryGrp: secondaryGrp,
       flashOuter: flashOuter, flashCore: flashCore, flashOuter2: flashOuter2, flashCore2: flashCore2,
       muzzleLight: muzzleLight, screen: screen, screenCtx: ctx2d, screenTex: tex
@@ -475,8 +508,8 @@ const WEAPON = {
     P.body.parent.position.set(px, py, pz);
     P.body.parent.rotation.set(
       this.kickPitch.x * W.viewmodelRecoilScale + this.pose.sprint * W.sprintPitch + this.pose.reload * W.reloadPitch,
-      this.sway.x * W.swayYaw + this.pose.sprint * W.sprintYaw,
-      this.kickRoll.x * W.viewmodelRecoilScale + this.sway.x * W.swayRoll + this.pose.sprint * W.sprintRoll
+      TUNE.ART.weapon.hipYaw * (1 - adsK) + this.sway.x * W.swayYaw + this.pose.sprint * W.sprintYaw,
+      TUNE.ART.weapon.hipRoll * (1 - adsK) + this.kickRoll.x * W.viewmodelRecoilScale + this.sway.x * W.swayRoll + this.pose.sprint * W.sprintRoll
     );
 
     /* --- 枪机位置：空仓锁在后方 --- */
@@ -497,6 +530,7 @@ const WEAPON = {
     if (this.coilMat) this.coilMat.emissiveIntensity = 0.35 + (ctx.conductCharge || 0) * 1.2;
 
     this.updateReload(dt, ctx);
+    P.supportHand.visible = !this.reload.active;
     this.updateWorldFx(dt);
     this.updateScreen(false, ctx);
   },

@@ -32,7 +32,8 @@ let _enemyUid = 0;
 function makeEnemyPool() {
   return new Pool(() => {
     const grp = new THREE.Group();
-    const bodyMat = new THREE.MeshLambertMaterial({ color: 0x6f7f6a });
+    const bodyMat = new THREE.MeshLambertMaterial({ color: 0x6f7f6a, vertexColors: true });
+    R.attachGait(bodyMat, _enemyUid * 2.4);
     const body = new THREE.Mesh(R.zombieGeo('grunt'), bodyMat);
     grp.add(body);
     const markMat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.6 });
@@ -78,6 +79,8 @@ function configureEnemy(e, tpl, pos, opts) {
   e.phase = 0; e.phaseT = 0; e.highlight = opts.highlight || 0;
   e.spawnGrace = opts.grace || 0;
   e.pos.copy(pos); e.knock.set(0, 0, 0); e.vel.set(0, 0, 0);
+  if (e._artPosition) e._artPosition.copy(pos);
+  if (e.bodyMat.userData.gait) e.bodyMat.userData.gait.motion.value = 0;
   /* 池化对象必须清干净上一位住客的状态 */
   e.knockCtx = null; e.hitReact = 0; e.grp.rotation.x = 0;
   /* 池化对象必须清干净上一位住客的导航状态，否则会带着旧区域与旧连接边复活 */
@@ -90,11 +93,11 @@ function configureEnemy(e, tpl, pos, opts) {
   e.slamAt = null; e.chargeDir = { x: 0, z: 1 };
 
   const kind = tpl.boss ? 'boss' : (tpl.id === 'heavy' ? 'heavy' : tpl.id === 'spitter' ? 'spitter' :
-    tpl.id === 'charger' ? 'charger' : 'grunt');
+    tpl.id === 'charger' ? 'charger' : (['blast', 'conduct', 'overclock'].includes(tpl.variant) ? tpl.variant : 'grunt'));
   e.body.geometry = R.zombieGeo(kind);
-  e.bodyMat.color.setHex(tpl.color);
+  e.bodyMat.color.setHex(tpl.variant ? TUNE.ART.variantBody : tpl.color);
   e.bodyMat.emissive.setHex(tpl.variant ? MUT[tpl.variant].color : 0x000000);
-  e.bodyMat.emissiveIntensity = tpl.variant ? 0.16 : 0;
+  e.bodyMat.emissiveIntensity = tpl.variant ? TUNE.ART.variantGlow : 0;
 
   /* 变种标记 §30 */
   if (e.variant) {
@@ -380,7 +383,7 @@ function updateEnemies(dt) {
     if (e.spawnGrace > 0) e.spawnGrace -= dt;
     if (e.hurtFlash > 0) {
       e.hurtFlash -= dt;
-      e.bodyMat.emissiveIntensity = e.variant ? 0.16 + e.hurtFlash * 5 : e.hurtFlash * 6;
+      e.bodyMat.emissiveIntensity = e.variant ? TUNE.ART.variantGlow + e.hurtFlash * 5 : e.hurtFlash * 6;
       if (e.hurtFlash <= 0 && !e.variant) e.bodyMat.emissive.setHex(0x000000);
       else if (e.hurtFlash > 0) e.bodyMat.emissive.setHex(e.variant ? MUT[e.variant].color : 0xffffff);
     }
@@ -628,7 +631,7 @@ function updateEnemies(dt) {
       e.bodyMat.emissive.setHex(hl);
       e.bodyMat.emissiveIntensity = 0.3 + f * 0.7;
       if (e.highlight <= 0) {
-        e.bodyMat.emissiveIntensity = e.variant ? 0.16 : 0;
+        e.bodyMat.emissiveIntensity = e.variant ? TUNE.ART.variantGlow : 0;
         if (!e.variant) e.bodyMat.emissive.setHex(0x000000);
       }
     }

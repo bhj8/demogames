@@ -58,14 +58,48 @@ const CITYSCALE = {
     this._boundary(C);               // 街区封锁 / 废墟，不做贴脸围墙
     this._skyline(C);                // 远景，不可碰撞
     this._scaleProps(C);             // 尺度参照：路灯与门（全部不参与碰撞）
+    this._dressFacades(C);
     return this;
   },
 
   /* ---------------------------------------------------------------- 地面 */
+  _dressFacades(C) {
+    const F = TUNE.ART.facade;
+    const panel = (x, y, z, w, h, yaw, mat) => {
+      const matrix = new THREE.Matrix4().makeRotationY(yaw);
+      matrix.scale(new THREE.Vector3(w, h, 1)); matrix.setPosition(x, y, z);
+      (C._parts[mat] || (C._parts[mat] = [])).push({ geo: R.geo.plane, mat: matrix });
+    };
+    for (const b of this.blocks) {
+      if (!b.facade) continue; // Open parking/construction frames have no solid wall.
+      const width = b.x1 - b.x0, depth = b.z1 - b.z0;
+      // Fill the previously blank end walls using the same window batch.
+      for (let y = this.S.floorSpacing; y < b.h - 0.4; y += this.S.floorSpacing) {
+        for (let z = b.z0 + F.margin; z < b.z1 - F.margin; z += F.spacing) {
+          panel(b.x0 - F.depth, y - F.height / 2, z, F.width, F.height, -Math.PI / 2, 'window');
+          panel(b.x1 + F.depth, y - F.height / 2, z, F.width, F.height, Math.PI / 2, 'window');
+        }
+      }
+      // Flush masonry plinth and upper coping, no extra collision/cover.
+      for (const y of [0.40, b.h - 0.20]) {
+        panel((b.x0 + b.x1) / 2, y, b.z0 - F.depth * 1.2, width, 0.32, Math.PI, 'trim');
+        panel((b.x0 + b.x1) / 2, y, b.z1 + F.depth * 1.2, width, 0.32, 0, 'trim');
+        panel(b.x0 - F.depth * 1.2, y, (b.z0 + b.z1) / 2, depth, 0.32, -Math.PI / 2, 'trim');
+        panel(b.x1 + F.depth * 1.2, y, (b.z0 + b.z1) / 2, depth, 0.32, Math.PI / 2, 'trim');
+      }
+      if (b.zone === 'shops') {
+        for (let x = b.x0 + 3; x < b.x1 - 2; x += 4.8) {
+          panel(x, 1.85, b.z1 + F.depth * 1.3, 3.6, 2.4, 0, 'window');
+          panel(x, 3.4, b.z1 + F.depth * 1.4, 3.9, 0.35, 0, 'prop');
+        }
+      }
+    }
+  },
+
   _ground(C) {
     const S = this.S;
     const g = new THREE.Mesh(new THREE.PlaneGeometry(S.halfX * 2 + 80, S.halfZ * 2 + 80),
-      new THREE.MeshLambertMaterial({ color: 0x14181f }));
+      new THREE.MeshLambertMaterial({ color: TUNE.ART.ground }));
     g.rotation.x = -Math.PI / 2;
     C.group.add(g);
     /* 唯一的地面碰撞体 */
@@ -86,10 +120,13 @@ const CITYSCALE = {
 
     /* 人行道：抬高一个路沿，靠高度差读出人车尺度 */
     [-1, 1].forEach(sd => {
-      C.addBox(0, S.curb / 2, sd * (carMain + S.walk / 2), S.halfX * 2, S.curb, S.walk,
-        { noCollide: true, mat: 'walk', surf: SURF.DECOR });
-      C.addBox(sd * (carCross + S.walk / 2), S.curb / 2, 0, S.walk, S.curb, S.halfZ * 2,
-        { noCollide: true, mat: 'walk', surf: SURF.DECOR });
+      // Do not lay sidewalk slabs across the perpendicular carriageway.
+      [[-S.halfX, -crossHalf], [crossHalf, S.halfX]].forEach(([a, b]) =>
+        C.addBox((a + b) / 2, S.curb / 2, sd * (carMain + S.walk / 2), b - a, S.curb, S.walk,
+          { noCollide: true, mat: 'walk', surf: SURF.DECOR }));
+      [[-S.halfZ, -mainHalf], [mainHalf, S.halfZ]].forEach(([a, b]) =>
+        C.addBox(sd * (carCross + S.walk / 2), S.curb / 2, (a + b) / 2, S.walk, S.curb, b - a,
+          { noCollide: true, mat: 'walk', surf: SURF.DECOR }));
     });
 
     /* 车道线：主干道双向分隔 + 虚线 */
@@ -123,13 +160,24 @@ const CITYSCALE = {
     /* 楼层线：只在朝向街道的两个面上画，控制在总量可接受的范围内 */
     if (!opts.noFloors) {
       const sp = this.S.floorSpacing;
+      const F = TUNE.ART.facade;
       for (let y = sp; y < h - 0.4; y += sp) {
-        C.addBox(cx, y, z0 - 0.06, sx * 0.985, 0.10, 0.12, { noCollide: true, mat: 'line', surf: SURF.DECOR });
-        C.addBox(cx, y, z1 + 0.06, sx * 0.985, 0.10, 0.12, { noCollide: true, mat: 'line', surf: SURF.DECOR });
+        // Decoration stays flush to existing walls, never creates a new route.
+        for (let x = x0 + F.margin; x < x1 - F.margin; x += F.spacing) {
+          [z0 - F.depth, z1 + F.depth].forEach((z, side) => {
+            // Two triangles per window, all windows merged into one material batch.
+            const matrix = new THREE.Matrix4().makeRotationY(side ? 0 : Math.PI);
+            matrix.scale(new THREE.Vector3(F.width, F.height, 1));
+            matrix.setPosition(x, y - F.height / 2, z);
+            (C._parts.window || (C._parts.window = [])).push({ geo: R.geo.plane, mat: matrix });
+          });
+        }
+        C.addBox(cx, y, z0 - F.depth, sx * 0.985, F.depth, F.depth, { noCollide: true, mat: 'trim', surf: SURF.DECOR });
+        C.addBox(cx, y, z1 + F.depth, sx * 0.985, F.depth, F.depth, { noCollide: true, mat: 'trim', surf: SURF.DECOR });
       }
     }
     this.blocks.push({ id: id, name: name, x0: x0, x1: x1, z0: z0, z1: z1, h: h,
-      playable: !!opts.playable, zone: opts.zone || null });
+      playable: !!opts.playable, zone: opts.zone || null, facade: !opts.noFloors });
     return { cx: cx, cz: cz, sx: sx, sz: sz, h: h };
   },
 

@@ -16,6 +16,7 @@ function mergeGeom(parts) {
   });
   const pos = new Float32Array(vcount * 3);
   const nrm = new Float32Array(vcount * 3);
+  const colors = parts.some(p => p.color !== undefined) ? new Float32Array(vcount * 3) : null;
   const idx = new (vcount > 65535 ? Uint32Array : Uint16Array)(icount);
   let vo = 0, io = 0;
   const nm = new T.Matrix3();
@@ -24,11 +25,17 @@ function mergeGeom(parts) {
     nm.getNormalMatrix(m);
     const gp = g.attributes.position, gn = g.attributes.normal;
     const v = new T.Vector3(), n = new T.Vector3();
+    const color = colors ? new T.Color(p.color === undefined ? 0xffffff : p.color) : null;
     for (let i = 0; i < gp.count; i++) {
       v.fromBufferAttribute(gp, i).applyMatrix4(m);
       pos[(vo + i) * 3] = v.x; pos[(vo + i) * 3 + 1] = v.y; pos[(vo + i) * 3 + 2] = v.z;
       n.fromBufferAttribute(gn, i).applyMatrix3(nm).normalize();
       nrm[(vo + i) * 3] = n.x; nrm[(vo + i) * 3 + 1] = n.y; nrm[(vo + i) * 3 + 2] = n.z;
+      if (colors) {
+        colors[(vo + i) * 3] = color.r;
+        colors[(vo + i) * 3 + 1] = color.g;
+        colors[(vo + i) * 3 + 2] = color.b;
+      }
     }
     if (g.index) { for (let i = 0; i < g.index.count; i++) idx[io + i] = g.index.array[i] + vo; io += g.index.count; }
     else { for (let i = 0; i < gp.count; i++) idx[io + i] = i + vo; io += gp.count; }
@@ -37,6 +44,7 @@ function mergeGeom(parts) {
   const out = new T.BufferGeometry();
   out.setAttribute('position', new T.BufferAttribute(pos, 3));
   out.setAttribute('normal', new T.BufferAttribute(nrm, 3));
+  if (colors) out.setAttribute('color', new T.BufferAttribute(colors, 3));
   out.setIndex(new T.BufferAttribute(idx, 1));
   out.computeBoundingSphere();
   return out;
@@ -113,6 +121,17 @@ const R = {
     g.disc = new T.CircleGeometry(1, 32);
     g.plane = new T.PlaneGeometry(1, 1);
     g.oct = new T.OctahedronGeometry(0.5, 0);
+    // Shared faceted solids; enemy parts still merge into one body draw.
+    g.facet = new T.IcosahedronGeometry(0.5, 0);
+    g.taper = new T.CylinderGeometry(0.32, 0.5, 1, 5, 1, true).toNonIndexed();
+    g.taper.computeVertexNormals();
+    const outline = new T.Shape();
+    outline.moveTo(-0.5, -0.3);
+    [[-0.3, -0.5], [0.3, -0.5], [0.5, -0.3], [0.5, 0.3],
+      [0.3, 0.5], [-0.3, 0.5], [-0.5, 0.3]].forEach(p => outline.lineTo(p[0], p[1]));
+    outline.closePath();
+    g.chamfer = new T.ExtrudeGeometry(outline, { depth: 1, bevelEnabled: false, steps: 1 });
+    g.chamfer.translate(0, 0, -0.5);
   },
 
   /* ---------------------------------------------------------------- 城市 */
@@ -123,16 +142,123 @@ const R = {
     this.arenaHalf = TUNE.VERTICAL_MAP.half;
     /* 城市尺度要看到远景天际线，雾推远；同时补光 ——
        原亮度是按 56m 竞技场调的，放进 220m 城市后大体块会糊成一片黑（todo4 §2.2）。 */
-    this.scene.fog = new T.Fog(0x18202c, 130, 520);
-    this.scene.background = new T.Color(0x18202c);
+    const A = TUNE.ART;
+    this.scene.fog = new T.Fog(A.fog, A.fogNear, A.fogFar);
+    // A tiny generated gradient replaces the flat sky; no external texture.
+    const skyCanvas = document.createElement('canvas');
+    skyCanvas.width = 2; skyCanvas.height = 128;
+    const skyContext = skyCanvas.getContext('2d');
+    const gradient = skyContext.createLinearGradient(0, 0, 0, 128);
+    gradient.addColorStop(0, A.skyTop); gradient.addColorStop(0.62, A.skyHorizon);
+    gradient.addColorStop(1, A.skyHorizon);
+    skyContext.fillStyle = gradient; skyContext.fillRect(0, 0, 2, 128);
+    this.scene.background = new T.CanvasTexture(skyCanvas);
+    this.scene.background.encoding = T.sRGBEncoding;
     this.camera.far = 1000; this.camera.updateProjectionMatrix();
-    this.hemi.intensity = 1.25;
-    this.hemi.color.setHex(0x9fb4d4); this.hemi.groundColor.setHex(0x2e3540);
-    this.sun.intensity = 1.15;
-    this.sun.position.set(120, 190, -90);
+    this.hemi.intensity = A.ambient;
+    this.hemi.color.setHex(A.skyLight); this.hemi.groundColor.setHex(A.groundLight);
+    this.sun.color.setHex(A.sunColor);
+    this.sun.intensity = A.sunIntensity;
+    this.sun.position.fromArray(A.sunPosition);
     this.lamp.distance = 34; this.lamp.intensity = 0.55;
     CITY.build(this.scene);
+    this._buildGroundShadows();
     this.arenaHalf = CITY.half;
+  },
+
+  /* Static ground projection + one instanced contact-shadow batch.
+     Stencil prevents intersecting shadow polygons from darkening repeatedly. */
+  _buildGroundShadows() {
+    const S = TUNE.ART.shadow;
+    const material = new T.MeshBasicMaterial({ color: S.color, opacity: S.opacity,
+      transparent: true, depthWrite: false, side: T.DoubleSide,
+      stencilWrite: true, stencilRef: 1, stencilFunc: T.NotEqualStencilFunc,
+      stencilZPass: T.ReplaceStencilOp });
+    const vertices = [];
+    const cross = (o, a, b) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+    const hull = points => {
+      points.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+      const lo = [], hi = [];
+      for (const p of points) { while (lo.length > 1 && cross(lo[lo.length - 2], lo[lo.length - 1], p) <= 0) lo.pop(); lo.push(p); }
+      for (let i = points.length - 1; i >= 0; i--) { const p = points[i]; while (hi.length > 1 && cross(hi[hi.length - 2], hi[hi.length - 1], p) <= 0) hi.pop(); hi.push(p); }
+      lo.pop(); hi.pop(); return lo.concat(hi);
+    };
+    const dx = -this.sun.position.x / this.sun.position.y;
+    const dz = -this.sun.position.z / this.sun.position.y;
+    // Grounded solids only: suspended slabs must not become solid shadow towers.
+    CITY.solids.filter(s => s.y0 <= S.groundY && s.y1 > 3 && !s.ramp).forEach(s => {
+      const points = [];
+      for (const x of [s.x0, s.x1]) for (const z of [s.z0, s.z1]) {
+        points.push([x, z], [x + dx * s.y1, z + dz * s.y1]);
+      }
+      const polygon = hull(points);
+      for (let i = 1; i < polygon.length - 1; i++) {
+        for (const p of [polygon[0], polygon[i], polygon[i + 1]]) vertices.push(p[0], S.groundY, p[1]);
+      }
+    });
+    const geometry = new T.BufferGeometry();
+    geometry.setAttribute('position', new T.Float32BufferAttribute(vertices, 3));
+    const shadows = new T.Mesh(geometry, material);
+    shadows.renderOrder = 1; shadows.frustumCulled = false;
+    this.scene.add(shadows);
+    this.contactShadows = new T.InstancedMesh(new T.CircleGeometry(1, 12), material, S.capacity);
+    this.contactShadows.count = 0; this.contactShadows.frustumCulled = false;
+    this.contactShadows.instanceMatrix.setUsage(T.DynamicDrawUsage);
+    this.contactShadows.renderOrder = 2; this.scene.add(this.contactShadows);
+    this._shadowMatrix = new T.Matrix4();
+    this._shadowQuaternion = new T.Quaternion().setFromEuler(new T.Euler(-Math.PI / 2, 0, 0));
+    this._shadowPosition = new T.Vector3(); this._shadowScale = new T.Vector3();
+    this._artTime = 0;
+  },
+
+  attachGait(material, phase) {
+    const A = TUNE.ART.gait;
+    material.userData.gait = { time: { value: phase }, motion: { value: 0 } };
+    material.onBeforeCompile = shader => {
+      shader.uniforms.artTime = material.userData.gait.time;
+      shader.uniforms.artMotion = material.userData.gait.motion;
+      shader.vertexShader = 'uniform float artTime; uniform float artMotion;\n' + shader.vertexShader;
+      shader.vertexShader = shader.vertexShader.replace('#include <begin_vertex>', `
+        #include <begin_vertex>
+        float stepPhase = artTime + (position.x < 0.0 ? 3.14159265 : 0.0);
+        float leg = max(0.0, 0.43 - position.y);
+        transformed.z += sin(stepPhase) * leg * artMotion * ${A.stride.toFixed(4)};
+        transformed.y += max(0.0, cos(stepPhase)) * leg * artMotion * ${A.lift.toFixed(4)};
+        float arm = smoothstep(0.15, 0.24, abs(position.x)) * (1.0 - smoothstep(0.64, 0.76, position.y));
+        transformed.z -= sin(stepPhase) * arm * artMotion * ${A.armSwing.toFixed(4)};
+      `);
+    };
+    material.customProgramCacheKey = () => 'faceted-gait-v1';
+  },
+
+  _syncArt() {
+    if (!this.contactShadows || typeof G === 'undefined' || !G.enemies) return;
+    const S = TUNE.ART.shadow;
+    const dt = G.time - this._artTime;
+    let count = 0;
+    for (const e of G.enemies.live) {
+      if (e._dead || e.dead || !e.grp.visible) continue;
+      const gait = e.bodyMat.userData.gait;
+      if (gait) {
+        if (dt > 0 && e._artPosition) {
+          const speed = Math.hypot(e.pos.x - e._artPosition.x, e.pos.z - e._artPosition.z) / dt;
+          gait.motion.value = Math.min(1, speed / Math.max(1, e.speed));
+        }
+        gait.time.value = G.time * TUNE.ART.gait.frequency + e.uid * 2.4;
+      }
+      if (!e._artPosition) e._artPosition = new T.Vector3();
+      e._artPosition.copy(e.pos);
+      if (count >= S.capacity) continue;
+      // On a floor or roof; do not paint an ellipse in midair while jumping.
+      if (e.nav && e.nav.grounded === false) continue;
+      this._shadowPosition.set(e.pos.x, e.pos.y + S.groundY, e.pos.z);
+      this._shadowScale.set(e.radius * 1.35, e.radius * 0.90, 1);
+      this._shadowMatrix.compose(this._shadowPosition, this._shadowQuaternion, this._shadowScale);
+      this.contactShadows.setMatrixAt(count++, this._shadowMatrix);
+    }
+    this.contactShadows.count = count;
+    this.contactShadows.instanceMatrix.needsUpdate = true;
+    this._artTime = G.time;
   },
 
   /* 碰撞：转交 citymap.js 做圆柱 vs AABB 的水平推出（垂直由调用方处理）。 */
@@ -149,47 +275,72 @@ const R = {
   zombieGeo(kind) {
     if (this._zombieGeoCache[kind]) return this._zombieGeoCache[kind];
     const g = this.geo, parts = [];
-    const push = (geo, x, y, z, sx, sy, sz, rz) => parts.push({ geo: geo, mat: mat4(x, y, z, sx, sy, sz, rz) });
+    const push = (geo, x, y, z, sx, sy, sz, rz) => parts.push({ geo: geo,
+      mat: mat4(x, y, z, sx, sy, sz, rz), color: y < 0.75 ? 0xadb7a8 : 0xffffff });
 
     if (kind === 'heavy') {
-      push(g.box, 0, 1.28, 0, 1.15, 1.35, 0.82);
-      push(g.sph, 0, 2.05, 0.04, 0.62, 0.62, 0.62);
-      push(g.box, -0.78, 1.28, 0.18, 0.34, 1.2, 0.34, 0.42);
-      push(g.box, 0.78, 1.28, 0.18, 0.34, 1.2, 0.34, -0.42);
-      push(g.box, -0.32, 0.32, 0, 0.4, 0.72, 0.4);
-      push(g.box, 0.32, 0.32, 0, 0.4, 0.72, 0.4);
+      push(g.facet, 0, 1.28, 0, 1.40, 1.45, 0.95);
+      push(g.facet, 0, 2.05, 0.04, 0.62, 0.62, 0.62);
+      [-1, 1].forEach(s => {
+        push(g.facet, s * 0.63, 1.58, 0, 0.62, 0.66, 0.72);
+        push(g.taper, s * 0.78, 1.08, 0.18, 0.46, 0.98, 0.48, -s * 0.16);
+        push(g.facet, s * 0.86, 0.58, 0.20, 0.48, 0.46, 0.52);
+        push(g.taper, s * 0.32, 0.38, 0, 0.46, 0.72, 0.46);
+        push(g.facet, s * 0.32, 0.08, 0.12, 0.45, 0.19, 0.60);
+      });
+      parts.push({ geo: g.oct, mat: mat4(0, 2.01, 0.31, 0.40, 0.24, 0.10), color: 0x26343c });
     } else if (kind === 'spitter') {
-      push(g.box, 0, 1.08, 0, 0.62, 1.0, 0.5);
-      push(g.sph, 0, 1.76, 0.16, 0.5, 0.44, 0.56);
-      push(g.cyl, 0, 1.42, 0.42, 0.3, 0.5, 0.3, 1.2);  // 喉囊
-      push(g.box, -0.48, 1.1, 0.1, 0.22, 0.95, 0.22, 0.5);
-      push(g.box, 0.48, 1.1, 0.1, 0.22, 0.95, 0.22, -0.5);
-      push(g.box, -0.2, 0.3, 0, 0.26, 0.62, 0.26);
-      push(g.box, 0.2, 0.3, 0, 0.26, 0.62, 0.26);
+      push(g.facet, 0, 1.08, -0.02, 0.70, 1.1, 0.64);
+      push(g.facet, 0, 1.76, 0.16, 0.5, 0.44, 0.56);
+      push(g.facet, 0, 1.42, 0.34, 0.40, 0.50, 0.44);
+      parts.push({ geo: g.oct, mat: mat4(0, 1.65, 0.41, 0.28, 0.17, 0.17), color: 0x26343c });
+      [-1, 1].forEach(s => {
+        push(g.taper, s * 0.40, 1.1, 0.1, 0.20, 0.95, 0.22, s * 0.28);
+        push(g.facet, s * 0.52, 0.65, 0.14, 0.22, 0.28, 0.24);
+        push(g.taper, s * 0.2, 0.35, 0, 0.26, 0.62, 0.26);
+        push(g.facet, s * 0.2, 0.07, 0.10, 0.26, 0.15, 0.40);
+      });
     } else if (kind === 'charger') {
-      push(g.box, 0, 1.35, 0, 1.05, 1.15, 0.95);
-      push(g.sph, 0, 1.55, 0.62, 0.72, 0.6, 0.5);      // 前倾冲撞头
+      push(g.facet, 0, 1.35, 0, 1.30, 1.30, 1.05);
+      push(g.facet, 0, 1.55, 0.62, 0.72, 0.6, 0.5);      // 前倾冲撞头
       push(g.cone, 0, 1.55, 1.0, 0.5, 0.7, 0.5);
-      push(g.box, -0.72, 1.2, 0.3, 0.3, 1.1, 0.3, 0.6);
-      push(g.box, 0.72, 1.2, 0.3, 0.3, 1.1, 0.3, -0.6);
-      push(g.box, -0.3, 0.36, 0, 0.36, 0.76, 0.36);
-      push(g.box, 0.3, 0.36, 0, 0.36, 0.76, 0.36);
+      [-1, 1].forEach(s => {
+        push(g.facet, s * 0.60, 1.55, 0.05, 0.62, 0.72, 0.68);
+        push(g.taper, s * 0.72, 1.0, 0.3, 0.38, 0.96, 0.42, -s * 0.22);
+        push(g.facet, s * 0.82, 0.55, 0.3, 0.40, 0.34, 0.46);
+        push(g.taper, s * 0.3, 0.38, 0, 0.36, 0.76, 0.36);
+        push(g.facet, s * 0.3, 0.08, 0.12, 0.36, 0.18, 0.52);
+      });
     } else if (kind === 'boss') {
-      push(g.box, 0, 1.9, 0, 1.9, 2.0, 1.4);
-      push(g.sph, 0, 3.15, 0.1, 1.0, 0.95, 1.0);
-      push(g.box, -1.35, 1.9, 0.2, 0.55, 1.9, 0.55, 0.35);
-      push(g.box, 1.35, 1.9, 0.2, 0.55, 1.9, 0.55, -0.35);
-      push(g.box, -0.5, 0.48, 0, 0.62, 1.05, 0.62);
-      push(g.box, 0.5, 0.48, 0, 0.62, 1.05, 0.62);
+      push(g.facet, 0, 1.9, 0, 2.3, 2.2, 1.6);
+      push(g.facet, 0, 3.15, 0.1, 1.0, 0.95, 1.0);
+      [-1, 1].forEach(s => {
+        push(g.facet, s * 1.0, 2.40, 0, 1.10, 1.05, 1.20);
+        push(g.taper, s * 1.35, 1.70, 0.2, 0.76, 1.50, 0.76, -s * 0.20);
+        push(g.facet, s * 1.50, 0.98, 0.24, 0.80, 0.68, 0.90);
+        push(g.taper, s * 0.50, 0.52, 0, 0.65, 1.05, 0.65);
+        push(g.facet, s * 0.50, 0.10, 0.18, 0.65, 0.22, 0.90);
+      });
+      parts.push({ geo: g.oct, mat: mat4(0, 3.1, 0.55, 0.65, 0.40, 0.16), color: 0x26343c });
       push(g.cone, -0.7, 3.3, 0, 0.34, 0.7, 0.34);
       push(g.cone, 0.7, 3.3, 0, 0.34, 0.7, 0.34);
-    } else { /* grunt */
-      push(g.box, 0, 1.12, 0, 0.66, 0.98, 0.42);
-      push(g.sph, 0, 1.78, 0.02, 0.44, 0.48, 0.44);
-      push(g.box, -0.5, 1.18, 0.22, 0.2, 0.9, 0.2, 0.55);
-      push(g.box, 0.5, 1.18, 0.22, 0.2, 0.9, 0.2, -0.55);
-      push(g.box, -0.19, 0.32, 0, 0.26, 0.66, 0.26);
-      push(g.box, 0.19, 0.32, 0, 0.26, 0.66, 0.26);
+    } else { /* grunt: broad shoulders, narrow waist, hanging angular arms.
+                Head centre/extent retained for the existing weak-point sphere. */
+      const width = kind === 'blast' ? 1.15 : kind === 'conduct' ? 0.76 : kind === 'overclock' ? 0.83 : 1;
+      push(g.facet, 0, 1.22, -0.02, 0.88 * width, 0.87, 0.56);
+      push(g.facet, 0, 0.80, -0.02, 0.48, 0.42, 0.40);
+      push(g.facet, 0, 1.78, 0.02, 0.44, 0.48, 0.44);
+      parts.push({ geo: g.oct, mat: mat4(0, 1.75, 0.205, 0.30, 0.22, 0.08), color: 0x26343c });
+      [-1, 1].forEach(s => {
+        parts.push({ geo: g.oct, mat: mat4(s * 0.070, 1.79, 0.238, 0.070, 0.033, 0.025, -s * 0.2), color: 0xf5e5aa });
+        push(g.facet, s * 0.39 * width, 1.39, 0, 0.38, 0.38, 0.40);
+        push(g.taper, s * 0.48 * width, 1.13, 0.04, 0.27 * width, 0.51, 0.29, s * 0.24);
+        push(g.taper, s * 0.54 * width, 0.76, 0.13, 0.21, 0.41, 0.23, -s * 0.12);
+        push(g.facet, s * 0.54 * width, 0.53, 0.15, 0.21, 0.27, 0.22);
+        push(g.taper, s * 0.19, 0.50, -0.01, 0.29, 0.51, 0.32, -s * 0.10);
+        push(g.taper, s * 0.21, 0.20, 0.01, 0.19, 0.37, 0.22);
+        push(g.facet, s * 0.21, 0.07, 0.09, 0.26, 0.15, 0.40);
+      });
     }
     /* 模型按 height=1 归一化，实例再乘 template.height */
     const geo = mergeGeom(parts);
@@ -206,10 +357,10 @@ const R = {
     const g = this.geo, parts = [];
     const push = (geo, x, y, z, sx, sy, sz, rz) => parts.push({ geo: geo, mat: mat4(x, y, z, sx, sy, sz, rz) });
     if (mutId === 'blast') {          // 膨胀橙腹囊
-      push(g.sphHi, 0, 1.02, 0.22, 0.78, 0.72, 0.66);
+      push(g.facet, 0, 1.16, 0.22, 0.78, 0.78, 0.66);
     } else if (mutId === 'fission') { // 紫色双核心 + 中缝
-      push(g.sph, -0.22, 1.22, 0.24, 0.34, 0.34, 0.3);
-      push(g.sph, 0.22, 1.22, 0.24, 0.34, 0.34, 0.3);
+      push(g.facet, -0.22, 1.22, 0.24, 0.34, 0.34, 0.3);
+      push(g.facet, 0.22, 1.22, 0.24, 0.34, 0.34, 0.3);
       push(g.box, 0, 1.15, 0.2, 0.05, 1.0, 0.3);
     } else if (mutId === 'overclock') { // 红色血管束（细长）
       push(g.box, 0, 1.35, 0.24, 0.1, 0.9, 0.1);
@@ -217,9 +368,11 @@ const R = {
       push(g.box, 0.24, 1.3, 0.2, 0.07, 0.7, 0.07, -0.3);
       push(g.sph, 0, 1.78, 0.14, 0.3, 0.3, 0.3);
     } else if (mutId === 'conduct') { // 青色神经节
-      push(g.oct, 0, 1.9, 0, 0.5, 0.7, 0.5);
-      push(g.box, -0.3, 1.4, 0.2, 0.07, 0.8, 0.07, 0.4);
-      push(g.box, 0.3, 1.4, 0.2, 0.07, 0.8, 0.07, -0.4);
+      push(g.oct, 0, 1.65, 0.20, 0.23, 0.36, 0.22);
+      [-1, 1].forEach(s => {
+        push(g.taper, s * 0.24, 1.95, 0, 0.12, 0.40, 0.12, -s * 0.5);
+        push(g.oct, s * 0.34, 2.18, 0, 0.12, 0.30, 0.12);
+      });
     } else if (mutId === 'giant') {   // 黄色核心
       push(g.oct, 0, 1.2, 0.28, 0.55, 0.7, 0.5);
     } else {                          // ossify 的骨板是独立可破坏部件，这里只放脊背
@@ -501,6 +654,7 @@ const R = {
   },
 
   render() {
+    this._syncArt();
     this.renderer.clear();
     this.renderer.render(this.scene, this.camera);
     this.renderer.clearDepth();

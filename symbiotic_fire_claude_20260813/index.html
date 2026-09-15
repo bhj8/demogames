@@ -186,6 +186,12 @@ canvas#gl{display:block;position:fixed;inset:0}
 #lvlrow{display:flex;justify-content:space-between;align-items:center;margin-top:5px;
   font-size:10px;letter-spacing:.2em;color:var(--dim)}
 
+/* Faceted daylight: local backing keeps small HUD labels legible against sky. */
+#top,#hpwrap,#gunwrap{isolation:isolate;--dim:rgba(219,231,240,.85)}
+#top::before,#hpwrap::before,#gunwrap::before{content:'';position:absolute;inset:-10px -12px;
+  z-index:-1;background:rgba(24,34,43,.76);border:1px solid rgba(219,231,240,.16);
+  border-radius:3px}
+
 /* 顶部右：四个共同变异槽 §32 */
 #slots{position:absolute;right:26px;top:22px;display:flex;gap:7px}
 .slot{width:34px;height:34px;border:1px solid var(--line);border-radius:3px;

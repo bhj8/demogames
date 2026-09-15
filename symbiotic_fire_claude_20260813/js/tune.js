@@ -5,6 +5,29 @@
 'use strict';
 
 const TUNE = {
+  /* A / FACETED：只控制美术，不修改战斗、碰撞或输入。 */
+  ART: {
+    sky: 0xc9b9a7, fog: 0xb1b4b3, fogNear: 130, fogFar: 520,
+    skyLight: 0xc5d8ed, groundLight: 0x555865, ambient: 0.62,
+    sunColor: 0xffdfb5, sunIntensity: 1.40, ground: 0x555d66,
+    sunPosition: [70, 100, -180],
+    skyTop: '#94b3cb', skyHorizon: '#edceb0',
+    shadow: { opacity: 0.27, color: 0x26384c, capacity: 2048, groundY: 0.17 },
+    gait: { frequency: 5.5, stride: 0.30, lift: 0.16, armSwing: 0.10 },
+    palette: {
+      concrete: 0x87939d, deck: 0x738491, parking: 0x81909c,
+      build: 0xa29480, hospital: 0x819b92, mall: 0x94909f,
+      prop: 0x53636f, decor: 0x596874, road: 0x515a64,
+      walk: 0x929692, shop: 0xb0a18b, garage: 0x8393a0,
+      office: 0x738b9e, site: 0xaa987a, filler: 0x81909b,
+      far: 0x8996a3, line: 0xd2c7ac, window: 0x3a4c5a,
+      trim: 0xa5afb2
+    },
+    facade: { spacing: 4.8, width: 1.65, height: 1.8, depth: 0.06, margin: 2.4 },
+    weapon: { steel: 0x647583, dark: 0x303c47, darker: 0x202b34, bone: 0xd6c8a5,
+      hipYaw: 0.16, hipRoll: -0.06 },
+    variantBody: 0x79866b, variantGlow: 0.025
+  },
   /* --- 单局结构 §11 --- */
   RUN_SECONDS: 720,               // 12:00
   BOSS_AT: 720,
