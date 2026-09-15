@@ -1,0 +1,614 @@
+{
+  "version": 1,
+  "generator": "Stable Audio 3 small-sfx",
+  "sounds": {
+    "airdrop": [
+      {
+        "file": "airdrop_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.54384,
+        "gain": 0.4977
+      },
+      {
+        "file": "airdrop_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.50892,
+        "gain": 0.41988
+      }
+    ],
+    "armor": [
+      {
+        "file": "armor_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.16969,
+        "gain": 0.85
+      },
+      {
+        "file": "armor_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.09486,
+        "gain": 0.85
+      }
+    ],
+    "blast_warn": [
+      {
+        "file": "blast_warn_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.67854,
+        "gain": 0.82013
+      },
+      {
+        "file": "blast_warn_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.41414,
+        "gain": 0.68802
+      }
+    ],
+    "bolt": [
+      {
+        "file": "bolt_v2_01.wav",
+        "duration": 1.0,
+        "onset": 0.11672,
+        "end": 0.38421,
+        "gain": 0.85
+      },
+      {
+        "file": "bolt_v2_02.wav",
+        "duration": 1.0,
+        "onset": 0.11672,
+        "end": 0.38421,
+        "gain": 0.85
+      }
+    ],
+    "boss": [
+      {
+        "file": "boss_02.wav",
+        "duration": 2.0,
+        "onset": 0.09177,
+        "end": 1.33704,
+        "gain": 0.52468
+      },
+      {
+        "file": "boss_01.wav",
+        "duration": 2.0,
+        "onset": 0.10674,
+        "end": 1.34203,
+        "gain": 0.5823
+      }
+    ],
+    "charge": [
+      {
+        "file": "charge_03.wav",
+        "duration": 1.0,
+        "onset": 0.00697,
+        "end": 0.68851,
+        "gain": 0.43515
+      },
+      {
+        "file": "charge_02.wav",
+        "duration": 1.0,
+        "onset": 0.01694,
+        "end": 0.71346,
+        "gain": 0.5957
+      }
+    ],
+    "city_air": [
+      {
+        "file": "city_air_02.wav",
+        "duration": 8.0,
+        "onset": 0.06683,
+        "end": 7.19872,
+        "gain": 0.60834
+      },
+      {
+        "file": "city_air_03.wav",
+        "duration": 8.0,
+        "onset": 0.11173,
+        "end": 7.36833,
+        "gain": 0.85
+      }
+    ],
+    "climb": [
+      {
+        "file": "climb_01.wav",
+        "duration": 1.0,
+        "onset": 0.01195,
+        "end": 0.53387,
+        "gain": 0.83193
+      },
+      {
+        "file": "climb_03.wav",
+        "duration": 1.0,
+        "onset": 0.01694,
+        "end": 0.85314,
+        "gain": 0.85
+      }
+    ],
+    "dash": [
+      {
+        "file": "dash_v2_06.wav",
+        "duration": 1.0,
+        "onset": 0.02193,
+        "end": 0.28443,
+        "gain": 0.77495
+      },
+      {
+        "file": "dash_v2_04.wav",
+        "duration": 1.0,
+        "onset": 0.02193,
+        "end": 0.34929,
+        "gain": 0.66432
+      }
+    ],
+    "defeat": [
+      {
+        "file": "defeat_01.wav",
+        "duration": 3.0,
+        "onset": 0,
+        "end": 2.72888,
+        "gain": 0.6304
+      },
+      {
+        "file": "defeat_03.wav",
+        "duration": 3.0,
+        "onset": 0,
+        "end": 2.68398,
+        "gain": 0.78451
+      }
+    ],
+    "derived": [
+      {
+        "file": "derived_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.25949,
+        "gain": 0.85
+      },
+      {
+        "file": "derived_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.27944,
+        "gain": 0.85
+      }
+    ],
+    "dry": [
+      {
+        "file": "dry_02.wav",
+        "duration": 1.0,
+        "onset": 0.00198,
+        "end": 0.09985,
+        "gain": 0.85
+      },
+      {
+        "file": "dry_01.wav",
+        "duration": 1.0,
+        "onset": 0.00198,
+        "end": 0.09486,
+        "gain": 0.85
+      }
+    ],
+    "enemy_idle": [
+      {
+        "file": "enemy_idle_03.wav",
+        "duration": 2.0,
+        "onset": 0,
+        "end": 1.80598,
+        "gain": 0.59724
+      },
+      {
+        "file": "enemy_idle_01.wav",
+        "duration": 2.0,
+        "onset": 0.04189,
+        "end": 1.72117,
+        "gain": 0.5357
+      }
+    ],
+    "explosion": [
+      {
+        "file": "explosion_01.wav",
+        "duration": 2.0,
+        "onset": 0,
+        "end": 1.10756,
+        "gain": 0.84259
+      },
+      {
+        "file": "explosion_02.wav",
+        "duration": 2.0,
+        "onset": 0,
+        "end": 0.93795,
+        "gain": 0.85
+      }
+    ],
+    "flesh": [
+      {
+        "file": "flesh_03.wav",
+        "duration": 1.0,
+        "onset": 0.05685,
+        "end": 0.33432,
+        "gain": 0.85
+      },
+      {
+        "file": "flesh_01.wav",
+        "duration": 1.0,
+        "onset": 0.10175,
+        "end": 0.32933,
+        "gain": 0.85
+      }
+    ],
+    "heavy_shot": [
+      {
+        "file": "heavy_shot_01.wav",
+        "duration": 2.0,
+        "onset": 0,
+        "end": 0.57378,
+        "gain": 0.85
+      },
+      {
+        "file": "heavy_shot_02.wav",
+        "duration": 2.0,
+        "onset": 0,
+        "end": 0.64861,
+        "gain": 0.85
+      }
+    ],
+    "hurt": [
+      {
+        "file": "hurt_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.21459,
+        "gain": 0.85
+      },
+      {
+        "file": "hurt_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.19963,
+        "gain": 0.85
+      }
+    ],
+    "incoming": [
+      {
+        "file": "incoming_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.23954,
+        "gain": 0.85
+      },
+      {
+        "file": "incoming_v2_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.50393,
+        "gain": 0.85
+      }
+    ],
+    "kill": [
+      {
+        "file": "kill_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.49895,
+        "gain": 0.85
+      },
+      {
+        "file": "kill_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.49895,
+        "gain": 0.85
+      }
+    ],
+    "land": [
+      {
+        "file": "land_01.wav",
+        "duration": 1.0,
+        "onset": 0.04688,
+        "end": 0.49895,
+        "gain": 0.85
+      },
+      {
+        "file": "land_02.wav",
+        "duration": 1.0,
+        "onset": 0.04688,
+        "end": 0.23954,
+        "gain": 0.85
+      }
+    ],
+    "last_round": [
+      {
+        "file": "last_round_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.28942,
+        "gain": 0.42091
+      },
+      {
+        "file": "last_round_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.32434,
+        "gain": 0.44119
+      }
+    ],
+    "levelup": [
+      {
+        "file": "levelup_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.72842,
+        "gain": 0.48005
+      },
+      {
+        "file": "levelup_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.70847,
+        "gain": 0.62753
+      }
+    ],
+    "mag_in": [
+      {
+        "file": "mag_in_v2_04.wav",
+        "duration": 1.0,
+        "onset": 0.10674,
+        "end": 0.48398,
+        "gain": 0.85
+      },
+      {
+        "file": "mag_in_v2_02.wav",
+        "duration": 1.0,
+        "onset": 0.10674,
+        "end": 0.474,
+        "gain": 0.85
+      }
+    ],
+    "mag_out": [
+      {
+        "file": "mag_out_02.wav",
+        "duration": 1.0,
+        "onset": 0.07681,
+        "end": 0.56879,
+        "gain": 0.85
+      },
+      {
+        "file": "mag_out_03.wav",
+        "duration": 1.0,
+        "onset": 0.07681,
+        "end": 0.56879,
+        "gain": 0.85
+      }
+    ],
+    "melee": [
+      {
+        "file": "melee_01.wav",
+        "duration": 1.0,
+        "onset": 0.00697,
+        "end": 0.65858,
+        "gain": 0.85
+      },
+      {
+        "file": "melee_03.wav",
+        "duration": 1.0,
+        "onset": 0.01195,
+        "end": 0.65359,
+        "gain": 0.84201
+      }
+    ],
+    "mutation": [
+      {
+        "file": "mutation_02.wav",
+        "duration": 2.0,
+        "onset": 0.08678,
+        "end": 1.10756,
+        "gain": 0.67959
+      },
+      {
+        "file": "mutation_03.wav",
+        "duration": 2.0,
+        "onset": 0.11173,
+        "end": 1.03772,
+        "gain": 0.62998
+      }
+    ],
+    "pickup_buff": [
+      {
+        "file": "pickup_buff_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.21958,
+        "gain": 0.75987
+      },
+      {
+        "file": "pickup_buff_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.80325,
+        "gain": 0.53616
+      }
+    ],
+    "pickup_med": [
+      {
+        "file": "pickup_med_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.31935,
+        "gain": 0.85
+      },
+      {
+        "file": "pickup_med_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.4291,
+        "gain": 0.76019
+      }
+    ],
+    "rifle": [
+      {
+        "file": "rifle_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.22956,
+        "gain": 0.85
+      },
+      {
+        "file": "rifle_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.24951,
+        "gain": 0.85
+      }
+    ],
+    "shell": [
+      {
+        "file": "shell_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.48897,
+        "gain": 0.85
+      },
+      {
+        "file": "shell_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.27944,
+        "gain": 0.85
+      }
+    ],
+    "shield": [
+      {
+        "file": "shield_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.12978,
+        "gain": 0.85
+      },
+      {
+        "file": "shield_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.15972,
+        "gain": 0.85
+      }
+    ],
+    "shield_break": [
+      {
+        "file": "shield_break_v2_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.16471,
+        "gain": 0.85
+      },
+      {
+        "file": "shield_break_v2_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.35427,
+        "gain": 0.85
+      }
+    ],
+    "spit": [
+      {
+        "file": "spit_01.wav",
+        "duration": 1.0,
+        "onset": 0.00697,
+        "end": 0.62366,
+        "gain": 0.85
+      },
+      {
+        "file": "spit_03.wav",
+        "duration": 1.0,
+        "onset": 0.02193,
+        "end": 0.54883,
+        "gain": 0.85
+      }
+    ],
+    "step": [
+      {
+        "file": "step_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.63863,
+        "gain": 0.85
+      },
+      {
+        "file": "step_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.52888,
+        "gain": 0.85
+      }
+    ],
+    "victory": [
+      {
+        "file": "victory_03.wav",
+        "duration": 3.0,
+        "onset": 0.00697,
+        "end": 1.74112,
+        "gain": 0.85
+      },
+      {
+        "file": "victory_01.wav",
+        "duration": 3.0,
+        "onset": 0.01195,
+        "end": 1.80099,
+        "gain": 0.85
+      }
+    ],
+    "weak": [
+      {
+        "file": "weak_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.05994,
+        "gain": 0.85
+      },
+      {
+        "file": "weak_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.05495,
+        "gain": 0.85
+      }
+    ],
+    "weak_kill": [
+      {
+        "file": "weak_kill_01.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.15972,
+        "gain": 0.85
+      },
+      {
+        "file": "weak_kill_02.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.20461,
+        "gain": 0.85
+      }
+    ],
+    "zap": [
+      {
+        "file": "zap_03.wav",
+        "duration": 1.0,
+        "onset": 0,
+        "end": 0.14475,
+        "gain": 0.85
+      },
+      {
+        "file": "zap_01.wav",
+        "duration": 1.0,
+        "onset": 0.00697,
+        "end": 0.14974,
+        "gain": 0.85
+      }
+    ]
+  }
+}

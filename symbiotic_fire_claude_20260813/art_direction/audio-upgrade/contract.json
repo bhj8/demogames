@@ -1,0 +1,138 @@
+{
+  "$schema": "aiga.audio-contract.v1",
+  "version": 1,
+  "format": {
+    "sampleRate": 44100,
+    "channels": 2,
+    "subtype": "PCM_16",
+    "peakNormalized": true
+  },
+  "durationToleranceSec": 0.15,
+  "profiles": {
+    "sfx": {
+      "maxSeconds": 120,
+      "clipping": {
+        "threshold": 0.999,
+        "maxRatio": 0.0005
+      },
+      "dynamicRangeDb": {
+        "metric": "p95MinusP20OfBlockRms",
+        "blockMs": 50,
+        "minDb": 6.0
+      },
+      "tailSilence": {
+        "floorDb": -60.0,
+        "maxSec": 1.5
+      },
+      "midGap": {
+        "enabled": false
+      },
+      "bandEnergy": {
+        "enabled": false
+      },
+      "leadSilence": {
+        "floorDb": -60.0,
+        "maxSec": 0.5
+      }
+    },
+    "bgm": {
+      "maxSeconds": 380,
+      "clipping": {
+        "threshold": 0.999,
+        "maxRatio": 0.0002
+      },
+      "dynamicRangeDb": {
+        "metric": "p95MinusP20OfBlockRms",
+        "blockMs": 50,
+        "minDb": 8.0
+      },
+      "tailSilence": {
+        "floorDb": -60.0,
+        "maxSec": 12.0
+      },
+      "midGap": {
+        "enabled": true,
+        "blockMs": 50,
+        "referencePercentile": 60,
+        "dropDb": 18.0,
+        "minRunSec": 2.0,
+        "tailGraceRatio": 0.12,
+        "maxRuns": 0
+      },
+      "bandEnergy": {
+        "enabled": true,
+        "splitsHz": [
+          250,
+          4000
+        ],
+        "lowRatio": {
+          "min": 0.25,
+          "max": 0.92
+        },
+        "highRatio": {
+          "min": 0.0005,
+          "max": 0.4
+        },
+        "note": "功率占比，按 8192 点分段平均。这是粗检测，只抓明显异常的频谱失衡，不是音质判断。阈值由实测定：SA3 medium 4 条 BGM 低频 46~83%、中频 17~53%、高频 0.11~0.94%。绝对值对测量方法极敏感，跨工具比较没有意义；这个指标真正的用处是同一批只改提示词做对照。",
+        "midRatio": {
+          "min": 0.05,
+          "max": 0.95
+        }
+      },
+      "leadSilence": {
+        "floorDb": -60.0,
+        "maxSec": 3.0
+      }
+    }
+  },
+  "generation": {
+    "reference": "https://huggingface.co/spaces/stabilityai/stable-audio-3/raw/main/app.py",
+    "dtype": "float16",
+    "cfgScale": 1.0,
+    "sigmaMax": 1.0,
+    "apgScale": 1.0,
+    "durationPaddingSec": 6.0,
+    "samplerType": "pingpong",
+    "samplers": [
+      "pingpong",
+      "euler",
+      "rk4",
+      "dpmpp"
+    ],
+    "steps": {
+      "sfx": 8,
+      "bgm": 24
+    },
+    "variants": {
+      "small-sfx": {
+        "repo": "stabilityai/stable-audio-3-small-sfx",
+        "params": "0.6B",
+        "maxSeconds": 120,
+        "profile": "sfx"
+      },
+      "small-music": {
+        "repo": "stabilityai/stable-audio-3-small-music",
+        "params": "0.6B",
+        "maxSeconds": 120,
+        "profile": "bgm"
+      },
+      "medium": {
+        "repo": "stabilityai/stable-audio-3-medium",
+        "params": "2B",
+        "maxSeconds": 380,
+        "profile": "bgm"
+      }
+    }
+  },
+  "negativePromptDefaults": {
+    "sfx": "music, melody, speech, background hum",
+    "bgm": "abrupt transitions, silence, dropouts, empty gaps, synthesizer, electronic sounds, lo-fi"
+  },
+  "humanReview": [
+    "旋律好不好、配器像不像真乐团、有没有 AI 味 —— 只有人耳能定",
+    "音效的材质和空间感对不对（金属/木头/混响尾巴）",
+    "BGM 的段落推进是否自然，高潮有没有真正起来",
+    "循环点接缝是否听得出来",
+    "频谱图上的谐波亮线是否说明是真实乐器泛音，而不是合成器味"
+  ]
+}

@@ -1,0 +1,33 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>共生火力 · 声音核对室</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111b23;color:#dae7e8;font:15px/1.6 system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:48px 24px}header{border-bottom:1px solid #344651;padding-bottom:24px;margin-bottom:28px}h1{font-size:36px;margin:8px 0}p{color:#9baeb5;max-width:760px}small{letter-spacing:3px;color:#7fc9b2}a{color:#8dd6c1}button{cursor:pointer;border:1px solid #415d67;background:#22333f;color:#eaf8f4;padding:12px 16px;border-radius:6px;font:inherit}button:hover{background:#31534f;border-color:#86c7b0}button:focus-visible{outline:2px solid #b6f4d6;outline-offset:3px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{background:#192832;border:1px solid #2b404c;padding:16px;border-radius:8px}.card b{display:block;margin-bottom:10px}.card button{padding:7px 12px;margin-right:8px}.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:20px 0}#status{color:#96dbc1;font-size:13px}section{margin:30px 0}h2{font-size:19px;font-weight:500}label{display:flex;gap:8px;align-items:center}footer{border-top:1px solid #344651;margin-top:40px;padding-top:16px;color:#93a5ad;font-size:13px}
+</style><main>
+<header><small>SYMBIOTIC FIRE / SOUND LAB</small><h1>声音核对室</h1><p>同一套实机音效，在这里单独辨认、组合比较。每类保留两条候选轮换播放；点击后使用游戏的音量、淡入淡出与动态保护。</p><a href="index.html">返回游戏 →</a></header>
+<div class="bar"><button id="enable">启用声音</button><button id="demo">播放 8 秒交火片段</button><button id="stop">停止</button><label>总音量 <input data-sound-level="master" aria-label="总音量" type="range" min="0" max="100" value="80"></label></div>
+<div id="status" role="status">正在准备声音素材…</div><div id="library"></div>
+<footer>来源：本机 Stable Audio 3。客观验收包括格式、静音、削波、动态、起音和收尾；这些检查不能代替人耳对材质、情绪和悦耳程度的判断。<a href="art_direction/audio-upgrade/REVIEW.md">查看验收记录</a></footer>
+</main>
+<script src="js/three.min.js"></script><script src="js/tune.js"></script><script src="js/core.js"></script><script src="js/audio.js"></script>
+<script>
+const groups={
+ '枪械与装填':{rifle:'步枪',heavy_shot:'重型开火',dry:'空仓扳机',mag_out:'取出弹匣',mag_in:'装入弹匣',bolt:'枪机复位',shell:'弹壳落地',last_round:'末发提示'},
+ '命中与能量':{flesh:'普通命中',armor:'骨甲碎裂',kill:'击杀',weak:'弱点命中',weak_kill:'弱点击杀',explosion:'爆炸',zap:'电弧',derived:'派生弹射',shield:'护盾命中',shield_break:'护盾破裂'},
+ '怪物与危险':{charge:'冲锋咆哮',spit:'酸液喷吐',blast_warn:'爆裂蓄力',climb:'攀爬',melee:'近战前摇',enemy_idle:'近处低吼',incoming:'危险逼近',boss:'首领登场'},
+ '移动与环境':{step:'混凝土地面脚步',land:'落地',dash:'冲刺',hurt:'玩家受伤',city_air:'废城风声'},
+ '补给与进化':{pickup_med:'医疗补给',pickup_buff:'强化补给',levelup:'升级',mutation:'共生变异',airdrop:'空投到来',victory:'胜利',defeat:'失败'}
+};
+async function ready(){Audio2.init();Audio2.resume();await SOUND.loading;while(SOUND.stats.loads+SOUND.stats.failed.length<Object.values(SOUND.bank?.sounds||{}).flat().length)await new Promise(r=>setTimeout(r,40));}
+let timers=[];function stop(){timers.forEach(clearTimeout);timers=[];for(const v of SOUND.voices)SOUND.stop(v);}
+document.getElementById('enable').onclick=ready;
+document.getElementById('stop').onclick=stop;
+for(const [title,cues] of Object.entries(groups)){const section=document.createElement('section');const h=document.createElement('h2');h.textContent=title;section.append(h);const grid=document.createElement('div');grid.className='grid';
+ for(const [id,label] of Object.entries(cues)){const card=document.createElement('div');card.className='card';const b=document.createElement('b');b.textContent=label;card.append(b);for(let n=0;n<2;n++){const button=document.createElement('button');button.textContent=n?'版本 B':'版本 A';button.onclick=async()=>{await ready();SOUND.picks[id]=1-n;SOUND.last[id]=-Infinity;SOUND.play(id,{variant:n});};card.append(button);}grid.append(card);}section.append(grid);document.getElementById('library').append(section);
+}
+document.getElementById('demo').onclick=async()=>{stop();await ready();const at=(time,fn)=>timers.push(setTimeout(fn,time*1000));
+ at(0,()=>SOUND.play('city_air'));for(let i=0;i<12;i++){at(.3+i*.11,()=>Audio2.shot(1,1,.11));if(i%3===0)at(.33+i*.11,()=>Audio2.hit());}
+ at(1.8,()=>Audio2.magOut());at(2.4,()=>Audio2.magIn());at(2.8,()=>Audio2.boltPull());at(3.2,()=>Audio2.telegraph({x:-6,y:0,z:-5},'charge'));at(3.8,()=>Audio2.dash());
+ at(4.2,()=>Audio2.blast({x:8,y:0,z:-8},true));at(4.5,()=>Audio2.weakConfirm(true));at(5.3,()=>Audio2.pickup('med'));at(6.2,()=>Audio2.mutation());
+};
+setInterval(()=>{document.getElementById('status').textContent=`${SOUND.stats.loads} 条声音已就绪 · 当前 ${SOUND.voices.size} 个声音 · ${SOUND.stats.failed.length?'部分素材未加载，游戏将使用合成声音补位':'素材按需准备'}`;},300);
+</script></html>

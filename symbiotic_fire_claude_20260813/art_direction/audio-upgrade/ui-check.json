@@ -1,0 +1,12 @@
+{
+  "pass": true,
+  "checks": [
+    "38 sound cards",
+    "variant A/B buttons",
+    "stop button",
+    "390px layout",
+    "pause mixer displayed",
+    "TODO13 ALLPASS"
+  ],
+  "errors": []
+}

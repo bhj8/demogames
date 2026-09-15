@@ -1,0 +1,45 @@
+# Locked batch: small-sfx / 12 steps / three deterministic seeds per sound.
+# Dry material-rich recordings for an urban biological-survivor FPS.
+!variant = small-sfx
+!steps = 12
+!n = 3
+!neg = music, melody, speech, background hum, distortion, long silence, repeated actions
+rifle = A single assault rifle gunshot, sharp explosive crack followed by a tight low punch and short outdoor air tail, close perspective, powerful mechanical firearm @dur=1
+heavy_shot = A single heavy combat shotgun blast, deep explosive body and crisp metallic action, short outdoor decay, close perspective @dur=1.5
+dry = One dry steel firearm trigger click, short mechanical snap, close microphone @dur=0.5
+mag_out = A single rifle magazine release, metal latch click followed by a short polymer magazine sliding out, dry close microphone @dur=0.8
+mag_in = A single polymer rifle magazine pushed firmly into a metal receiver, solid compact clack, dry close microphone @dur=0.7
+bolt = A single rifle charging handle pulled and released, short metallic slide followed by a decisive spring loaded snap, dry close microphone @dur=0.8
+shell = A single small brass cartridge casing bouncing briefly on concrete, delicate metallic tick, dry close microphone @dur=0.7
+flesh = A single punch striking a thick leather covered fleshy body, wet dense thud with a sharp slap, dry close microphone @dur=0.6
+armor = A single bullet impact breaking a brittle bone plate, hard sharp crack and tiny fragments scattering, dry close microphone @dur=0.8
+kill = A single heavy organic body impact, dense fleshy thud and brief gritty exhale, dry close microphone @dur=0.8
+weak = A single precise sharp glass and bone impact, tiny bright crack with a tight low thud, dry close microphone @dur=0.5
+weak_kill = A single brittle bone snap followed by a dense organic impact, compact emphatic crunch, dry close microphone @dur=0.8
+explosion = A single heavy explosion in an empty city street, sharp initial blast and deep rolling pressure, debris pattering during a short natural decay @dur=2.5
+zap = A single high voltage electrical arc, sharp spark snap followed by a brief irregular crackling discharge, dry close microphone @dur=0.8
+charge = A large predatory creature making one aggressive rising guttural growl, deep chest resonance and ragged breath, close dry recording @dur=1.2
+spit = A creature forcefully expelling a single acidic spit, tense wet gurgle followed by a sharp liquid spray, close dry recording @dur=0.9
+blast_warn = A swollen organic sac rapidly swelling and rupturing with a tense rising hiss, short threatening creature warning, dry close perspective @dur=1
+climb = A claw scraping rough concrete followed by a harsh creature breath, short rising scrape, close dry recording @dur=0.9
+melee = A hostile creature making a single sharp throaty snarl and forceful breath before a lunge, dry close recording @dur=0.7
+hurt = A single heavy blunt impact against a padded vest, dull body thump with a short strained breath, close dry recording @dur=0.7
+shield = A single impact on a resonant crystal shield, compact glassy metallic ping with a short low pressure pulse, dry close recording @dur=0.8
+shield_break = A crystal barrier breaking in one sharp impact, brittle glass shattering and a descending energy discharge, dry close recording @dur=1.2
+dash = A single fast rush of air past thick fabric, tight low whoosh with a crisp leading edge, dry close recording @dur=0.7
+step = One heavy tactical boot footstep landing on gritty concrete, compact heel impact followed by sole grit, dry close microphone @dur=0.6
+land = A pair of heavy boots landing firmly on concrete after a jump, low thud and short cloth rustle, close dry recording @dur=0.8
+enemy_idle = A hostile creature exhaling a low ragged growl, rough animal chest resonance, short restrained vocalization, dry close microphone @dur=1.6
+city_air = Wind gusts moving through an abandoned city street, soft airy turbulence gently swelling and falling, distant loose metal lightly rattling, continuous outdoor atmosphere @dur=8 @neg="music, melody, speech, traffic, gunfire, footsteps, loud impacts, silence"
+!neg = speech, background hum, distortion, long silence, repeated actions
+last_round = A single tiny metallic warning tick with a short high pitched resonance, compact futuristic weapon feedback @dur=0.5
+pickup_med = A brief warm clean ascending two note glass chime, small gentle confirmation sound, dry close perspective @dur=0.9
+pickup_buff = A brief bright ascending crystalline shimmer, compact reward confirmation sound, dry close perspective @dur=0.9
+levelup = A short confident rising three note metallic glass chime, warm low pulse underneath, game progression confirmation @dur=1.4
+mutation = A short organic transformation stinger, tense low resonant swell opening into a bright strange crystalline accent, tactile biological energy @dur=2
+victory = A short resolving triumphant brass and glass musical sting, strong opening and warm rising final resolution, polished game success cue @dur=3
+defeat = A short dark descending low cello and metal musical sting, heavy opening and quiet final resolution, polished game defeat cue @dur=3
+boss = A massive creature making one deep threatening roar with a low ominous metallic resonance, powerful immediate attack and natural decay @dur=2.5
+incoming = A short focused two pulse low warning tone with a rising metallic edge, clear urgent directional danger cue @dur=0.8
+airdrop = A brief distant radio beacon chirp followed by a descending airy whistle, compact supply arrival signal @dur=1.3
+derived = A tiny sharp elastic energy flick with a brief glassy spark, compact futuristic projectile ricochet cue @dur=0.5

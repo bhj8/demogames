@@ -1,0 +1,44 @@
+{
+  "pass": true,
+  "rendered": {
+    "peak": 0.956473171710968,
+    "rms": 0.130568929114125,
+    "stats": {
+      "played": 282,
+      "dropped": 9243,
+      "stolen": 169,
+      "maxVoices": 42,
+      "loads": 76,
+      "failed": []
+    },
+    "remaining": 3
+  },
+  "direction": [
+    {
+      "x": -6,
+      "left": 42.043605252371734,
+      "right": 3.8542696428035157
+    },
+    {
+      "x": 6,
+      "left": 3.689893893935441,
+      "right": 40.25057840469488
+    }
+  ],
+  "runtime": {
+    "pass": true,
+    "loads": 76,
+    "failed": [],
+    "checks": [
+      "all cue variants decode",
+      "voice cleanup",
+      "movement footsteps and landing",
+      "pause stops environment",
+      "real firing and reload",
+      "missing-bank synthesis fallback",
+      "persistent volume",
+      "master mute"
+    ]
+  },
+  "errors": []
+}

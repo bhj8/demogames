@@ -2975,6 +2975,7 @@ function frame(now) {
 
   const active = G.phase === 'play' && !G.paused && !G.over;
   const dt = raw * BOOT.timescale;
+  if (typeof SOUND !== 'undefined') SOUND.update(raw, active);
 
   if (active) {
    try {

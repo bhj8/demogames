@@ -499,6 +499,13 @@ i{color:rgba(219,231,240,.28);font-style:normal}
   <div class="mtitle" style="font-size:30px">已暂停</div>
   <div class="msub" style="font-size:13px">尸潮不会等你</div>
   <div id="buildgraph"></div>
+  <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center;margin:14px;max-width:600px;font-size:12px">
+    <label>总音量 <input aria-label="总音量" data-sound-level="master" type="range" min="0" max="100" value="80"></label>
+    <label>枪械 <input aria-label="枪械音量" data-sound-level="weapon" type="range" min="0" max="100" value="85"></label>
+    <label>世界与预警 <input aria-label="世界与预警音量" data-sound-level="world" type="range" min="0" max="100" value="70"></label>
+    <label>命中与提示 <input aria-label="命中与提示音量" data-sound-level="confirm" type="range" min="0" max="100" value="85"></label>
+    <label>环境 <input aria-label="环境音量" data-sound-level="ambience" type="range" min="0" max="100" value="28"></label>
+  </div>
   <button id="resume">继 续</button>
 </div>
 
@@ -509,6 +516,7 @@ i{color:rgba(219,231,240,.28);font-style:normal}
 <script src="js/three.min.js"></script>
 <script src="js/tune.js"></script>
 <script src="js/core.js"></script>
+<script src="js/audio.js"></script>
 <script src="js/enemy-atlas.js"></script><script src="js/enemy-art.js"></script><script src="js/render.js"></script>
 <script src="js/citymap.js"></script>
 <script src="js/city-scale.js"></script>
