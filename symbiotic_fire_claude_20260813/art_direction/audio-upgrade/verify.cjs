@@ -14,7 +14,7 @@ const base=process.argv[2]||'http://127.0.0.1:8765',out=__dirname;
   const rendered=await page.evaluate(async()=>{
    window.AudioContext=function(){return new OfflineAudioContext(2,44100*10,44100);};
    Audio2.init();
-   while(SOUND.stats.loads<76)await new Promise(r=>setTimeout(r,20));
+   while(SOUND.stats.loads<38)await new Promise(r=>setTimeout(r,20));
    Audio2.setListener({x:0,y:0,z:0},{x:0,y:0,z:-1},{x:0,y:1,z:0});
    const c=Audio2.ctx;
    const events=[{time:.05,fn:()=>SOUND.play('city_air')},
@@ -31,14 +31,9 @@ const base=process.argv[2]||'http://127.0.0.1:8765',out=__dirname;
    }});
    for(const e of events)c.suspend(e.time).then(()=>{e.fn();c.resume();});
    const b=await c.startRendering();let peak=0,energy=0;
-   const wav=new ArrayBuffer(44+b.length*4),v=new DataView(wav);
-   const s=(offset,text)=>{for(let i=0;i<text.length;i++)v.setUint8(offset+i,text.charCodeAt(i));};
-   s(0,'RIFF');v.setUint32(4,36+b.length*4,true);s(8,'WAVE');s(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,2,true);v.setUint32(24,44100,true);v.setUint32(28,176400,true);v.setUint16(32,4,true);v.setUint16(34,16,true);s(36,'data');v.setUint32(40,b.length*4,true);
-   for(let i=0;i<b.length;i++)for(let ch=0;ch<2;ch++){const x=b.getChannelData(ch)[i];peak=Math.max(peak,Math.abs(x));energy+=x*x;v.setInt16(44+(i*2+ch)*2,Math.round(Math.max(-1,Math.min(1,x))*32767),true);}
-   let binary='';const bytes=new Uint8Array(wav);for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));
-   return {wav:btoa(binary),peak,rms:Math.sqrt(energy/(b.length*2)),stats:SOUND.stats,remaining:SOUND.voices.size};
+   for(let i=0;i<b.length;i++)for(let ch=0;ch<2;ch++){const x=b.getChannelData(ch)[i];peak=Math.max(peak,Math.abs(x));energy+=x*x;}
+   return {peak,rms:Math.sqrt(energy/(b.length*2)),stats:SOUND.stats,remaining:SOUND.voices.size};
   });
-  fs.writeFileSync(path.join(out,'mix-review.wav'),Buffer.from(rendered.wav,'base64'));delete rendered.wav;
   assert.ok(rendered.peak<.99);assert.ok(rendered.rms>.005);assert.ok(rendered.stats.maxVoices<=42);assert.deepEqual(rendered.stats.failed,[]);
   // Direction is checked with the actual spatial branch, independently of the mix.
   const direction=[];
@@ -46,19 +41,19 @@ const base=process.argv[2]||'http://127.0.0.1:8765',out=__dirname;
    await page.reload();await page.evaluate(()=>SOUND.loading);
    direction.push(await page.evaluate(async x=>{
     window.AudioContext=function(){return new OfflineAudioContext(2,44100*2,44100);};Audio2.init();
-    while(SOUND.stats.loads<76)await new Promise(r=>setTimeout(r,20));
+    while(SOUND.stats.loads<38)await new Promise(r=>setTimeout(r,20));
     Audio2.setListener({x:0,y:0,z:0},{x:0,y:0,z:-1},{x:0,y:1,z:0});SOUND.play('incoming',{pos:{x,y:0,z:-4},variant:0});
     const b=await Audio2.ctx.startRendering(),energy=[];for(let ch=0;ch<2;ch++){let s=0;for(const x of b.getChannelData(ch))s+=x*x;energy.push(s);}return {x,left:energy[0],right:energy[1]};
    },x));
   }
   assert.ok(direction[0].left>direction[0].right*2);assert.ok(direction[1].right>direction[1].left*2);
   await page.goto(base+'/?seed=12345');await page.evaluate(()=>{window.requestAnimationFrame=()=>0;Audio2.init();Audio2.resume();});
-  await page.waitForFunction(()=>SOUND.stats.loads===76,null,{polling:50});
+  await page.waitForFunction(()=>SOUND.stats.loads===38,null,{polling:50});
   const runtime=await page.evaluate(async()=>{
    const check=(v,s)=>{if(!v)throw Error(s);};
-   // Every cue must have two decoded variants and load without errors.
+   // Every cue must have one decoded final asset and load without errors.
    check(Object.keys(SOUND.bank.sounds).length===38,'38 cue families');
-   for(const id of Object.keys(SOUND.cues)){check(SOUND.bank.sounds[id].length===2,'variants '+id);SOUND.last[id]=-Infinity;check(SOUND.play(id),'sample '+id);}
+   for(const id of Object.keys(SOUND.cues)){check(SOUND.bank.sounds[id].length===1,'final asset '+id);SOUND.last[id]=-Infinity;check(SOUND.play(id),'sample '+id);}
    for(const v of SOUND.voices)SOUND.stop(v);await new Promise(r=>setTimeout(r,50));check(SOUND.voices.size===0,'stop cleanup');
    SOUND.last={};SOUND.update(.016,true);check([...SOUND.voices].some(v=>v.id==='city_air'),'ambient starts');
    const velocity=G.player.vel.clone(),grounded=MOVE.pose.grounded;MOVE.pose.grounded=true;G.player.vel.set(6,0,0);SOUND.stepDistance=2.2;SOUND.update(.03,true);
@@ -72,7 +67,7 @@ const base=process.argv[2]||'http://127.0.0.1:8765',out=__dirname;
    const bank=SOUND.bank;SOUND.bank=null;Audio2.dryClick();SOUND.bank=bank;check(osc>0,'missing-bank fallback');Audio2.ctx.createOscillator=original;
    SOUND.setLevel('master',.34);check(JSON.parse(localStorage.getItem('symbiotic.audio.v1')).master===.34,'persist volume');
    SOUND.setLevel('master',0);await new Promise(r=>setTimeout(r,150));check(Audio2.master.gain.value<.002,'mute all buses');
-   return {pass:true,loads:SOUND.stats.loads,failed:SOUND.stats.failed,checks:['all cue variants decode','voice cleanup','movement footsteps and landing','pause stops environment','real firing and reload','missing-bank synthesis fallback','persistent volume','master mute']};
+   return {pass:true,loads:SOUND.stats.loads,failed:SOUND.stats.failed,checks:['all final cues decode','voice cleanup','movement footsteps and landing','pause stops environment','real firing and reload','missing-bank synthesis fallback','persistent volume','master mute']};
   });
   assert.deepEqual(runtime.failed,[]);assert.deepEqual(errors,[]);
   // A fresh load restores both gain settings and the slider position.

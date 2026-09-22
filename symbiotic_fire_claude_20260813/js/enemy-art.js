@@ -14,17 +14,57 @@ const ENEMY_ART = {
   },
   texture(id) {
     if (!this.textures[id]) {
-      const t = new THREE.TextureLoader().load('assets/enemies/' + id + '.png');
+      const t = new THREE.Texture();
       t.encoding = THREE.sRGBEncoding; t.anisotropy = 4;
       // Chroma keys must not mix with silhouettes across mip levels.
       t.minFilter = THREE.LinearFilter; t.generateMipmaps = false; this.textures[id] = t;
+      const url = 'assets/enemies/' + id + '.png';
+      const load = attempt => {
+        t.userData.status = 'loading';
+        new THREE.ImageLoader().load(url, img => {
+          t.image = img; t.needsUpdate = true; t.userData.status = 'ready';
+        }, undefined, () => {
+          t.userData.status = 'failed';
+          if (attempt < 2) setTimeout(() => load(attempt + 1), 1000 * (attempt + 1));
+          else console.warn('Enemy artwork unavailable; using visible geometry:', url);
+        });
+      };
+      load(0);
     }
     return this.textures[id];
+  },
+  // Texture requests can fail or stay pending on slow connections. Enemies must
+  // still have a visible body and the same height/collision/weak point.
+  fallbackGeometry() {
+    if (!this.fallbackCache) {
+      const parts = [], g = R.geo;
+      const part = (x,y,z,sx,sy,sz,color=0xadb7a8) => parts.push({geo:g.facet,mat:mat4(x,y,z,sx,sy,sz),color});
+      part(0,.61,0,.44,.43,.28);part(0,.40,0,.25,.21,.21);
+      part(0,.89,.01,.22,.24,.22,0xcfc6ac);
+      for (const s of [-1,1]) {
+        part(s*.2,.70,0,.19,.19,.20);part(s*.25,.52,.03,.13,.34,.14);
+        part(s*.27,.31,.06,.11,.18,.12);part(s*.1,.26,0,.15,.27,.16);
+        part(s*.11,.10,0,.1,.19,.12);part(s*.11,.035,.05,.13,.07,.20);
+        part(s*.04,.90,.12,.03,.02,.02,0xffd47b);
+      }
+      this.fallbackCache = mergeGeom(parts);
+    }
+    return this.fallbackCache;
+  },
+  canBatch(renderer) {
+    if (this.batchRenderer === renderer) return this.batchSupported;
+    this.batchRenderer = renderer;
+    const gl = renderer.getContext();
+    // Matrix consumes four attribute slots; the sprite uses eight more.
+    return this.batchSupported = gl.getParameter(gl.MAX_VERTEX_ATTRIBS) >= 12 &&
+      gl.getParameter(gl.MAX_VARYING_VECTORS) >= 12 &&
+      (renderer.capabilities.isWebGL2 || !!renderer.extensions.get('ANGLE_instanced_arrays'));
   },
   configure(e, id) {
     const m = e.bodyMat;
     e.artKind = id; e.artView = -1;
     e.body.geometry = this.geometry();
+    e.body.material = m;
     m.map = this.texture(id); m.color.setHex(0xffffff); m.vertexColors = false;
     m.alphaTest = .45; m.side = THREE.DoubleSide;
     if (!m.userData.directional) {
@@ -96,7 +136,17 @@ const ENEMY_ART = {
     if (e.artView === 1 && absolute > Math.PI/4-margin && absolute < Math.PI*3/4+margin) view=1;
     this.view(e, view, angle < 0);
     e.body.rotation.y = toCamera-e.grp.rotation.y;
-    e.body.visible = !!e.bodyMat.map.image;
+    const img = e.bodyMat.map.image;
+    e.artReady = !!(img && img.complete && img.naturalWidth > 0);
+    e.body.visible = true;
+    if (e.artReady) {
+      e.body.geometry = this.geometry(); e.body.material = e.bodyMat;
+    } else {
+      if (!e.artFallbackMaterial) e.artFallbackMaterial = new THREE.MeshLambertMaterial({vertexColors:true});
+      e.artFallbackMaterial.color.setHex(e.variant ? MUT[e.variant].color : 0xb3b29d);
+      e.body.geometry = this.fallbackGeometry(); e.body.material = e.artFallbackMaterial;
+      e.body.scale.set(1,1,1); e.body.rotation.y = 0;
+    }
     a.plates.value = e.plates;
     a.attack.value = ['windup','leapwind','spit','slam','melee'].includes(e.state) ? .65 : e.state === 'charge' ? 1 : 0;
     e.mark.visible = false;
@@ -114,7 +164,7 @@ const ENEMY_ART = {
     e.artTexture = id;
   },
 
-  makeBatch(id, scene) {
+  makeBatch(id, scene, camera) {
     const capacity = Math.max(TUNE.SPAWN.aliveCap, TUNE.ART.shadow.capacity);
     const geometry = this.geometry().clone(), attributes = {};
     for (const [name,size] of Object.entries({instanceArtRect:4,instanceAnimation:4,instanceSide:1,instanceTheme:3,instanceGlow:3})) {
@@ -150,7 +200,14 @@ const ENEMY_ART = {
     const mesh=new THREE.InstancedMesh(geometry,material,capacity);
     mesh.name='enemy-batch:'+id;mesh.count=0;mesh.frustumCulled=false;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);scene.add(mesh);
-    return this.batches[id]={mesh,attributes,capacity,used:0};
+    // Verify the actual GPU program before hiding individual bodies. A driver
+    // rejecting the instanced shader must not turn the entire horde invisible.
+    R.renderer.compile(scene,camera);
+    const gl=R.renderer.getContext();
+    // r147 shares programs between materials, including failed programs.
+    const programs=R.renderer.properties.get(material).programs;
+    const failed=!programs || [...programs.values()].some(p=>!gl.getProgramParameter(p.program,gl.LINK_STATUS));
+    return this.batches[id]={mesh,attributes,capacity,used:0,failed};
   },
 
   renderBatches(enemies, scene, camera) {
@@ -158,14 +215,15 @@ const ENEMY_ART = {
     camera.updateMatrixWorld();
     this.batchProjection.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);
     this.batchFrustum.setFromProjectionMatrix(this.batchProjection);
-    if(this.batching)for(const e of enemies){
-      if(e._dead||e.dead||!e.grp.visible||!e.body.visible)continue;
+    if(this.batching && this.canBatch(R.renderer))for(const e of enemies){
+      if(e._dead||e.dead||!e.grp.visible||!e.body.visible||!e.artReady)continue;
       e.grp.updateMatrix();e.body.updateMatrix();
       this.batchMatrix.multiplyMatrices(e.grp.matrix,e.body.matrix);
       this.batchSphere.copy(e.body.geometry.boundingSphere);this.batchSphere.radius*=1.12;
       this.batchSphere.applyMatrix4(this.batchMatrix);
       if(e.body.frustumCulled&&!this.batchFrustum.intersectsSphere(this.batchSphere)){e.body.visible=false;continue;}
-      const id=e.artTexture,b=this.batches[id]||this.makeBatch(id,scene);
+      const id=e.artTexture,b=this.batches[id]||this.makeBatch(id,scene,camera);
+      if(b.failed)continue;
       if(b.mesh.parent!==scene)scene.add(b.mesh);
       if(b.used>=b.capacity)continue; // Keep individual rendering beyond capacity.
       const i=b.used++,a=e.bodyMat.userData.directional,g=e.bodyMat.userData.gait;

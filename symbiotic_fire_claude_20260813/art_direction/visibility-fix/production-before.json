@@ -1,0 +1,198 @@
+{
+  "state": {
+    "textures": [
+      {
+        "id": "blast",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "charger",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "climber",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "conduct",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "fission",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "giant",
+        "width": 1881,
+        "complete": true
+      },
+      {
+        "id": "grunt",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "heavy",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "king",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "leaper",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "midboss",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "ossify-bare",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "ossify-two",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "ossify-zero",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "ossify",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "overclock",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "roofcaster",
+        "width": 1536,
+        "complete": true
+      },
+      {
+        "id": "spitter",
+        "width": 1536,
+        "complete": true
+      }
+    ],
+    "batches": [
+      {
+        "id": "grunt",
+        "count": 3
+      }
+    ],
+    "attributes": 16
+  },
+  "resources": [
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/spitter.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/giant.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/charger.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/king.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/ossify-bare.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/ossify-zero.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/roofcaster.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/grunt.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/ossify-two.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/blast.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/climber.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/ossify.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/leaper.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/conduct.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/fission.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/midboss.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/overclock.png",
+      "status": 200,
+      "type": "image/png"
+    },
+    {
+      "url": "https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/assets/enemies/heavy.png",
+      "status": 200,
+      "type": "image/png"
+    }
+  ],
+  "errors": [
+    "Failed to load resource: the server responded with a status of 404 ()"
+  ]
+}

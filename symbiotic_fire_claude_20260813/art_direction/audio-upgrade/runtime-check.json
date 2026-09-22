@@ -2,13 +2,13 @@
   "pass": true,
   "rendered": {
     "peak": 0.956473171710968,
-    "rms": 0.130568929114125,
+    "rms": 0.13189188668924498,
     "stats": {
       "played": 282,
       "dropped": 9243,
-      "stolen": 169,
+      "stolen": 173,
       "maxVoices": 42,
-      "loads": 76,
+      "loads": 38,
       "failed": []
     },
     "remaining": 3
@@ -16,21 +16,21 @@
   "direction": [
     {
       "x": -6,
-      "left": 42.043605252371734,
-      "right": 3.8542696428035157
+      "left": 41.87504547981352,
+      "right": 3.8388176600866544
     },
     {
       "x": 6,
-      "left": 3.689893893935441,
-      "right": 40.25057840469488
+      "left": 3.7510331914273927,
+      "right": 40.917506429217624
     }
   ],
   "runtime": {
     "pass": true,
-    "loads": 76,
+    "loads": 38,
     "failed": [],
     "checks": [
-      "all cue variants decode",
+      "all final cues decode",
       "voice cleanup",
       "movement footsteps and landing",
       "pause stops environment",

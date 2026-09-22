@@ -24,7 +24,7 @@ const SOUND = {
   },
   async preload() {
     try {
-      const response=await fetch('assets/audio/bank.json');
+      const response=await fetch('assets/audio/bank.json?v=20260922-final');
       if(!response.ok)throw Error('bank HTTP '+response.status);
       this.bank=await response.json();
       // Download ahead of the first user gesture, decode only in its AudioContext.

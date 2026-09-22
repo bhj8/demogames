@@ -1,0 +1,318 @@
+{
+  "pass": true,
+  "checks": [
+    "missing textures reproduce invisible bodies in original code",
+    "15 designs and 3 armor states have visible pixels",
+    "pending and failed assets show fallback bodies",
+    "automatic retry restores reviewed artwork",
+    "8-attribute GPU uses individual sprites",
+    "shader compilation failure retains individual sprites",
+    "360 real frames without loop errors"
+  ],
+  "reports": [
+    {
+      "mode": "before-missing",
+      "groups": [
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 0,
+          "pixels": 1829
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 0,
+          "pixels": 5969
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 0,
+          "pixels": 1099
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 0,
+          "pixels": 1049
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 0,
+          "pixels": 1049
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 0,
+          "pixels": 1049
+        }
+      ],
+      "density": null,
+      "expectedShaderFailures": 0
+    },
+    {
+      "mode": "normal",
+      "groups": [
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 28832
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 120856
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 15883
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 18698
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 63498
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 21456
+        }
+      ],
+      "density": {
+        "instances": 900,
+        "calls": 59
+      },
+      "expectedShaderFailures": 0
+    },
+    {
+      "mode": "pending",
+      "groups": [
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 34388
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 131224
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 27182
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 29424
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 64547
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 28461
+        }
+      ],
+      "density": null,
+      "expectedShaderFailures": 0
+    },
+    {
+      "mode": "missing",
+      "groups": [
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 34388
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 131224
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 27182
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 29424
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 64547
+        },
+        {
+          "batches": 0,
+          "ready": 0,
+          "visible": 3,
+          "pixels": 28461
+        }
+      ],
+      "density": null,
+      "expectedShaderFailures": 0
+    },
+    {
+      "mode": "recovered",
+      "groups": [
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 28832
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 120856
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 15883
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 18698
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 63498
+        },
+        {
+          "batches": 3,
+          "ready": 3,
+          "visible": 0,
+          "pixels": 21456
+        }
+      ],
+      "density": null,
+      "expectedShaderFailures": 0
+    },
+    {
+      "mode": "low-attributes",
+      "groups": [
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 28832
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 120856
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 15883
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 18698
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 63498
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 21456
+        }
+      ],
+      "density": null,
+      "expectedShaderFailures": 0
+    },
+    {
+      "mode": "bad-shader",
+      "groups": [
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 28832
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 120856
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 15883
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 18698
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 63498
+        },
+        {
+          "batches": 0,
+          "ready": 3,
+          "visible": 3,
+          "pixels": 21456
+        }
+      ],
+      "density": null,
+      "expectedShaderFailures": 1
+    }
+  ]
+}

@@ -3,12 +3,12 @@
 <style>
 *{box-sizing:border-box}body{margin:0;background:#111b23;color:#dae7e8;font:15px/1.6 system-ui,sans-serif}main{max-width:1100px;margin:auto;padding:48px 24px}header{border-bottom:1px solid #344651;padding-bottom:24px;margin-bottom:28px}h1{font-size:36px;margin:8px 0}p{color:#9baeb5;max-width:760px}small{letter-spacing:3px;color:#7fc9b2}a{color:#8dd6c1}button{cursor:pointer;border:1px solid #415d67;background:#22333f;color:#eaf8f4;padding:12px 16px;border-radius:6px;font:inherit}button:hover{background:#31534f;border-color:#86c7b0}button:focus-visible{outline:2px solid #b6f4d6;outline-offset:3px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{background:#192832;border:1px solid #2b404c;padding:16px;border-radius:8px}.card b{display:block;margin-bottom:10px}.card button{padding:7px 12px;margin-right:8px}.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:20px 0}#status{color:#96dbc1;font-size:13px}section{margin:30px 0}h2{font-size:19px;font-weight:500}label{display:flex;gap:8px;align-items:center}footer{border-top:1px solid #344651;margin-top:40px;padding-top:16px;color:#93a5ad;font-size:13px}
 </style><main>
-<header><small>SYMBIOTIC FIRE / SOUND LAB</small><h1>声音核对室</h1><p>同一套实机音效，在这里单独辨认、组合比较。每类保留两条候选轮换播放；点击后使用游戏的音量、淡入淡出与动态保护。</p><a href="index.html">返回游戏 →</a></header>
+<header><small>SYMBIOTIC FIRE / SOUND LAB</small><h1>声音核对室</h1><p>同一套实机音效，在这里单独辨认、组合比较。每类只保留一条最终音效；点击后使用游戏的音量、淡入淡出与动态保护。</p><a href="index.html">返回游戏 →</a></header>
 <div class="bar"><button id="enable">启用声音</button><button id="demo">播放 8 秒交火片段</button><button id="stop">停止</button><label>总音量 <input data-sound-level="master" aria-label="总音量" type="range" min="0" max="100" value="80"></label></div>
 <div id="status" role="status">正在准备声音素材…</div><div id="library"></div>
 <footer>来源：本机 Stable Audio 3。客观验收包括格式、静音、削波、动态、起音和收尾；这些检查不能代替人耳对材质、情绪和悦耳程度的判断。<a href="art_direction/audio-upgrade/REVIEW.md">查看验收记录</a></footer>
 </main>
-<script src="js/three.min.js"></script><script src="js/tune.js"></script><script src="js/core.js"></script><script src="js/audio.js"></script>
+<script src="js/three.min.js?v=20260922-visibility-1"></script><script src="js/tune.js?v=20260922-visibility-1"></script><script src="js/core.js?v=20260922-visibility-1"></script><script src="js/audio.js?v=20260922-visibility-1"></script>
 <script>
 const groups={
  '枪械与装填':{rifle:'步枪',heavy_shot:'重型开火',dry:'空仓扳机',mag_out:'取出弹匣',mag_in:'装入弹匣',bolt:'枪机复位',shell:'弹壳落地',last_round:'末发提示'},
@@ -22,7 +22,7 @@ let timers=[];function stop(){timers.forEach(clearTimeout);timers=[];for(const v
 document.getElementById('enable').onclick=ready;
 document.getElementById('stop').onclick=stop;
 for(const [title,cues] of Object.entries(groups)){const section=document.createElement('section');const h=document.createElement('h2');h.textContent=title;section.append(h);const grid=document.createElement('div');grid.className='grid';
- for(const [id,label] of Object.entries(cues)){const card=document.createElement('div');card.className='card';const b=document.createElement('b');b.textContent=label;card.append(b);for(let n=0;n<2;n++){const button=document.createElement('button');button.textContent=n?'版本 B':'版本 A';button.onclick=async()=>{await ready();SOUND.picks[id]=1-n;SOUND.last[id]=-Infinity;SOUND.play(id,{variant:n});};card.append(button);}grid.append(card);}section.append(grid);document.getElementById('library').append(section);
+ for(const [id,label] of Object.entries(cues)){const card=document.createElement('div');card.className='card';const b=document.createElement('b');b.textContent=label;card.append(b);const button=document.createElement('button');button.textContent='播放';button.onclick=async()=>{await ready();SOUND.last[id]=-Infinity;SOUND.play(id);};card.append(button);grid.append(card);}section.append(grid);document.getElementById('library').append(section);
 }
 document.getElementById('demo').onclick=async()=>{stop();await ready();const at=(time,fn)=>timers.push(setTimeout(fn,time*1000));
  at(0,()=>SOUND.play('city_air'));for(let i=0;i<12;i++){at(.3+i*.11,()=>Audio2.shot(1,1,.11));if(i%3===0)at(.33+i*.11,()=>Audio2.hit());}

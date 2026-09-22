@@ -10,7 +10,9 @@
 
 [最新：怪物合批优化与实机对照](art_direction/instanced-enemies/REVIEW.md)——900 只混合怪物的绘制调用从 944 次降至 59 次，保留方向、动作与破甲表现；修正胸口染色的方形边缘。
 
-[声音核对室](_audio-art.html) · [38 类音效升级与验收](art_direction/audio-upgrade/REVIEW.md)：本机生成并接入 76 条音效，覆盖枪械、怪物、命中、移动、环境与界面；Esc 暂停页可分别调节音量。
+[声音核对室](_audio-art.html) · [38 类音效升级与验收](art_direction/audio-upgrade/REVIEW.md)：本机生成并接入 38 条最终音效（每类一条），覆盖枪械、怪物、命中、移动、环境与界面；Esc 暂停页可分别调节音量。
+
+[怪物隐形故障修复与回归](art_direction/visibility-fix/REVIEW.md)：增加美术加载失败回退、自动重试和显卡合批兼容检查；清除音效候选及备用资源。
 
 ## 玩
 

@@ -1,4 +1,0 @@
-[FAIL] city_air_01.wav  (sfx, 8.0s)
-    x dynamicRange: 5.9 dB（下限 6.0 dB，p95=-10.4 p20=-16.3）
-
-144 个文件，1 个未通过 -> fail

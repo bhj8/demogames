@@ -2,7 +2,7 @@
   "pass": true,
   "checks": [
     "38 sound cards",
-    "variant A/B buttons",
+    "final asset playback buttons",
     "stop button",
     "390px layout",
     "pause mixer displayed",
