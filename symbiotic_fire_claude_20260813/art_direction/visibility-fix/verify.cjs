@@ -18,6 +18,17 @@ const base=process.argv[2]||'http://127.0.0.1:8765';
     const old=execFileSync('git',['show','7b46f36:symbiotic_fire_claude_20260813/js/enemy-art.js'],{encoding:'utf8'});
     await page.route('**/js/enemy-art.js*',r=>r.fulfill({contentType:'application/javascript',body:old}));
    }
+   if(mode==='bad-shader'){
+    const source=fs.readFileSync(path.join(__dirname,'../../js/enemy-art.js'),'utf8');
+    await page.route('**/js/enemy-art.js*',r=>r.fulfill({contentType:'application/javascript',body:source+`
+      const originalMakeBatch=ENEMY_ART.makeBatch;
+      ENEMY_ART.makeBatch=function(...args){
+        const gait=R.attachGait;
+        R.attachGait=function(m,...rest){gait.call(this,m,...rest);const compile=m.onBeforeCompile;m.onBeforeCompile=s=>{compile(s);s.vertexShader+='\\n#error deliberate_batch_failure\\n';};};
+        try{return originalMakeBatch.apply(this,args);}finally{R.attachGait=gait;}
+      };
+    `}));
+   }
    if(['before-missing','pending','missing','recovered'].includes(mode))await page.route('**/assets/enemies/*.png',async r=>{
     const url=r.request().url(),n=(requests.get(url)||0)+1;requests.set(url,n);
     if(mode==='pending'){await gate;await r.continue();}
@@ -37,14 +48,7 @@ const base=process.argv[2]||'http://127.0.0.1:8765';
     WEAPON.update(.016,{vel:new THREE.Vector3(),yawDelta:0,pitchDelta:0,ammo:30,magazine:30,overclock:0,conductCharge:0,stableLevel:0});
    });
    if(['normal','recovered','low-attributes','bad-shader'].includes(mode))await page.waitForFunction(()=>Object.values(ENEMY_ART.textures).every(t=>t.image?.complete&&t.image.naturalWidth>0),null,{timeout:15000,polling:100});
-   if(mode==='bad-shader')await page.evaluate(()=>{
-    const make=ENEMY_ART.makeBatch;
-    ENEMY_ART.makeBatch=function(...args){
-     const gait=R.attachGait;
-     R.attachGait=function(m,...rest){gait.call(this,m,...rest);const compile=m.onBeforeCompile;m.onBeforeCompile=s=>{compile(s);s.vertexShader+='\n#error deliberate_batch_failure\n';};};
-     try{return make.apply(this,args);}finally{R.attachGait=gait;}
-    };
-   });
+   await page.evaluate(()=>ENEMY_ART.ready);
    const groups=[];
    for(let group=0;group<6;group++){
     const state=await page.evaluate(group=>{

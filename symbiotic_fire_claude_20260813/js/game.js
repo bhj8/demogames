@@ -2932,7 +2932,13 @@ function boot() {
   /* 开场少量普通丧尸，20 秒内建立移动/射击/经验反馈 §28 */
   for (let i = 0; i < 5; i++) configureEnemy(G.enemies.get(), ENEMIES.grunt, spawnPosition(false));
 
-  $('start').onclick = () => {
+  const startButton=$('start'),startLabel=startButton.textContent;
+  startButton.disabled=true;startButton.textContent='正在准备画面…';
+  const artReady=ENEMY_ART.prepare ? ENEMY_ART.prepare(R.scene,R.camera) : Promise.resolve();
+  artReady.catch(err=>console.warn('Artwork preparation failed; using individual rendering.',err))
+    .finally(()=>{startButton.disabled=false;startButton.textContent=startLabel;R.render();});
+  startButton.onclick = () => {
+    if(startButton.disabled || G.phase==='play')return;
     Audio2.init(); Audio2.resume();
     $('menu').classList.remove('on');
     G.phase = 'play';

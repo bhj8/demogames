@@ -9,9 +9,10 @@ const out=process.argv[2]||__dirname,label=process.argv[3]||'production-current'
  page.on('console',m=>{if(m.type()==='error'&&!m.text().includes('404'))errors.push(m.text().slice(0,1500));});
  page.on('requestfailed',r=>errors.push(r.url()+': '+r.failure()?.errorText));
  page.on('response',r=>{if(r.url().includes('/assets/enemies/'))resources.push({url:r.url(),status:r.status(),type:r.headers()['content-type']});if(r.status()>=400&&!r.url().endsWith('/favicon.ico'))errors.push(r.status()+' '+r.url());});
- await page.goto('https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/?v=20260922-visibility-1',{waitUntil:'domcontentloaded',timeout:60000});
+ await page.goto('https://baohongjiang.com/demogames/symbiotic_fire_claude_20260813/?v=20260922-input-2',{waitUntil:'domcontentloaded',timeout:60000});
  await page.waitForFunction(()=>typeof G!=='undefined'&&G.player,null,{timeout:60000});
  try{await page.waitForFunction(()=>Object.values(ENEMY_ART.textures).every(t=>t.image?.complete&&t.image.naturalWidth>0),null,{timeout:30000});}catch(_){}
+ await page.evaluate(()=>ENEMY_ART.ready);
  const state=await page.evaluate(()=>{
   window.requestAnimationFrame=()=>0;G.phase='pause';
   for(const id of ['menu','pause','debug','cards'])document.getElementById(id).style.display='none';

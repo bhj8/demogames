@@ -1,0 +1,33 @@
+{
+  "pass": true,
+  "preparation": {
+    "prepared": true,
+    "batches": 18,
+    "failed": 0,
+    "enabled": true
+  },
+  "samples": [
+    {
+      "x": 20,
+      "y": 10,
+      "directionError": 3.469446951953614e-18
+    },
+    {
+      "x": -40,
+      "y": -15,
+      "directionError": 1.1103585416259206e-16
+    },
+    {
+      "x": 0,
+      "y": 0,
+      "directionError": 1.1103585416259206e-16
+    },
+    {
+      "x": 8,
+      "y": 4,
+      "directionError": 0
+    }
+  ],
+  "singleStartLoop": true,
+  "errors": []
+}

@@ -14,6 +14,8 @@
 
 [怪物隐形故障修复与回归](art_direction/visibility-fix/REVIEW.md)：增加美术加载失败回退、自动重试和显卡合批兼容检查；清除音效候选及备用资源。
 
+[转向长帧修复与耗时对照](art_direction/input-latency/REVIEW.md)：怪物材质和纹理在进入游戏前准备，避免新怪物出现时编译卡住输入。
+
 ## 玩
 
 通过本地 HTTP 服务或 GitHub Pages 打开 `index.html`。敌人使用 `assets/enemies/` 中的多方向角色图，音效使用 `assets/audio/` 中的生成素材，场景几何和表面材质运行时生成；不要用 `file://` 直接打开，以免浏览器阻止资源加载。声音在首次点击后启用，素材未就绪时由合成声音补位。

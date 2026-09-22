@@ -7,6 +7,7 @@
 const TUNE = {
   /* A / FACETED：只控制美术，不修改战斗、碰撞或输入。 */
   ART: {
+    loadTimeoutMs: 12000,
     sky: 0xc9b9a7, fog: 0xb3b5a7, fogNear: 95, fogFar: 390,
     skyLight: 0xc5d8ed, groundLight: 0x555865, ambient: 0.62,
     sunColor: 0xffdfb5, sunIntensity: 1.40, ground: 0x555d66,
